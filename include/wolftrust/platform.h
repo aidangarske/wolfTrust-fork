@@ -73,4 +73,12 @@ void wt_platform_note_hsm_wait_skip(wt_guest_id_t guest_id);
  * has no handoff region. The core reads the record from the start of it. */
 volatile void* wt_platform_boot_handoff_region(size_t* size);
 
+/* Test-build probes the boot sequence runs before the monitor starts. */
+#if defined(WT_REMEASURE_PROBE)
+void wt_platform_remeasure_probe(void);
+#endif
+#if defined(WT_BOOTUPDATE_PROBE)
+void wt_platform_bootupdate_probe(uint32_t running_version);
+#endif
+
 #endif

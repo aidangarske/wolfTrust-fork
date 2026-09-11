@@ -1,0 +1,28 @@
+/* boot.h
+ *
+ * Copyright (C) 2026 wolfSSL Inc.
+ *
+ * This file is part of wolfTrust.
+ *
+ * wolfTrust is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfTrust is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <https://www.gnu.org/licenses/>.
+ */
+
+#ifndef WOLFTRUST_BOOT_H
+#define WOLFTRUST_BOOT_H
+
+/* Architecture-neutral boot sequence. The arch reset handler calls it after
+ * the image's data and bss are initialized; it never returns. */
+void wt_boot_run(void) __attribute__((noreturn));
+
+#endif /* WOLFTRUST_BOOT_H */

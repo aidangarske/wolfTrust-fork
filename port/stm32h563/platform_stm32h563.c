@@ -58,7 +58,6 @@ void* memset(void* destination, int value, size_t size);
 
 static volatile uint32_t g_secure_service_depth;
 static volatile uint32_t g_hsm_wait_skip_count;
-static volatile uint32_t g_wt_attest_degraded __attribute__((used));
 
 static const wt_armv8m_sau_region_t g_sau_regions[] = {
     { WT_GUEST0_FLASH_BASE,
@@ -230,21 +229,6 @@ volatile void* wt_platform_boot_handoff_region(size_t* size)
     *size = WT_RAM_S_BASE - WT_BOOT_HANDOFF_ADDRESS;
     return (volatile void*)WT_BOOT_HANDOFF_ADDRESS;
 }
-
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-static void wt_clear_boot_handoff_scratch(void)
-{
-    volatile uint8_t* scratch =
-        (volatile uint8_t*)WT_BOOT_HANDOFF_ADDRESS;
-    size_t scratchSize = WT_RAM_S_BASE - WT_BOOT_HANDOFF_ADDRESS;
-    size_t i;
-
-    for (i = 0u; i < scratchSize; ++i) {
-        scratch[i] = 0u;
-    }
-    wt_dsb();
-}
-#endif
 
 static void wt_clock_init(void)
 {
@@ -549,7 +533,7 @@ void LPUART1_IRQHandler(void)
  * and quarantine the guest. bkpt #0x6C fires only when both are correct. */
 extern int wt_hsm_flash_remeasure_tamper(uintptr_t secure_base);
 
-static void wt_platform_remeasure_probe(void)
+void wt_platform_remeasure_probe(void)
 {
     const wt_guest_config_t *configs;
     size_t cfg_count;
@@ -602,7 +586,7 @@ static void wt_platform_remeasure_probe(void)
 #include "wolftrust/services/fwu_service.h"
 extern const wt_fwu_backend_t wt_fwu_flash_backend;
 
-static void wt_platform_bootupdate_probe(uint32_t running_version)
+void wt_platform_bootupdate_probe(uint32_t running_version)
 {
     uint32_t mpu_ctrl;
     int armed = -1;
@@ -629,161 +613,6 @@ static void wt_platform_bootupdate_probe(uint32_t running_version)
      * (the token's v2 measurement will be absent) instead of a reboot loop. */
 }
 #endif
-
-void Reset_Handler(void)
-{
-    extern uint32_t _sidata;
-    extern uint32_t _sdata;
-    extern uint32_t _edata;
-    extern uint32_t _sbss;
-    extern uint32_t _ebss;
-    extern uint32_t _siconfdata;
-    extern uint32_t _sconfdata;
-    extern uint32_t _econfdata;
-    extern uint32_t _sconfbss;
-    extern uint32_t _econfbss;
-    extern uint32_t _si_keystore;
-    extern uint32_t _s_keystore;
-    extern uint32_t _e_keystore_data;
-    extern uint32_t _s_keystore_bss;
-    extern uint32_t _e_keystore;
-#if defined(CONFIG_VNET)
-    extern uint32_t _si_vnet;
-    extern uint32_t _s_vnet;
-    extern uint32_t _e_vnet_data;
-    extern uint32_t _s_vnet_bss;
-    extern uint32_t _e_vnet;
-#endif
-    uint32_t* src = &_sidata;
-    uint32_t* dst = &_sdata;
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    wt_boot_handoff_t bootHandoff;
-    int handoffRet;
-#endif
-
-    while (dst < &_edata) {
-        *dst++ = *src++;
-    }
-
-    for (dst = &_sbss; dst < &_ebss; ++dst) {
-        *dst = 0u;
-    }
-
-    /* Conformance SP .data/.bss live in their own MPU-granted window; the main
-     * loops above skip it, so initialize it here. Empty in production builds. */
-    src = &_siconfdata;
-    for (dst = &_sconfdata; dst < &_econfdata; ++dst) {
-        *dst = *src++;
-    }
-    for (dst = &_sconfbss; dst < &_econfbss; ++dst) {
-        *dst = 0u;
-    }
-
-    /* wolfHSM keystore band lives outside the general .data/.bss window, so the
-     * loops above skip it; initialize its loaded .data and zero its .bss here. */
-    src = &_si_keystore;
-    for (dst = &_s_keystore; dst < &_e_keystore_data; ++dst) {
-        *dst = *src++;
-    }
-    for (dst = &_s_keystore_bss; dst < &_e_keystore; ++dst) {
-        *dst = 0u;
-    }
-
-#if defined(CONFIG_VNET)
-    /* SERVICE_VNET data band: same treatment as the keystore band. */
-    src = &_si_vnet;
-    for (dst = &_s_vnet; dst < &_e_vnet_data; ++dst) {
-        *dst = *src++;
-    }
-    for (dst = &_s_vnet_bss; dst < &_e_vnet; ++dst) {
-        *dst = 0u;
-    }
-#endif
-
-    wt_monitor_init();
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    handoffRet = wt_boot_handoff_consume(&bootHandoff);
-    wt_clear_boot_handoff_scratch();
-#endif
-#ifdef WT_ENGINE_HSM
-    /* Bring up the secure-side wolfHSM service before dispatching guests:
-     *  1. tasklet scheduler (provides the bootstrap context)
-     *  2. shared wolfCrypt + NVM + lock
-     *  3. one transport + server context + tasklet per guest
-     * Any failure here is fatal because guests require this engine. */
-    wt_tasklet_init();
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    /* Gate vault auto-reformat on the wolfBoot-reported lifecycle before the
-     * store comes up: only unlocked development states permit a foreign-pool
-     * wipe (see wt_hsm_set_boot_lifecycle). */
-    if (handoffRet == 0) {
-        wt_hsm_set_boot_lifecycle(bootHandoff.lifecycle);
-    }
-#endif
-    if (wt_hsm_init() != 0) wt_platform_panic();
-    /* WT-FFM-0050: the vault NVM is live and no guest has dispatched, so the
-     * monotonic version floors gate every domain now. A missing handoff
-     * reports version zero, which fails closed once a floor is armed. */
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    (void)wt_hsm_rollback_enforce((handoffRet == 0) ?
-                                  bootHandoff.image_version : 0u);
-#else
-    (void)wt_hsm_rollback_enforce(0u);
-#endif
-    /* WT-FFM-0054: every guest server binds the secure relay capture
-     * transport — packets arrive only through SERVICE_HSM's mediated
-     * psa_call path, never a shared NS-RAM window. */
-    for (wt_guest_id_t gid = 0u; gid < WT_MAX_GUESTS; gid++) {
-        const wt_guest_config_t *configs;
-        size_t cfg_count;
-        configs = wt_partitions_config_table(&cfg_count);
-        if (configs == NULL || gid >= cfg_count) break;
-        if (wt_hsm_guest_init_relay(gid) != 0) {
-            wt_platform_panic();
-        }
-    }
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    if (wt_hsm_attest_bootstrap() != WH_ERROR_OK) {
-        /* The vault could not be provisioned and auto-reformat was not
-         * permitted (a foreign or corrupt pool on a SECURED device). Boot
-         * degraded rather than dead-trap: attestation fails closed and the
-         * condition is observable, never a mute HardFault. */
-        g_wt_attest_degraded = 1u;
-    }
-#endif
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    if (handoffRet == 0) {
-        if (wt_initial_attest_init(&bootHandoff) != WT_ATTEST_SUCCESS) {
-            /* Attestation could not initialize (e.g. the IAK was unavailable on
-             * a fail-closed vault). Degrade rather than dead-trap: the service
-             * returns errors, the rest of the system boots. */
-            g_wt_attest_degraded = 1u;
-        }
-    }
-#endif
-    if (handoffRet == 0) {
-        wt_ffm_set_lifecycle(wt_ffm_boot_runtime_mut(), bootHandoff.lifecycle);
-    }
-    /* P1t: crypto SP becomes a scheduled unprivileged coroutine now that
-     * the tasklet scheduler exists. Fail closed — guests depend on it. */
-    if (wt_ffm_boot_start_sched() != WT_FFM_SUCCESS) {
-        wt_platform_panic();
-    }
-#endif
-#if defined(WT_REMEASURE_PROBE)
-    wt_platform_remeasure_probe();
-#endif
-#if defined(WT_BOOTUPDATE_PROBE)
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    wt_platform_bootupdate_probe((handoffRet == 0) ?
-                                 bootHandoff.image_version : 0u);
-#else
-    wt_platform_bootupdate_probe(0u);
-#endif
-#endif
-    wt_monitor_start();
-    wt_platform_panic();
-}
 
 #ifdef WT_ENGINE_HSM
 
