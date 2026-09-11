@@ -26,13 +26,10 @@
 
 #include <stdint.h>
 
-/* Arm the NS-window checks before any NS guest can reach the FF-M entry
- * points; the core fails closed until this runs. */
+/* The core fails every NS window closed until this runs. */
 void wt_ffm_gateway_install(void);
 
-/* The five NS-client FF-M entry points, called by the architecture's NS
- * entry mechanism with the raw NS arguments; every NS pointer is validated
- * here before the core sees it. */
+/* Called by the arch NS entry mechanism with raw NS arguments. */
 int32_t wt_ffm_gateway_connect(uint32_t sid, uint32_t version);
 int32_t wt_ffm_gateway_call(int32_t handle, int32_t type,
                             wt_ffm_veneer_iovec_t* ns_iovec);

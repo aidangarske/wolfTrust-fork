@@ -21,8 +21,7 @@
 #ifndef WOLFTRUST_BOOT_H
 #define WOLFTRUST_BOOT_H
 
-/* Architecture-neutral boot sequence. The arch reset handler calls it after
- * the image's data and bss are initialized; it never returns. */
+/* Entered by the arch reset handler once data and bss are initialized. */
 void wt_boot_run(void) __attribute__((noreturn));
 
 #endif /* WOLFTRUST_BOOT_H */

@@ -26,11 +26,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Armv8-M-private entry points shared between the architecture layer and
- * the Cortex-M ports; never part of the neutral core contract. */
+/* Armv8-M-private, shared by the arch layer and the Cortex-M ports. */
 
-/* PMSAv8 MPU attribute encodings. MPU_RBAR[2:1] = AP (access permissions),
- * MPU_RBAR[0] = XN (execute-never), MPU_RLAR[3:1] = AttrIndx (into MAIR). */
+/* PMSAv8: RBAR[2:1] = AP, RBAR[0] = XN, RLAR[3:1] = MAIR index. */
 #define WT_MPU_RBAR_XN       (1u << 0)
 #define WT_MPU_RBAR_AP_RW    (0u << 1)   /* privileged RW, no access from unpriv */
 #define WT_MPU_RBAR_AP_RWRW  (1u << 1)   /* RW from any priv level */
@@ -43,16 +41,13 @@
 #define WT_MPU_RLAR_ATTRIDX_DEVICE  (1u << 1)  /* MAIR[1] = device memory */
 #define WT_MPU_RLAR_ATTRIDX_NOCACHE (2u << 1)  /* MAIR[2] = normal non-cacheable */
 
-/* One SAU region: inclusive 32-byte-aligned bounds; nsc marks the
- * Non-secure-callable window. */
+/* Inclusive 32-byte-aligned bounds. */
 typedef struct wt_armv8m_sau_region {
     uint32_t base;
     uint32_t limit;
     bool nsc;
 } wt_armv8m_sau_region_t;
 
-/* One secure MPU whitelist entry: inclusive 32-byte-aligned bounds,
- * rbar_flags carries XN/AP/SH, rlar_flags carries AttrIndx. */
 typedef struct wt_armv8m_mpu_region {
     uintptr_t base;
     uintptr_t limit;
@@ -60,24 +55,17 @@ typedef struct wt_armv8m_mpu_region {
     uint32_t rlar_flags;
 } wt_armv8m_mpu_region_t;
 
-/* Program the SAU from the port's attribution map (SAU disabled while the
- * region pairs change, every implemented slot cleared first). */
 void wt_armv8m_sau_init(const wt_armv8m_sau_region_t* regions, size_t count);
-
-/* Program the secure MPU whitelist with PRIVDEFENA off; the table is also
- * what wt_arch_restore_spm_domain() replays after a partition domain. */
+/* PRIVDEFENA off; wt_arch_restore_spm_domain() replays this table. */
 void wt_armv8m_mpu_s_init(const wt_armv8m_mpu_region_t* whitelist,
                           size_t count);
 
 /* Exception-return path back to the Non-secure guest after an SVC. */
 void wt_armv8m_svc_guest_return(void) __attribute__((noreturn));
 
-/* Fault record read back through wt_arch_read_fault_address(). */
 void wt_armv8m_note_fault_address(uintptr_t fault_address);
 void wt_armv8m_note_fault(uintptr_t fault_address, uintptr_t pc);
-
-/* Shared tail of MemManage_Handler and UsageFault_Handler; the SecureFault
- * vector also branches here for a Secure Thread fault. */
+/* Branched to from the naked MemManage, UsageFault, and SecureFault vectors. */
 void wt_armv8m_tasklet_fault_entry(void);
 
 #endif /* WOLFTRUST_ARCH_ARMV8M_ARMV8M_H */
