@@ -545,7 +545,7 @@ case "$scenario" in
     failed=$(printf '%s' "$flat" | grep -oE 'TOTAL FAILED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
     : "${passed:=-1}"; : "${skipped:=-1}"; : "${failed:=-1}"
     # c047 (Num 247) is dropped from the schedule by the crypto sched db (see
-    # mk/secure-armv8m-stm32h563.mk): HMAC-key-with-CMAC-alg negative case, but
+    # mk/common.mk): HMAC-key-with-CMAC-alg negative case, but
     # CMAC is compiled out so wolfPSA returns spec-permitted NOT_SUPPORTED, not
     # the test's assumed INVALID_ARGUMENT. Every scheduled test must pass or skip.
     if [ "$failed" -eq 0 ] && [ "$((passed + skipped))" -eq 77 ]; then

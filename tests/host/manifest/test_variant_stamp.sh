@@ -14,8 +14,8 @@ checks=0
 failures=0
 
 gen() {
-    (cd "$root" && make -s -f mk/secure-armv8m-stm32h563.mk \
-        BUILD_DIR="$build" "$@" "$build/manifest/.stamp" >/dev/null)
+    (cd "$root" && make -s BUILD_DIR="$build" "$@" \
+        "$build/manifest/.stamp" >/dev/null)
 }
 
 check() {

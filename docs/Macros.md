@@ -2,7 +2,7 @@
 
 The STM32H563 build is configured through GNU Make variables. The build turns
 selected values into C preprocessor defines. Defaults below come from
-`mk/secure-armv8m-stm32h563.mk`.
+`mk/target-stm32h563.mk`, `mk/arch-armv8m.mk`, and `mk/common.mk`.
 
 ## Build selection
 

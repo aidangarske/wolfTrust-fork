@@ -1,49 +1,22 @@
-TOOLPREFIX ?= arm-none-eabi-
+# Architecture- and target-neutral half of the secure image build. Included
+# last, after mk/target-<soc>.mk and mk/arch-<arch>.mk supply the TARGET_* and
+# ARCH_* inputs; repository paths come from the Makefile.
 CC := $(TOOLPREFIX)gcc
 OBJCOPY := $(TOOLPREFIX)objcopy
 SIZE := $(TOOLPREFIX)size
 
-ROOT := .
-PORT_DIR := $(ROOT)/port/stm32h563
-WOLFHSM_RUNNER_DIR := $(ROOT)/src/services/wolfhsm/runner
-WOLFHSM_DIR := $(ROOT)/lib/wolfHSM
-WOLFSSL_DIR := $(ROOT)/lib/wolfSSL
-WOLFHAL_DIR := $(ROOT)/lib/wolfhal
-WOLFCOSE_DIR := $(ROOT)/lib/wolfCOSE
-
-BUILD_DIR ?= build
-# WT_CONFORMANCE=1 swaps in the manifest that also hosts Arm's test partitions;
-# CONFIG_VNET=y swaps in the variant that adds the SERVICE_VNET partition so
-# the default image carries no virtual network service at all
-ifeq ($(WT_CONFORMANCE),1)
-MANIFEST_INPUT := $(PORT_DIR)/manifest-conformance.json
-else ifeq ($(CONFIG_VNET),y)
-MANIFEST_INPUT := $(PORT_DIR)/manifest-vnet.json
-else
-MANIFEST_INPUT := $(PORT_DIR)/manifest.json
-endif
 MANIFEST_DIR := $(BUILD_DIR)/manifest
 MANIFEST_STAMP := $(MANIFEST_DIR)/.stamp
 MANIFEST_GEN_C := $(MANIFEST_DIR)/wolftrust_manifest_generated.c
 MANIFEST_GEN_H := $(MANIFEST_DIR)/wolftrust_manifest_generated.h
 SECURE_ELF := $(BUILD_DIR)/wolftrust.elf
 SECURE_BIN := $(BUILD_DIR)/wolftrust.bin
-SECURE_CMSE_IMPLIB := $(BUILD_DIR)/secure_cmse_implib.o
 BUILD_MODE_STAMP := $(BUILD_DIR)/secure_build_mode.stamp
 WOLFHSM_CFG_H := $(BUILD_DIR)/wolfhsm_cfg.h
 
-PORT_HEADERS := $(wildcard $(PORT_DIR)/*.h)
-
-CPU_FLAGS := -mcpu=cortex-m33 -mthumb -mgeneral-regs-only
 WT_TIMESLICE_MS ?= 2
 WT_MAX_GUESTS ?= 2
 WT_CO_STACK_SIZE ?= 24576
-WT_SHARED_UART ?= 3
-WT_GUEST_CORE_CLOCK_HZ ?= 240000000
-WT_GUEST_UART_CLOCK_HZ ?= 120000000
-WT_WOLFCRYPT_SP_ASM ?= 1
-WT_WOLFCRYPT_ARMASM ?= 1
-WT_WOLFCRYPT_STM32_HASH ?= 0
 WT_ENGINE_HSM ?= 1
 WT_ATTEST_COSE ?= 1
 WT_FFM_NEGATIVE_PROBE ?= 0
@@ -59,36 +32,11 @@ WT_REMEASURE_PROBE ?= 0
 WT_BOOTUPDATE_PROBE ?= 0
 WT_CONFORMANCE ?= 0
 
-# wolfHSM resumes SHA-256 operations from the portable digest and length
-# fields carried by its wire protocol. STM32 HASH uses opaque peripheral CSR
-# state instead, so enabling it here would remove the wolfHSM SHA handler and
-# make a client fallback operate on a partially modified context.
-ifneq ($(WT_WOLFCRYPT_STM32_HASH),0)
-$(error WT_WOLFCRYPT_STM32_HASH is incompatible with the wolfHSM SHA service)
-endif
-
-# Secure runtime placement. The default preserves the standalone image;
-# the wolfBoot handoff build relocates it to 0x0C020000.
-WT_SECURE_FLASH_BASE ?= 0x0C000000
-WT_SECURE_FLASH_SIZE ?= 0x00020000
-WT_SECURE_IMAGE_HEADER_SIZE ?= 0
-WT_GUEST0_FLASH_BASE ?= 0x08020000
-WT_GUEST1_FLASH_BASE ?= 0x08040000
-WT_GUEST0_FLASH_SIZE ?= 0x00020000
-WT_GUEST1_FLASH_SIZE ?= 0x00020000
-
 # Virtual-Ethernet (VNET) subsystem. Off until Wave 2 lands a working
 # core. Host-side unit tests under tests/host/vnet/ build regardless;
 # this switch only gates linking the dataplane and NSC veneers into
 # the secure image.
 CONFIG_VNET ?= n
-
-# Whitelist of non-secure-callable veneers the linked secure image may
-# export: exactly the five mediated FF-M gateway entries, pinned by full
-# name so a renamed or added veneer fails the link in every build,
-# CONFIG_VNET included (virtual networking rides SERVICE_VNET psa_call).
-NSC_ALLOWED := __acle_se_WolfTrust_FFM_(FrameworkVersion|ServiceVersion|Connect|Call|Close)$$
-NSC_COUNT := 5
 WT_VNET_POOL_SLOTS ?= 8
 WT_VNET_FRAME_MAX ?= 1536
 WT_VNET_RX_QUEUE_DEPTH ?= 8
@@ -100,7 +48,8 @@ HSM_INCLUDES := -I$(WOLFHSM_DIR) -I$(WOLFSSL_DIR) -I$(BUILD_DIR)
 HSM_INCLUDES_SECURE := $(HSM_INCLUDES) -I$(WOLFHAL_DIR) -I$(abspath $(WOLFHSM_RUNNER_DIR))
 HSM_DEFS_SECURE := -DWOLFSSL_USER_SETTINGS -DWOLFHSM_CFG \
     -DWOLF_CRYPTO_CB -UNO_CODING \
-    -DWC_RESEED_INTERVAL=1000000 -DWT_ENGINE_HSM=$(WT_ENGINE_HSM)
+    -DWC_RESEED_INTERVAL=1000000 -DWT_ENGINE_HSM=$(WT_ENGINE_HSM) \
+    $(ARCH_HSM_DEFS)
 
 ifeq ($(WT_ATTEST_COSE),1)
 SECURE_CFLAGS_COSE := -I$(WOLFCOSE_DIR)/include \
@@ -111,33 +60,14 @@ SECURE_CFLAGS_COSE := -I$(WOLFCOSE_DIR)/include \
     -DWOLFCOSE_NO_KEY_DECODE
 endif
 
-ifeq ($(WT_WOLFCRYPT_SP_ASM),1)
-HSM_DEFS_SECURE += -DWOLFSSL_SP_ASM -DWOLFSSL_SP_ARM_CORTEX_M_ASM \
-    -DWOLFSSL_ARM_ARCH=8
-endif
-ifeq ($(WT_WOLFCRYPT_ARMASM),1)
-HSM_DEFS_SECURE += -DWOLFSSL_ARMASM -DWOLFSSL_ARMASM_NO_HW_CRYPTO \
-    -DWOLFSSL_ARMASM_INLINE -DWOLFSSL_ARMASM_NO_NEON \
-    -DWOLFSSL_ARMASM_THUMB2
-endif
 SECURE_CFLAGS := $(CPU_FLAGS) -ffreestanding -fno-builtin -nostdlib -Os -g \
     -ffunction-sections -fdata-sections -Wall -Wextra \
     -I$(ROOT)/include -I$(PORT_DIR) \
     -DWT_TIMESLICE_MS=$(WT_TIMESLICE_MS) \
     -DWT_MAX_GUESTS=$(WT_MAX_GUESTS) \
     -DWT_CO_STACK_SIZE=$(WT_CO_STACK_SIZE) \
-    -DWT_SHARED_UART=$(WT_SHARED_UART) \
-    -DWT_GUEST_CORE_CLOCK_HZ=$(WT_GUEST_CORE_CLOCK_HZ) \
-    -DWT_GUEST_UART_CLOCK_HZ=$(WT_GUEST_UART_CLOCK_HZ) \
-    -DWT_SECURE_FLASH_BASE=$(WT_SECURE_FLASH_BASE) \
-    -DWT_SECURE_FLASH_SIZE=$(WT_SECURE_FLASH_SIZE) \
-    -DWT_SECURE_IMAGE_HEADER_SIZE=$(WT_SECURE_IMAGE_HEADER_SIZE) \
-    -DWT_GUEST0_FLASH_BASE=$(WT_GUEST0_FLASH_BASE) \
-    -DWT_GUEST1_FLASH_BASE=$(WT_GUEST1_FLASH_BASE) \
-    -DWT_GUEST0_FLASH_SIZE=$(WT_GUEST0_FLASH_SIZE) \
-    -DWT_GUEST1_FLASH_SIZE=$(WT_GUEST1_FLASH_SIZE) \
-    -DWHAL_CFG_STM32H5_RNG_DIRECT_API_MAPPING \
-    -mcmse \
+    $(TARGET_CFLAGS) \
+    $(ARCH_CFLAGS) \
     $(HSM_INCLUDES_SECURE) $(HSM_DEFS_SECURE) $(SECURE_CFLAGS_COSE) \
     -I$(MANIFEST_DIR)
 
@@ -213,9 +143,9 @@ HSM_LIB_CFLAGS := $(SECURE_CFLAGS) \
 HSM_WOLFHSM_CFLAGS := $(HSM_LIB_CFLAGS)
 
 SECURE_SRCS := \
-    $(WOLFHSM_RUNNER_DIR)/ivt.c \
+    $(ARCH_START_SRCS) \
     $(WOLFHSM_RUNNER_DIR)/runtime.c \
-    $(PORT_DIR)/platform_stm32h563.c \
+    $(TARGET_PLATFORM_SRC) \
     $(ROOT)/src/domain.c \
     $(ROOT)/src/ffm.c \
     $(ROOT)/src/ffm_boot.c \
@@ -229,7 +159,7 @@ SECURE_SRCS := \
     $(ROOT)/src/manifest.c \
     $(ROOT)/src/monitor.c \
     $(ROOT)/src/spm.c \
-    $(PORT_DIR)/partitions.c
+    $(TARGET_PARTITIONS_SRC)
 
 WOLFHSM_SECURE_SRCS := \
     $(WOLFHSM_DIR)/src/wh_client.c \
@@ -268,29 +198,17 @@ WOLFCRYPT_SECURE_SRCS := \
     $(WOLFSSL_DIR)/wolfcrypt/src/logging.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/random.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/sha256.c \
-    $(WOLFSSL_DIR)/wolfcrypt/src/sp_cortexm.c \
+    $(ARCH_WOLFCRYPT_SP_SRCS) \
     $(WOLFSSL_DIR)/wolfcrypt/src/sp_int.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/wolfmath.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/wc_port.c
-
-ifeq ($(WT_WOLFCRYPT_ARMASM),1)
-WOLFCRYPT_SECURE_SRCS += \
-    $(WOLFSSL_DIR)/wolfcrypt/src/port/arm/thumb2-aes-asm_c.c \
-    $(WOLFSSL_DIR)/wolfcrypt/src/port/arm/thumb2-sha256-asm_c.c
-endif
+WOLFCRYPT_SECURE_SRCS += $(ARCH_WOLFCRYPT_ASM_SRCS)
 
 WT_SECURE_EXTRA_SRCS := \
-    $(ROOT)/src/arch/armv8m/cmse.c \
-    $(ROOT)/src/arch/armv8m/coroutine_armv8m.c \
-    $(ROOT)/src/arch/armv8m/ffm_nsc.c \
-    $(ROOT)/src/arch/armv8m/spm_sp_api.c \
-    $(ROOT)/src/arch/armv8m/spm_svc.c \
+    $(ARCH_SRCS) \
     $(ROOT)/src/sched/coroutine.c \
     $(ROOT)/src/sync/mutex.c \
-    $(wildcard $(PORT_DIR)/rng_entropy.c) \
-    $(wildcard $(PORT_DIR)/hsm_flash.c) \
-    $(WOLFHAL_DIR)/src/reg.c \
-    $(WOLFHAL_DIR)/src/rng/stm32h5_rng.c \
+    $(TARGET_EXTRA_SRCS) \
     $(wildcard $(WOLFHSM_RUNNER_DIR)/libc_stubs.c) \
     $(wildcard $(ROOT)/src/services/wolfhsm/*.c) \
     $(ROOT)/src/services/boot_handoff.c \
@@ -355,7 +273,7 @@ CONF_CFLAGS = $(SECURE_CFLAGS) -DIPC -DVERBOSITY=9 \
     -I$(UPSTREAM_DIR)/val/spe \
     -I$(UPSTREAM_DIR)/ff/partition \
     -I$(UPSTREAM_DIR)/platform/targets/common/nspe \
-    -I$(PORT_DIR)/conformance \
+    -I$(TARGET_CONF_DIR) \
     -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter
 
 CONF_SEC_OBJS := \
@@ -1272,7 +1190,7 @@ $(BUILD_DIR)/conf_sec_%.o: $(UPSTREAM_DIR)/val/common/%.c \
 		$(CONF_GEN_STAMP) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(CONF_CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/conf_sec_%.o: $(PORT_DIR)/conformance/%.c \
+$(BUILD_DIR)/conf_sec_%.o: $(TARGET_CONF_DIR)/%.c \
 		$(CONF_GEN_STAMP) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(CONF_CFLAGS) -c -o $@ $<
 endif
@@ -1366,7 +1284,7 @@ $(BUILD_DIR)/wc_sec_%.o: $(WOLFSSL_DIR)/wolfcrypt/src/port/arm/%.c $(WOLFHSM_CFG
 $(BUILD_DIR)/wc_sec_%.o: $(WOLFSSL_DIR)/wolfcrypt/src/port/st/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(HSM_LIB_CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/wt_sec_%.o: $(ROOT)/src/arch/armv8m/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
+$(BUILD_DIR)/wt_sec_%.o: $(ROOT)/src/arch/$(ARCH)/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
 
 $(BUILD_DIR)/wt_sec_%.o: $(ROOT)/src/sched/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
@@ -1410,7 +1328,7 @@ $(BUILD_DIR)/sec_ffm_boot.o: $(ROOT)/src/ffm_boot.c $(MANIFEST_GEN_H) \
 		$(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/sec_platform_stm32h563.o: $(PORT_DIR)/platform_stm32h563.c \
+$(BUILD_DIR)/sec_$(notdir $(TARGET_PLATFORM_SRC:.c=.o)): $(TARGET_PLATFORM_SRC) \
 		$(PORT_HEADERS) $(MANIFEST_GEN_H) $(WOLFHSM_CFG_H) \
 		$(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
@@ -1424,29 +1342,15 @@ $(BUILD_DIR)/sec_%.o: $(PORT_DIR)/%.c $(PORT_HEADERS) $(WOLFHSM_CFG_H) $(BUILD_M
 $(BUILD_DIR)/sec_%.o: $(ROOT)/src/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
 
-$(SECURE_ELF) $(SECURE_CMSE_IMPLIB) &: $(ALL_SECURE_OBJS) $(WOLFHSM_RUNNER_DIR)/secure.ld $(BUILD_MODE_STAMP) | $(BUILD_DIR)
+$(SECURE_ELF) $(ARCH_LINK_OUTPUTS) &: $(ALL_SECURE_OBJS) $(SECURE_LD) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) \
-		-Wl,--defsym=WT_SECURE_FLASH_ORIGIN=$(WT_SECURE_FLASH_BASE) \
-		-Wl,--defsym=WT_SECURE_FLASH_SIZE=$(WT_SECURE_FLASH_SIZE) \
-		-Wl,--defsym=WT_SECURE_IMAGE_HEADER_SIZE=$(WT_SECURE_IMAGE_HEADER_SIZE) \
+		$(TARGET_LDFLAGS) \
 		-Wl,--defsym=WT_VNET_DATA_LENGTH=$(WT_VNET_DATA_LENGTH) \
-		-Wl,-T$(WOLFHSM_RUNNER_DIR)/secure.ld \
+		-Wl,-T$(SECURE_LD) \
 		-Wl,--gc-sections \
-		-Wl,--cmse-implib \
-		-Wl,--out-implib=$(SECURE_CMSE_IMPLIB) \
+		$(ARCH_LDFLAGS) \
 		-o $(SECURE_ELF) $(ALL_SECURE_OBJS) -lgcc
-	@$(TOOLPREFIX)nm $(SECURE_ELF) > $(BUILD_DIR)/nsc-syms.txt || \
-		{ echo "FAIL: nm on the secure image failed" >&2; exit 1; }
-	@if grep ' __acle_se_' $(BUILD_DIR)/nsc-syms.txt | \
-			grep -vE '$(NSC_ALLOWED)'; then \
-		echo "FAIL: non-secure-callable veneer outside the FF-M gateway (WT-FFM-0054)" >&2; \
-		exit 1; \
-	fi
-	@n=$$(grep -cE ' __acle_se_' $(BUILD_DIR)/nsc-syms.txt); \
-	if [ "$$n" -ne $(NSC_COUNT) ]; then \
-		echo "FAIL: expected $(NSC_COUNT) FF-M veneers, found $$n (WT-FFM-0057)" >&2; \
-		exit 1; \
-	fi
+	$(arch_image_checks)
 
 $(SECURE_BIN): $(SECURE_ELF)
 	$(OBJCOPY) -O binary $< $@

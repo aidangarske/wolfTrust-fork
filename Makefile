@@ -1,11 +1,23 @@
 ARCH ?= armv8m
 TARGET ?= stm32h563
 
-ifeq ($(ARCH)-$(TARGET),armv8m-stm32h563)
-include mk/secure-armv8m-stm32h563.mk
-else
-$(error unsupported secure build tuple ARCH=$(ARCH) TARGET=$(TARGET))
+ROOT := .
+BUILD_DIR ?= build
+WOLFHSM_RUNNER_DIR := $(ROOT)/src/services/wolfhsm/runner
+WOLFHSM_DIR := $(ROOT)/lib/wolfHSM
+WOLFSSL_DIR := $(ROOT)/lib/wolfSSL
+WOLFHAL_DIR := $(ROOT)/lib/wolfhal
+WOLFCOSE_DIR := $(ROOT)/lib/wolfCOSE
+
+ifeq ($(wildcard mk/target-$(TARGET).mk),)
+$(error unsupported secure build target TARGET=$(TARGET))
 endif
+ifeq ($(wildcard mk/arch-$(ARCH).mk),)
+$(error unsupported secure build architecture ARCH=$(ARCH))
+endif
+include mk/target-$(TARGET).mk
+include mk/arch-$(ARCH).mk
+include mk/common.mk
 
 .DEFAULT_GOAL := all
 
