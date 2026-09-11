@@ -45,4 +45,19 @@ struct wt_guest_context {
 typedef struct wt_guest_context wt_armv8m_context_t;
 typedef struct wt_guest_context wt_guest_context_t;
 
+/* Concrete body of the core's forward-declared struct wt_trap_frame: the
+ * Armv8-M hardware-stacked exception frame. */
+struct wt_trap_frame {
+    uint32_t r0;
+    uint32_t r1;
+    uint32_t r2;
+    uint32_t r3;
+    uint32_t r12;
+    uintptr_t lr;
+    uintptr_t pc;
+    uint32_t xpsr;
+};
+
+typedef struct wt_trap_frame wt_trap_frame_t;
+
 #endif

@@ -606,7 +606,7 @@ void wt_monitor_on_guest_fault(const wt_trap_frame_t* frame,
     wt_platform_log_fault(g_scheduler.current_guest,
                           reason,
                           wt_platform_read_fault_address(),
-                          frame->pc);
+                          wt_platform_trap_pc(frame));
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
     /* The Arm suite's PROGRAMMER-ERROR checks that fault inside the NS client
      * (e.g. dereferencing a Secure address as an iovec array) expect a system

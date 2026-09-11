@@ -74,17 +74,6 @@ void* memset(void* destination, int value, size_t size);
 #define WT_MPU_MAIR0_DEVICE_AT_1   0x00000400u
 #define WT_MPU_MAIR0_NOCACHE_AT_2  0x00440000u
 
-typedef struct wt_exception_frame {
-    uint32_t r0;
-    uint32_t r1;
-    uint32_t r2;
-    uint32_t r3;
-    uint32_t r12;
-    uintptr_t lr;
-    uintptr_t pc;
-    uint32_t xpsr;
-} wt_exception_frame_t;
-
 #define WT_ASM_STR2(x) #x
 #define WT_ASM_STR(x) WT_ASM_STR2(x)
 
@@ -1237,17 +1226,22 @@ void wt_platform_prepare_guest_return(wt_guest_id_t guest_id,
     wt_virtual_systick_restore_arriving(guest_id);
 }
 
+uintptr_t wt_platform_trap_pc(const wt_trap_frame_t* frame)
+{
+    return frame->pc;
+}
+
 void wt_platform_capture_guest_context(wt_guest_context_t* context,
                                        const wt_trap_frame_t* frame)
 {
-    wt_exception_frame_t* stacked;
+    wt_trap_frame_t* stacked;
     uintptr_t stacked_addr;
 
     if (context == NULL || frame == NULL) {
         wt_platform_panic();
     }
 
-    stacked = (wt_exception_frame_t*)frame;
+    stacked = (wt_trap_frame_t*)frame;
     context->psp_ns = wt_read_psp_ns();
     stacked_addr = (uintptr_t)stacked;
     /* A SecureFault can be raised before the NS exception frame exists (for
@@ -1256,7 +1250,7 @@ void wt_platform_capture_guest_context(wt_guest_context_t* context,
      * fabricate a frame at 0xffffffe0 and fault recursively. */
     if (stacked_addr >= WT_RAM_NS_BASE &&
         stacked_addr <= (WT_RAM_NS_BASE + 0x00020000u -
-                         sizeof(wt_exception_frame_t))) {
+                         sizeof(wt_trap_frame_t))) {
         context->msp_ns = stacked_addr;
     }
     context->control_ns = wt_read_control_ns();
@@ -1285,11 +1279,11 @@ void wt_platform_restore_guest_context(wt_guest_context_t* context)
             wt_arm_secure_timer();
             wt_jump_to_ns((uint32_t)context->msp_ns, (uint32_t)context->pc);
         } else {
-            wt_exception_frame_t* stacked;
+            wt_trap_frame_t* stacked;
 
             context->lr = 0u;
             context->xpsr = 0x01000000u;
-            stacked = (wt_exception_frame_t*)(context->msp_ns - sizeof(wt_exception_frame_t));
+            stacked = (wt_trap_frame_t*)(context->msp_ns - sizeof(wt_trap_frame_t));
             stacked->r0 = 0u;
             stacked->r1 = 0u;
             stacked->r2 = 0u;

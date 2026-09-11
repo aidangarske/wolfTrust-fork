@@ -22,23 +22,14 @@
 #ifndef WOLFTRUST_PLATFORM_H
 #define WOLFTRUST_PLATFORM_H
 
-/* The guest execution context is an architecture-port type: the port defines
- * the concrete struct (Armv8-M: wolftrust/arch/armv8m/context.h) and the core
- * only ever holds pointers to it. */
+/* The guest execution context and the trap frame are architecture-port types:
+ * the port defines the concrete structs (Armv8-M: wolftrust/arch/armv8m/
+ * context.h) and the core only ever holds pointers to them. */
 struct wt_guest_context;
 typedef struct wt_guest_context wt_guest_context_t;
+struct wt_trap_frame;
+typedef struct wt_trap_frame wt_trap_frame_t;
 #include "wolftrust/types.h"
-
-typedef struct wt_trap_frame {
-    uint32_t r0;
-    uint32_t r1;
-    uint32_t r2;
-    uint32_t r3;
-    uint32_t r12;
-    uintptr_t lr;
-    uintptr_t pc;
-    uint32_t xpsr;
-} wt_trap_frame_t;
 
 void wt_platform_init(void);
 void wt_platform_start_secure_timer(uint32_t timeslice_ms);
@@ -66,6 +57,8 @@ void wt_platform_prepare_guest_return(wt_guest_id_t guest_id,
                                       const wt_guest_context_t* context);
 void wt_platform_capture_guest_context(wt_guest_context_t* context,
                                        const wt_trap_frame_t* frame);
+/* Faulting program counter recorded in an opaque trap frame (fault log). */
+uintptr_t wt_platform_trap_pc(const wt_trap_frame_t* frame);
 void wt_platform_restore_guest_context(wt_guest_context_t* context);
 void wt_platform_svc_guest_return(void) __attribute__((noreturn));
 bool wt_platform_in_handler_mode(void);
