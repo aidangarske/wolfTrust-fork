@@ -56,29 +56,86 @@ void* memset(void* destination, int value, size_t size);
 
 #endif /* WT_ENGINE_HSM */
 
-/* Secure MPU attribute encodings. MPU_RBAR[2:1] = AP (access permissions),
- * MPU_RBAR[0]  = XN (execute-never), MPU_RLAR[3:1] = AttrIndx (into MAIR). */
-#define WT_MPU_RBAR_XN       (1u << 0)
-#define WT_MPU_RBAR_AP_RW    (0u << 1)   /* privileged RW, no access from unpriv */
-#define WT_MPU_RBAR_AP_RWRW  (1u << 1)   /* RW from any priv level */
-#define WT_MPU_RBAR_AP_RO    (2u << 1)   /* privileged RO, no access from unpriv */
-#define WT_MPU_RBAR_AP_RORO  (3u << 1)   /* RO from any priv level */
-#define WT_MPU_RBAR_SH_INNER (3u << 3)
-
-#define WT_MPU_RLAR_EN       (1u << 0)
-#define WT_MPU_RLAR_ATTRIDX_NORMAL  (0u << 1)  /* MAIR[0] = normal memory */
-#define WT_MPU_RLAR_ATTRIDX_DEVICE  (1u << 1)  /* MAIR[1] = device memory */
-#define WT_MPU_RLAR_ATTRIDX_NOCACHE (2u << 1)  /* MAIR[2] = normal non-cacheable */
-
-/* MAIR encodings: normal write-back/RA/WA inner+outer = 0xFF;
- * device-nGnRE = 0x04; normal non-cacheable inner+outer = 0x44. */
-#define WT_MPU_MAIR0_NORMAL_AT_0   0x000000FFu
-#define WT_MPU_MAIR0_DEVICE_AT_1   0x00000400u
-#define WT_MPU_MAIR0_NOCACHE_AT_2  0x00440000u
-
 static volatile uint32_t g_secure_service_depth;
 static volatile uint32_t g_hsm_wait_skip_count;
 static volatile uint32_t g_wt_attest_degraded __attribute__((used));
+
+static const wt_armv8m_sau_region_t g_sau_regions[] = {
+    { WT_GUEST0_FLASH_BASE,
+      WT_GUEST1_FLASH_BASE + WT_GUEST1_FLASH_SIZE - 1u, false },
+    { WT_RAM_NS_BASE, WT_RAM_NS_BASE + 0x0009FFFFu, false },
+    { WT_FLASH_NSC_BASE, WT_FLASH_NSC_END, true },
+    { 0x40000000u, 0x4FFFFFFFu, false },
+};
+
+/* Secure-side MPU whitelist, programmed with PRIVDEFENA off by the arch
+ * layer and replayed after every Secure Partition domain. */
+static const wt_armv8m_mpu_region_t g_mpu_s_whitelist[] = {
+    /* Region 0: secure flash RX (image, NSC stubs, .text). */
+    { WT_FLASH_S_BASE, WT_FLASH_S_BASE + WT_FLASH_S_SIZE - 1u,
+      WT_MPU_RBAR_AP_RO | WT_MPU_RBAR_SH_INNER,
+      WT_MPU_RLAR_ATTRIDX_NORMAL },
+
+    /* Region 1: secure flash bank 2 RW-NX. The wolfHSM NVM partition
+     * lives at 0x0C1FC000..0x0C1FFFFF and STM32H5 flash programming
+     * writes data words directly to the destination flash address with
+     * FLASH_CR.PG set (the FLASH controller intercepts the stores).
+     * The peripheral's own LOCK / PG gating is the real write barrier.
+     * Keep this region non-cacheable so an immediate verify reads the flash
+     * controller rather than a cache line populated before programming. */
+    { 0x0C100000u, 0x0C1FFFFFu,
+      WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW | WT_MPU_RBAR_SH_INNER,
+      WT_MPU_RLAR_ATTRIDX_NOCACHE },
+
+    /* Region 2: secure RAM RW-NX (.data/.bss/MSP_S + coroutine stacks). */
+#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
+    { WT_BOOT_HANDOFF_ADDRESS,
+#else
+    { WT_RAM_S_BASE,
+#endif
+      WT_RAM_S_BASE + WT_RAM_S_SIZE - 1u,
+      WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW | WT_MPU_RBAR_SH_INNER,
+      WT_MPU_RLAR_ATTRIDX_NORMAL },
+
+    /* Region 3: NS RAM RW-NX. Secure code touches this through the
+     * 0x20000000 alias to exchange HSM transport buffers with guests
+     * and to write fault-response CSRs. */
+    { WT_RAM_NS_BASE, WT_RAM_NS_BASE + 0x0001FFFFu,
+      WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW | WT_MPU_RBAR_SH_INNER,
+      WT_MPU_RLAR_ATTRIDX_NORMAL },
+
+    /* Region 4: NS flash R (so secure side can read guest image
+     * metadata if needed - current code does not, but the SAU window
+     * exists and we keep it consistent). XN to prevent stray Secure
+     * execution into NS code. */
+    { WT_FLASH_NS_BASE, WT_FLASH_NS_BASE + 0x001FFFFFu,
+      WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RO | WT_MPU_RBAR_SH_INNER,
+      WT_MPU_RLAR_ATTRIDX_NORMAL },
+
+    /* Region 5: SoC peripheral aperture (RCC, GTZC, GPIO, USART, FLASH
+     * controller, RNG, etc.) - both the 0x40000000 NS alias and the
+     * 0x50000000 secure alias fall in one 256 MiB block. */
+    { 0x40000000u, 0x5FFFFFFFu,
+      WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW,
+      WT_MPU_RLAR_ATTRIDX_DEVICE },
+
+    /* Region 6: Cortex private peripheral bus (SCB, NVIC, SAU, MPU,
+     * SysTick - everything in the 0xE0000000..0xE00FFFFF window). */
+    { 0xE0000000u, 0xE00FFFFFu,
+      WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW,
+      WT_MPU_RLAR_ATTRIDX_DEVICE },
+
+    /* Region 7: Secure alias of guest flash images.
+     * RO-XN - the Secure side only reads guest reset vectors and metadata
+     * from here; never executes guest code in Secure state. The 0x08...
+     * NS alias is reachable too (region 4), but on at least one emulator
+     * the Secure-side read of that NS alias returns zero, so we keep this
+     * Secure alias window for reliable access. */
+    { WT_FLASH_TO_S_ALIAS(WT_GUEST0_FLASH_BASE),
+      WT_FLASH_TO_S_ALIAS(WT_GUEST1_FLASH_BASE + WT_GUEST1_FLASH_SIZE - 1u),
+      WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RO | WT_MPU_RBAR_SH_INNER,
+      WT_MPU_RLAR_ATTRIDX_NORMAL },
+};
 
 #ifdef WT_ENGINE_HSM
 static void wt_secure_service_enter(void);
@@ -90,16 +147,6 @@ static void wt_rcc_enable_clock(uintptr_t base,
 {
     whal_Reg_Update((size_t)base, clk->regOffset, clk->enableMask,
                     clk->enableMask);
-}
-
-static void wt_sau_set_region(uint32_t rnr,
-                              uint32_t base,
-                              uint32_t limit_inclusive,
-                              bool nsc)
-{
-    WT_SAU_RNR = rnr;
-    WT_SAU_RBAR = base & 0xFFFFFFE0u;
-    WT_SAU_RLAR = (limit_inclusive & 0xFFFFFFE0u) | (nsc ? 2u : 0u) | 1u;
 }
 
 int wt_platform_guest_flash_wrp_ok(uintptr_t window_base, size_t window_size)
@@ -178,50 +225,6 @@ static void wt_gtzc_init(void)
     }
 }
 
-static void wt_sau_init(void)
-{
-    uint32_t region;
-    uint32_t regionCount = WT_SAU_TYPE & 0xFFu;
-
-    /* Disable the SAU before changing any region pair. Updating RBAR while
-     * the previous RLAR remains enabled creates a transient region spanning
-     * the new base and old limit. That can reclassify the currently executing
-     * Secure image as Non-secure before the matching RLAR write completes. */
-    WT_SAU_CTRL = 0u;
-    wt_dsb();
-    wt_isb();
-
-    /* A preceding Secure stage may leave enabled regions behind. Clear every
-     * implemented slot before installing wolfTrust's complete attribution
-     * map so no higher-priority stale region can override it. */
-    for (region = 0u; region < regionCount; region++) {
-        WT_SAU_RNR = region;
-        WT_SAU_RLAR = 0u;
-    }
-
-    wt_sau_set_region(0u, WT_GUEST0_FLASH_BASE,
-                      WT_GUEST1_FLASH_BASE + WT_GUEST1_FLASH_SIZE - 1u,
-                      false);
-    wt_sau_set_region(1u, WT_RAM_NS_BASE, WT_RAM_NS_BASE + 0x0009FFFFu, false);
-    wt_sau_set_region(2u, WT_FLASH_NSC_BASE, WT_FLASH_NSC_END, true);
-    wt_sau_set_region(3u, 0x40000000u, 0x4FFFFFFFu, false);
-    WT_SAU_CTRL = 1u;
-    wt_dsb();
-    wt_isb();
-}
-
-/* Program one secure MPU region. base/limit are inclusive 32-byte-aligned
- * boundaries; `rbar_flags` carries XN/AP/SH, `rlar_flags` carries AttrIndx. */
-static void wt_mpu_s_set_region(uint32_t rnr, uintptr_t base,
-                                uintptr_t limit_inclusive,
-                                uint32_t rbar_flags, uint32_t rlar_flags)
-{
-    WT_MPU_S_RNR  = rnr;
-    WT_MPU_S_RBAR = ((uint32_t)base & 0xFFFFFFE0u) | rbar_flags;
-    WT_MPU_S_RLAR = (((uint32_t)limit_inclusive & 0xFFFFFFE0u)
-                    | rlar_flags | WT_MPU_RLAR_EN);
-}
-
 volatile void* wt_platform_boot_handoff_region(size_t* size)
 {
     *size = WT_RAM_S_BASE - WT_BOOT_HANDOFF_ADDRESS;
@@ -242,205 +245,6 @@ static void wt_clear_boot_handoff_scratch(void)
     wt_dsb();
 }
 #endif
-
-/* Secure-side MPU whitelist. PRIVDEFENA is OFF, so any access outside
- * the listed regions traps (MemManage / SecureFault). This catches NULL
- * pointer derefs, wild pointer writes, and stray peripheral accesses
- * from inside wolfHSM / wolfCrypt coroutines. Stack overflow is caught
- * separately via PSPLIM_S → UsageFault.STKOF. */
-static void wt_mpu_s_init(void)
-{
-    uint32_t rnr;
-    uint32_t dregion = (WT_MPU_S_TYPE >> 8) & 0xFFu;
-
-    WT_MPU_S_CTRL = 0u;
-    wt_dsb();
-
-    /* MAIR0[7:0]   = Normal WB/RA/WA   (AttrIndx 0)
-     * MAIR0[15:8]  = Device nGnRE      (AttrIndx 1)
-     * MAIR0[23:16] = Normal non-cacheable (AttrIndx 2) */
-    WT_MPU_S_MAIR0 = WT_MPU_MAIR0_NORMAL_AT_0 |
-                     WT_MPU_MAIR0_DEVICE_AT_1 |
-                     WT_MPU_MAIR0_NOCACHE_AT_2;
-    WT_MPU_S_MAIR1 = 0u;
-
-    /* Region 0: secure flash RX (image, NSC stubs, .text). */
-    wt_mpu_s_set_region(0u,
-        WT_FLASH_S_BASE, WT_FLASH_S_BASE + WT_FLASH_S_SIZE - 1u,
-        WT_MPU_RBAR_AP_RO | WT_MPU_RBAR_SH_INNER,
-        WT_MPU_RLAR_ATTRIDX_NORMAL);
-
-    /* Region 1: secure flash bank 2 RW-NX. The wolfHSM NVM partition
-     * lives at 0x0C1FC000..0x0C1FFFFF and STM32H5 flash programming
-     * writes data words directly to the destination flash address with
-     * FLASH_CR.PG set (the FLASH controller intercepts the stores).
-     * The peripheral's own LOCK / PG gating is the real write barrier.
-     * Keep this region non-cacheable so an immediate verify reads the flash
-     * controller rather than a cache line populated before programming. */
-    wt_mpu_s_set_region(1u,
-        0x0C100000u, 0x0C1FFFFFu,
-        WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW | WT_MPU_RBAR_SH_INNER,
-        WT_MPU_RLAR_ATTRIDX_NOCACHE);
-
-    /* Region 2: secure RAM RW-NX (.data/.bss/MSP_S + coroutine stacks). */
-    wt_mpu_s_set_region(2u,
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-        WT_BOOT_HANDOFF_ADDRESS,
-#else
-        WT_RAM_S_BASE,
-#endif
-        WT_RAM_S_BASE + WT_RAM_S_SIZE - 1u,
-        WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW | WT_MPU_RBAR_SH_INNER,
-        WT_MPU_RLAR_ATTRIDX_NORMAL);
-
-    /* Region 3: NS RAM RW-NX. Secure code touches this through the
-     * 0x20000000 alias to exchange HSM transport buffers with guests
-     * and to write fault-response CSRs. */
-    wt_mpu_s_set_region(3u,
-        WT_RAM_NS_BASE, WT_RAM_NS_BASE + 0x0001FFFFu,
-        WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW | WT_MPU_RBAR_SH_INNER,
-        WT_MPU_RLAR_ATTRIDX_NORMAL);
-
-    /* Region 4: NS flash R (so secure side can read guest image
-     * metadata if needed — current code does not, but the SAU window
-     * exists and we keep it consistent). XN to prevent stray Secure
-     * execution into NS code. */
-    wt_mpu_s_set_region(4u,
-        WT_FLASH_NS_BASE, WT_FLASH_NS_BASE + 0x001FFFFFu,
-        WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RO | WT_MPU_RBAR_SH_INNER,
-        WT_MPU_RLAR_ATTRIDX_NORMAL);
-
-    /* Region 5: SoC peripheral aperture (RCC, GTZC, GPIO, USART, FLASH
-     * controller, RNG, etc.) — both the 0x40000000 NS alias and the
-     * 0x50000000 secure alias fall in one 256 MiB block. */
-    wt_mpu_s_set_region(5u,
-        0x40000000u, 0x5FFFFFFFu,
-        WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW,
-        WT_MPU_RLAR_ATTRIDX_DEVICE);
-
-    /* Region 6: Cortex private peripheral bus (SCB, NVIC, SAU, MPU,
-     * SysTick — everything in the 0xE0000000..0xE00FFFFF window). */
-    wt_mpu_s_set_region(6u,
-        0xE0000000u, 0xE00FFFFFu,
-        WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW,
-        WT_MPU_RLAR_ATTRIDX_DEVICE);
-
-    /* Region 7: Secure alias of guest flash images.
-     * RO-XN — the Secure side only reads guest reset vectors and metadata
-     * from here; never executes guest code in Secure state. The 0x08...
-     * NS alias is reachable too (region 4), but on at least one emulator
-     * the Secure-side read of that NS alias returns zero, so we keep this
-     * Secure alias window for reliable access. */
-    wt_mpu_s_set_region(7u,
-        WT_FLASH_TO_S_ALIAS(WT_GUEST0_FLASH_BASE),
-        WT_FLASH_TO_S_ALIAS(WT_GUEST1_FLASH_BASE + WT_GUEST1_FLASH_SIZE - 1u),
-        WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RO | WT_MPU_RBAR_SH_INNER,
-        WT_MPU_RLAR_ATTRIDX_NORMAL);
-
-    /* Silicon implements TYPE.DREGION secure regions (12 on STM32H563, more
-     * than WT_MAX_MEMORY_REGIONS); their reset state is UNKNOWN per PMSAv8, so
-     * explicitly disable every region beyond the whitelist. */
-    for (rnr = WT_MAX_MEMORY_REGIONS; rnr < dregion; rnr++) {
-        WT_MPU_S_RNR  = rnr;
-        WT_MPU_S_RBAR = 0u;
-        WT_MPU_S_RLAR = 0u;
-    }
-
-    /* Enable: PRIVDEFENA=0 (no implicit background region), HFNMIENA=1
-     * so MPU stays active during HardFault/NMI (matches what we want
-     * since our MemManage handler relies on the same region table). */
-    wt_dsb();
-    WT_MPU_S_CTRL = WT_MPU_CTRL_HFNMIENA | WT_MPU_CTRL_ENABLE;
-    wt_dsb();
-    wt_isb();
-}
-
-/* Encode one secure MPU region for a Secure Partition domain. Access is
- * granted at any privilege level so the unprivileged partition thread can
- * reach its own regions; isolation comes from which regions are mapped. */
-static void wt_program_secure_partition_region(uint32_t rnr, uintptr_t base,
-                                               size_t size, uint32_t attributes)
-{
-    uint32_t rbar_flags = WT_MPU_RBAR_SH_INNER;
-    uint32_t rlar_flags = WT_MPU_RLAR_ATTRIDX_NORMAL;
-
-    if ((attributes & WT_MEM_ATTR_EXEC) == 0u) {
-        rbar_flags |= WT_MPU_RBAR_XN;
-    }
-    if ((attributes & WT_MEM_ATTR_WRITE) != 0u) {
-        rbar_flags |= WT_MPU_RBAR_AP_RWRW;
-    }
-    else {
-        rbar_flags |= WT_MPU_RBAR_AP_RORO;
-    }
-    if ((attributes & WT_MEM_ATTR_DEVICE) != 0u) {
-        rbar_flags &= ~WT_MPU_RBAR_SH_INNER;
-        rlar_flags = WT_MPU_RLAR_ATTRIDX_DEVICE;
-    }
-    wt_mpu_s_set_region(rnr, base, base + size - 1u, rbar_flags, rlar_flags);
-}
-
-static void wt_program_sp_domain_regions(const wt_memory_region_t* regions,
-                                         size_t count, uint32_t ctrl)
-{
-    size_t i;
-    uint32_t rnr;
-    uint32_t dregion = (WT_MPU_S_TYPE >> 8) & 0xFFu;
-
-    WT_MPU_S_CTRL = 0u;
-    wt_dsb();
-
-    WT_MPU_S_MAIR0 = WT_MPU_MAIR0_NORMAL_AT_0 |
-                     WT_MPU_MAIR0_DEVICE_AT_1 |
-                     WT_MPU_MAIR0_NOCACHE_AT_2;
-    WT_MPU_S_MAIR1 = 0u;
-
-    for (i = 0u; i < WT_MAX_MEMORY_REGIONS; ++i) {
-        if (regions != NULL && i < count && regions[i].size != 0u) {
-            wt_program_secure_partition_region((uint32_t)i, regions[i].base,
-                                               regions[i].size,
-                                               regions[i].attributes);
-        }
-        else {
-            WT_MPU_S_RNR  = (uint32_t)i;
-            WT_MPU_S_RBAR = 0u;
-            WT_MPU_S_RLAR = 0u;
-        }
-    }
-    for (rnr = WT_MAX_MEMORY_REGIONS; rnr < dregion; rnr++) {
-        WT_MPU_S_RNR  = rnr;
-        WT_MPU_S_RBAR = 0u;
-        WT_MPU_S_RLAR = 0u;
-    }
-
-    wt_dsb();
-    WT_MPU_S_CTRL = ctrl;
-    wt_dsb();
-    wt_isb();
-}
-
-void wt_arch_program_secure_partition_domain(
-    const wt_memory_region_t* regions, size_t count)
-{
-    wt_program_sp_domain_regions(regions, count,
-                                 WT_MPU_CTRL_HFNMIENA | WT_MPU_CTRL_ENABLE);
-}
-
-void wt_arch_program_sp_thread_domain(const wt_memory_region_t* regions,
-                                          size_t count)
-{
-    /* PRIVDEFENA: the unprivileged SP thread is confined to the mapped
-     * regions while the privileged SVC/PendSV/fault handlers keep the
-     * default map, so psa_* requests can reach SPM state (WT-FFM-0011). */
-    wt_program_sp_domain_regions(regions, count,
-                                 WT_MPU_CTRL_PRIVDEFENA |
-                                 WT_MPU_CTRL_HFNMIENA | WT_MPU_CTRL_ENABLE);
-}
-
-void wt_arch_restore_spm_domain(void)
-{
-    wt_mpu_s_init();
-}
 
 static void wt_clock_init(void)
 {
@@ -520,53 +324,6 @@ static void wt_clock_init(void)
                         WT_RCC_CCIPR1_USART3SEL_SHIFT));
 }
 
-static void wt_program_ns_mpu_region(uintptr_t base, size_t size, uint32_t attributes)
-{
-    uint32_t rbar = (uint32_t)(base & 0xFFFFFFE0u);
-    uint32_t rlar = (uint32_t)(((base + size - 1u) & 0xFFFFFFE0u) | 0x1u);
-    bool allow_write = (attributes & WT_MEM_ATTR_WRITE) != 0u;
-    bool allow_read = (attributes & WT_MEM_ATTR_READ) != 0u;
-    bool allow_exec = (attributes & WT_MEM_ATTR_EXEC) != 0u;
-    bool is_device = (attributes & WT_MEM_ATTR_DEVICE) != 0u;
-
-    if (!allow_exec) {
-        rbar |= 0x1u;
-    }
-    if (allow_write) {
-        rbar |= (0x1u << 1);
-    } else if (allow_read) {
-        rbar |= (0x3u << 1);
-    }
-    if (is_device) {
-        rlar |= (0x1u << 1);
-    }
-
-    WT_MPU_NS_RBAR = rbar;
-    WT_MPU_NS_RLAR = rlar;
-}
-
-static void wt_program_ns_mpu_regions(const wt_memory_region_t* regions,
-                                      size_t count)
-{
-    size_t i;
-
-    WT_MPU_NS_CTRL = 0u;
-    WT_MPU_NS_MAIR0 = 0x00000044u;
-
-    for (i = 0; i < WT_MAX_MEMORY_REGIONS; ++i) {
-        WT_MPU_NS_RNR = (uint32_t)i;
-        if (regions != NULL && i < count && regions[i].size != 0u) {
-            wt_program_ns_mpu_region(regions[i].base, regions[i].size,
-                                     regions[i].attributes);
-        } else {
-            WT_MPU_NS_RBAR = 0u;
-            WT_MPU_NS_RLAR = 0u;
-        }
-    }
-
-    WT_MPU_NS_CTRL = 0x1u;
-}
-
 static void wt_configure_uart_gpio_pin(uintptr_t gpio_base, uint32_t pin,
                                        uint32_t af)
 {
@@ -631,8 +388,11 @@ void wt_platform_init(void)
      * base; the Secure vector table begins at the image base after it. */
     WT_SCB_VTOR_S = WT_FLASH_IMAGE_BASE;
     wt_gtzc_init();
-    wt_sau_init();
-    wt_mpu_s_init();
+    wt_armv8m_sau_init(g_sau_regions,
+                       sizeof(g_sau_regions) / sizeof(g_sau_regions[0]));
+    wt_armv8m_mpu_s_init(g_mpu_s_whitelist,
+                         sizeof(g_mpu_s_whitelist) /
+                         sizeof(g_mpu_s_whitelist[0]));
     wt_arch_init();
     /* Enable USART2/USART3 clocks in both security views before guests run. */
     for (size_t i = 0u; i < sizeof(uart_clocks) / sizeof(uart_clocks[0]); ++i) {
@@ -684,11 +444,6 @@ void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
     }
     wt_dsb();
     wt_isb();
-}
-
-void wt_arch_program_guest_domain(const wt_memory_region_t* regions, size_t count)
-{
-    wt_program_ns_mpu_regions(regions, count);
 }
 
 void wt_platform_log_fault(wt_guest_id_t guest_id,
