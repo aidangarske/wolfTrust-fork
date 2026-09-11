@@ -22,10 +22,20 @@
 #ifndef WOLFTRUST_ARCH_ARMV8M_ARMV8M_H
 #define WOLFTRUST_ARCH_ARMV8M_ARMV8M_H
 
+#include <stdint.h>
+
 /* Armv8-M-private entry points shared between the architecture layer and
  * the Cortex-M ports; never part of the neutral core contract. */
 
 /* Exception-return path back to the Non-secure guest after an SVC. */
 void wt_armv8m_svc_guest_return(void) __attribute__((noreturn));
+
+/* Fault record read back through wt_arch_read_fault_address(). */
+void wt_armv8m_note_fault_address(uintptr_t fault_address);
+void wt_armv8m_note_fault(uintptr_t fault_address, uintptr_t pc);
+
+/* Shared tail of MemManage_Handler and UsageFault_Handler; the SecureFault
+ * vector also branches here for a Secure Thread fault. */
+void wt_armv8m_tasklet_fault_entry(void);
 
 #endif /* WOLFTRUST_ARCH_ARMV8M_ARMV8M_H */

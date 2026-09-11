@@ -31,7 +31,10 @@ ARCH_SRCS := \
     $(ROOT)/src/arch/armv8m/coroutine_armv8m.c \
     $(ROOT)/src/arch/armv8m/ffm_nsc.c \
     $(ROOT)/src/arch/armv8m/spm_sp_api.c \
-    $(ROOT)/src/arch/armv8m/spm_svc.c
+    $(ROOT)/src/arch/armv8m/spm_svc.c \
+    $(ROOT)/src/arch/armv8m/guest_context_armv8m.c \
+    $(ROOT)/src/arch/armv8m/sp_fault_armv8m.c \
+    $(ROOT)/src/arch/armv8m/irq_armv8m.c
 
 # CMSE import library for the Non-secure guests, produced by the secure link.
 SECURE_CMSE_IMPLIB := $(BUILD_DIR)/secure_cmse_implib.o

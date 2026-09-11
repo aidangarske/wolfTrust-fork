@@ -77,6 +77,9 @@
 #define WT_CONF_NVM_FLASH_SIZE     0x00002000u
 
 #define WT_RAM_NS_BASE           0x20000000u
+/* Where a guest exception frame may legitimately be stacked. */
+#define WT_PLATFORM_GUEST_STACK_WINDOW_BASE WT_RAM_NS_BASE
+#define WT_PLATFORM_GUEST_STACK_WINDOW_SIZE 0x00020000u
 #define WT_GUEST0_RAM_BASE       0x20000000u
 #define WT_GUEST1_RAM_BASE       0x20010000u
 #define WT_GUEST_RAM_SIZE        0x00010000u
@@ -194,5 +197,7 @@
 #define WT_CONF_DRV_MMIO_SIZE    0x00000100u
 
 #define WT_SHARED_STATUS_ADDR    0x20000000u
+
+#define WT_PLATFORM_CORE_CLOCK_HZ 240000000u
 
 #endif

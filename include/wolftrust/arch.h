@@ -29,6 +29,10 @@
 
 #include "wolftrust/platform.h"
 
+/* Architecture-level boot setup (fault routing, reset authority, exception
+ * priorities); the port calls it once its fabric and memory windows are
+ * programmed and before any guest or partition runs. */
+void wt_arch_init(void);
 void wt_arch_start_secure_timer(uint32_t timeslice_ms);
 void wt_arch_mask_all_guest_irqs(void);
 void wt_arch_apply_irq_mask(const wt_irq_mask_t* mask);
