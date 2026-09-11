@@ -30,6 +30,10 @@ struct wt_co;
 struct wt_spm_call;
 struct wt_trap_frame;
 
+/* OR'd into an entry's arg by fault recovery so a restarted probe differs. */
+#define WT_SP_FAULT_PROBE_RESTARTED 0x40000000
+#define WT_SP_FAULT_PROBE_SECOND    0x20000000
+
 /* Re-issues a blocked call after each wake; the gate stamps the caller id. */
 int wt_spm_sp_call(struct wt_spm_call* call);
 int wt_spm_svc_transport(wt_ffm_runtime_t* runtime, struct wt_spm_call* call);

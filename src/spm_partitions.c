@@ -183,7 +183,8 @@ static void wt_spm_its_entry(void* arg)
          * a client). Its own build so it never races the crossdomain probe.
          * Never built into production images. */
         volatile uint32_t ks_probe;
-        ks_probe = *(const volatile uint32_t*)(uintptr_t)WT_KEYSTORE_BASE;
+        ks_probe = *(const volatile uint32_t*)
+            wt_platform_probe_address(WT_PROBE_KEYSTORE_BAND);
         (void)ks_probe;
 #endif
 #if defined(WT_FFM_NEGATIVE_PROBE) && (WT_FFM_NEGATIVE_PROBE == 1)
@@ -211,7 +212,7 @@ static void wt_spm_its_entry(void* arg)
             wt_arch_sp_fault_probe(2u);
         }
         probe = *(const volatile uint32_t*)
-            wt_platform_out_of_domain_probe_address();
+            wt_platform_probe_address(WT_PROBE_OUT_OF_DOMAIN);
         (void)probe;
 #endif
         (void)wt_storage_service_dispatch(&ctx, NULL, partition_id);
@@ -418,12 +419,13 @@ static void wt_spm_vnet_entry(void* arg)
                              ~(intptr_t)WT_SP_FAULT_PROBE_SECOND);
     if (((intptr_t)arg & WT_SP_FAULT_PROBE_RESTARTED) == 0) {
         probe = *(const volatile uint32_t*)
-            wt_platform_out_of_domain_probe_address();
+            wt_platform_probe_address(WT_PROBE_OUT_OF_DOMAIN);
         (void)probe;
         wt_arch_sp_fault_probe(3u);
     }
     else if (((intptr_t)arg & WT_SP_FAULT_PROBE_SECOND) == 0) {
-        xn_probe = (void (*)(void))(uintptr_t)(WT_VNET_DATA_BASE | 1u);
+        xn_probe = (void (*)(void))
+            (wt_platform_probe_address(WT_PROBE_VNET_DATA_BAND) | 1u);
         xn_probe();
         wt_arch_sp_fault_probe(4u);
     }

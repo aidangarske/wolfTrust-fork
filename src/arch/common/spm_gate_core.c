@@ -165,8 +165,6 @@ static wt_spm_sp_t* wt_spm_slot_for_current(void)
  * partition with this bit set in its entry argument so the re-run skips the
  * deliberate out-of-domain read and serves normally. Chosen above any valid
  * partition id so the entry can still decode the id underneath it. */
-#define WT_SP_FAULT_PROBE_RESTARTED 0x40000000
-#define WT_SP_FAULT_PROBE_SECOND    0x20000000
 
 /* --- Graceful Secure-Partition fault recovery (WT-SYS-0008 / WT-FFM-0017) ---
  * The neutral state machine (wt_sp_recovery_run) sequences these arch-specific

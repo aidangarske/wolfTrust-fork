@@ -64,8 +64,13 @@ size_t wt_platform_conf_sp_grants(int32_t partition_id,
                                   size_t count, size_t max);
 #endif
 #if (defined(WT_FFM_NEGATIVE_PROBE) && (WT_FFM_NEGATIVE_PROBE == 1)) || \
-    (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1))
-uintptr_t wt_platform_out_of_domain_probe_address(void);
+    (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1)) || \
+    (defined(WT_KEYSTORE_NEG_PROBE) && (WT_KEYSTORE_NEG_PROBE == 1))
+/* Addresses the negative probes touch; test builds only. */
+#define WT_PROBE_OUT_OF_DOMAIN   0u
+#define WT_PROBE_KEYSTORE_BAND   1u
+#define WT_PROBE_VNET_DATA_BAND  2u
+uintptr_t wt_platform_probe_address(unsigned int target);
 #endif
 
 #if defined(WT_REMEASURE_PROBE)

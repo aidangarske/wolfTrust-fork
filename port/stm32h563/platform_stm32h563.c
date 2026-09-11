@@ -516,10 +516,20 @@ size_t wt_platform_conf_sp_grants(int32_t partition_id,
 #endif
 
 #if (defined(WT_FFM_NEGATIVE_PROBE) && (WT_FFM_NEGATIVE_PROBE == 1)) || \
-    (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1))
-uintptr_t wt_platform_out_of_domain_probe_address(void)
+    (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1)) || \
+    (defined(WT_KEYSTORE_NEG_PROBE) && (WT_KEYSTORE_NEG_PROBE == 1))
+uintptr_t wt_platform_probe_address(unsigned int target)
 {
-    return (uintptr_t)WT_RAM_S_BASE;
+    switch (target) {
+    case WT_PROBE_KEYSTORE_BAND:
+        return (uintptr_t)WT_KEYSTORE_BASE;
+#if defined(CONFIG_VNET)
+    case WT_PROBE_VNET_DATA_BAND:
+        return (uintptr_t)WT_VNET_DATA_BASE;
+#endif
+    default:
+        return (uintptr_t)WT_RAM_S_BASE;
+    }
 }
 #endif
 
