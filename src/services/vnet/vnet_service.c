@@ -25,6 +25,7 @@
 #include <string.h>
 #include "wolftrust/types.h"
 #include "wolftrust/platform.h"
+#include "wolftrust/arch.h"
 #include "wolftrust/vnet/vnet_abi.h"
 #include "wolftrust/vnet/vnet_switch.h"
 #include "wolftrust/vnet/vnet_errors.h"
@@ -56,7 +57,7 @@ void wt_vnet_service_init_state(void)
 void wt_vnet_service_init(void)
 {
     wt_vnet_service_init_state();
-    wt_platform_configure_ns_irq((uint32_t)WT_VNET_RX_IRQ);
+    wt_arch_route_irq_to_guest((uint32_t)WT_VNET_RX_IRQ);
 }
 
 void wt_vnet_service_refresh_irq(wt_guest_id_t guest_id)
@@ -65,7 +66,7 @@ void wt_vnet_service_refresh_irq(wt_guest_id_t guest_id)
     if (!g_switch_ready) return;
     if ((uint32_t)guest_id >= (uint32_t)WT_MAX_GUESTS) return;
     pending = vnet_switch_irq_pending(&g_switch, (uint32_t)guest_id);
-    wt_platform_set_ns_irq_pending((uint32_t)WT_VNET_RX_IRQ, pending);
+    wt_arch_set_guest_irq_pending((uint32_t)WT_VNET_RX_IRQ, pending);
 }
 
 vnet_switch_t* wt_vnet_service_switch(void)

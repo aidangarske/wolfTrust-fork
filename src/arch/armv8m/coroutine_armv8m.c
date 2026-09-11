@@ -22,6 +22,7 @@
 #include "wolftrust/sched/coroutine_internal.h"
 #include "wolftrust/ffm_domain.h"
 #include "wolftrust/platform.h"
+#include "wolftrust/arch.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -106,13 +107,13 @@ void wt_co_arch_enter(struct wt_co *to)
 
     g_wt_co_pendsv_target = to;
     if (domain != NULL) {
-        wt_platform_program_sp_thread_domain(domain->regions,
+        wt_arch_program_sp_thread_domain(domain->regions,
                                              domain->region_count);
     }
     wt_co_arch_request_preempt();
     /* Reached again only after `to` yielded/faulted back to bootstrap. */
     if (domain != NULL) {
-        wt_platform_restore_spm_domain();
+        wt_arch_restore_spm_domain();
     }
 }
 
@@ -146,7 +147,7 @@ void SVC_Handler(void)
          * caller is a Secure Partition attempting the scheduler's own SVC,
          * which fails the platform closed instead of restoring SPM state. */
         "tst  lr, #4                       \n"
-        "beq  wt_platform_svc_guest_return \n"
+        "beq  wt_armv8m_svc_guest_return \n"
         "b    wt_platform_panic            \n"
         "2:                                \n"
         "cmp  r3, #0x01                    \n"

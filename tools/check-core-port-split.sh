@@ -37,8 +37,12 @@ scan hard 'core #include of an arch header' '#[[:space:]]*include[[:space:]]*"wo
 scan hard 'CMSE usage in core' '\bwt_cmse_[a-z_]+[[:space:]]*\(|__attribute__\(\([^)]*cmse'
 scan hard 'inline assembly in core' '__asm|asm[[:space:]]+volatile'
 retired='\bwt_mpu_region(_t)?\b|\bWT_MAX_MPU_REGIONS\b|\bmpu_region(s|_count)\b|\bWT_BOOT_HANDOFF_ADDRESS\b'
+# Architecture ops the core reaches through wolftrust/arch.h (wt_arch_*) now;
+# the old wt_platform_ spellings and the CMSE feature macro are arch leaks.
+retired="$retired"'|\bwt_platform_(start_secure_timer|mask_all_guest_irqs|apply_irq_mask|quarantine_pending_irqs|program_ns_mpu|program_secure_partition_domain|program_sp_thread_domain|restore_spm_domain|prepare_guest_return|capture_guest_context|trap_pc|restore_guest_context|svc_guest_return|in_handler_mode|ns_thread_mode_trap|secure_psp_thread_trap|return_to_secure_thread|zero_guest_memory|read_fault_address|restore_ns_bank|secure_irq_(en|dis)able|active_guest_id|configure_ns_irq|set_ns_irq_pending|dmb|dsb|guest_context_ready)\b|\bwt_spm_thread_unprivileged\b|__ARM_FEATURE_CMSE'
 scan hard 'retired MPU-named contract types in core' "$retired"
 scan soft 'MPU/GTZC/SAU/NVIC register names in core' 'MPU->|GTZC|\bSAU\b|NVIC->|NVIC_'
+scan soft 'M-profile vocabulary in core (promote to hard after the arch extraction)' '\b(PSP|MSP|EXC_RETURN|BXNS|ITNS|AIRCR|VTOR|SCB_|SAU_|CONTROL_NS|xPSR|IPSR|PSPLIM|MSPLIM|PendSV|SysTick)\b'
 
 echo
 echo "SUMMARY: hard leaks=$HARD  soft(register-name) hits=$SOFT"

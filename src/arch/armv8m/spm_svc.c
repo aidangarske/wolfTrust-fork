@@ -31,6 +31,7 @@
 #include "wolftrust/ffm_domain.h"
 #include "wolftrust/monitor.h"
 #include "wolftrust/platform.h"
+#include "wolftrust/arch.h"
 #include "wolftrust/sched/coroutine.h"
 #include "wolftrust/sched/coroutine_internal.h"
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
@@ -220,11 +221,11 @@ static void wt_spm_fault_scrub(void* ctx)
 {
     wt_spm_fault_ctx_t* c = (wt_spm_fault_ctx_t*)ctx;
 
-    wt_platform_zero_guest_memory(c->slot->scrub_base, c->slot->scrub_size);
+    wt_arch_zero_guest_memory(c->slot->scrub_base, c->slot->scrub_size);
     /* WT-FFM-0051: the domain's declared RESTART_CLEAR data band is private
      * state too; the restarted entry re-initializes it from scratch. */
     if (c->slot->scrub2_size != 0u) {
-        wt_platform_zero_guest_memory(c->slot->scrub2_base,
+        wt_arch_zero_guest_memory(c->slot->scrub2_base,
                                       c->slot->scrub2_size);
     }
 }
@@ -642,7 +643,7 @@ void wt_spm_svc_entry(uint32_t* frame)
      * signal, so a level source cannot re-pend until the SP finishes. */
     if ((call->op == WT_SPM_OP_IRQ_ENABLE || call->op == WT_SPM_OP_EOI) &&
             call->ret_int == WT_FFM_SUCCESS)
-        wt_platform_secure_irq_enable(call->ret_version);
+        wt_arch_secure_irq_enable(call->ret_version);
     /* FF-M PROGRAMMER ERROR the SPM must panic the caller for. Conformance
      * resets (val resumes off its flash boot flag, P5 K3); production lands
      * the partition's resume PC on an undefined instruction so the UsageFault
@@ -758,7 +759,7 @@ int wt_spm_measure_read_call(unsigned int index, void* record,
     return call.ret_int;
 }
 
-int wt_spm_thread_unprivileged(void)
+int wt_arch_thread_unprivileged(void)
 {
     unsigned int control;
     unsigned int ipsr;
@@ -915,7 +916,7 @@ void wt_spm_conf_irq(uint32_t irq)
     /* Mask first: a level source (UART TXE) would re-pend forever. The line
      * runs at the lowest priority, so this handler never nests inside the SVC
      * gate and the asserted_signals update cannot race it. */
-    wt_platform_secure_irq_disable(irq);
+    wt_arch_secure_irq_disable(irq);
     if (g_spm_svc_runtime != NULL &&
             wt_ffm_irq_route(g_spm_svc_runtime, irq, &partition_id,
                              &signal) == WT_FFM_SUCCESS) {

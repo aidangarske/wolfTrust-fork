@@ -20,6 +20,7 @@
  */
 
 #include "wolftrust/ffm_boot.h"
+#include "wolftrust/arch.h"
 #include "wolftrust/guest_verify.h"
 #include "wolftrust/monitor.h"
 #include "wolftrust/restart_policy.h"
@@ -301,14 +302,14 @@ static void wt_apply_partition(wt_guest_id_t guest_id)
 
     wt_platform_program_memory_windows(config->memory_windows,
                                        config->memory_window_count);
-    wt_platform_program_ns_mpu(config->memory_regions,
+    wt_arch_program_guest_domain(config->memory_regions,
                                config->memory_region_count);
     /* Per-guest irq_mask is authoritative. Guests that want IRQ-driven
      * VNET RX must list WT_VNET_RX_IRQ in their partition config; the
      * dispatch-time reflection in wt_vnet_service_refresh_irq still
      * maintains the pending bit either way, so poll-only guests work
      * via vnet_rx_poll without touching the NVIC. */
-    wt_platform_apply_irq_mask(&config->irq_mask);
+    wt_arch_apply_irq_mask(&config->irq_mask);
 }
 
 static void wt_dispatch_guest(wt_guest_id_t guest_id)
@@ -340,9 +341,9 @@ static void wt_dispatch_guest(wt_guest_id_t guest_id)
 #ifdef CONFIG_VNET
     wt_vnet_service_refresh_irq(guest_id);
 #endif
-    wt_platform_start_secure_timer(config->timeslice_ms);
-    wt_platform_prepare_guest_return(guest_id, runtime->context);
-    wt_platform_restore_guest_context(runtime->context);
+    wt_arch_start_secure_timer(config->timeslice_ms);
+    wt_arch_guest_context_prepare(guest_id, runtime->context);
+    wt_arch_guest_context_restore(runtime->context);
 }
 
 #ifdef WT_ENGINE_HSM
@@ -365,11 +366,11 @@ static void wt_dispatch_hsm_tasklet(wt_guest_id_t guest_id)
     wt_apply_partition(guest_id);
     g_scheduler.current_guest = guest_id;
     g_scheduler.current_rep = WT_SCHED_REP_HSM;
-    wt_platform_start_secure_timer(config->timeslice_ms);
+    wt_arch_start_secure_timer(config->timeslice_ms);
     /* The tasklet completes back into this guest's NS thread via BXNS, not an
      * exception return, so its NS bank must be reinstated here or it resumes
      * on the previous guest's CONTROL_NS/MSP_NS. */
-    wt_platform_restore_ns_bank(runtime->context);
+    wt_arch_restore_guest_bank(runtime->context);
     (void)wt_tasklet_resume(tasklet);
 }
 #endif
@@ -392,7 +393,7 @@ static void wt_save_running_guest(const wt_trap_frame_t* frame)
         (current->state == WT_GUEST_RUNNING ||
          current->state == WT_GUEST_WAITING_HSM)) {
         state = current->state;
-        wt_platform_capture_guest_context(current->context, frame);
+        wt_arch_guest_context_capture(current->context, frame);
         current->state = (state == WT_GUEST_WAITING_HSM) ?
                          WT_GUEST_WAITING_HSM : WT_GUEST_READY;
     }
@@ -432,7 +433,7 @@ static void wt_restart_guest(wt_guest_id_t guest_id, wt_fault_reason_t reason)
 
     restart_window = wt_find_restart_clear_window(config);
     if (restart_window != NULL) {
-        wt_platform_zero_guest_memory(restart_window->base, restart_window->size);
+        wt_arch_zero_guest_memory(restart_window->base, restart_window->size);
     }
 }
 
@@ -454,16 +455,16 @@ static void wt_schedule_next_guest(void)
             wt_platform_all_guests_faulted();
         }
 
-        wt_platform_quarantine_pending_irqs(&g_scheduler.configs[next_guest].irq_mask);
+        wt_arch_quarantine_pending_irqs(&g_scheduler.configs[next_guest].irq_mask);
         if (rep == WT_SCHED_REP_NS) {
             wt_dispatch_guest(next_guest);
         }
 #ifdef WT_ENGINE_HSM
         else {
-            if (wt_platform_in_handler_mode()) {
+            if (wt_arch_in_handler_mode()) {
                 g_pending_tasklet_guest = next_guest;
                 g_pending_tasklet_guest_valid = true;
-                wt_platform_return_to_secure_thread(wt_resume_pending_tasklet_guest);
+                wt_arch_return_to_secure_thread(wt_resume_pending_tasklet_guest);
             }
 
             wt_dispatch_hsm_tasklet(next_guest);
@@ -532,7 +533,7 @@ void wt_monitor_init(void)
         g_scheduler.runtime[i].restart_count = 0U;
         g_scheduler.runtime[i].first_restart_tick = 0U;
         wt_partition_reset_runtime(&g_scheduler.configs[i], &g_scheduler.runtime[i]);
-        if (!wt_platform_guest_context_ready(g_scheduler.runtime[i].context)) {
+        if (!wt_arch_guest_context_ready(g_scheduler.runtime[i].context)) {
             wt_platform_panic();
         }
         launch_ret = wt_verify_guest_launch((wt_guest_id_t)i);
@@ -556,7 +557,7 @@ void wt_monitor_start(void)
 {
     wt_guest_id_t next_guest;
 
-    wt_platform_mask_all_guest_irqs();
+    wt_arch_mask_all_guest_irqs();
     next_guest = wt_find_next_runnable(0U, NULL);
     if (next_guest >= g_scheduler.guest_count) {
         wt_platform_all_guests_faulted();
@@ -568,7 +569,7 @@ void wt_monitor_start(void)
 void wt_monitor_on_secure_timer(const wt_trap_frame_t* frame)
 {
     g_scheduler.monotonic_ticks++;
-    wt_platform_mask_all_guest_irqs();
+    wt_arch_mask_all_guest_irqs();
 #ifdef WT_ENGINE_HSM
     if (wt_tasklet_current() != (wt_tasklet_t *)0) {
         wt_guest_id_t tasklet_guest =
@@ -582,7 +583,7 @@ void wt_monitor_on_secure_timer(const wt_trap_frame_t* frame)
          * the in-flight switch — the confboot silent-hang/INVPC flake. */
         if (tasklet_guest < g_scheduler.guest_count &&
             g_scheduler.runtime[tasklet_guest].state == WT_GUEST_WAITING_HSM &&
-            wt_platform_secure_psp_thread_trap()) {
+            wt_arch_trap_from_secure_thread()) {
             (void)wt_tasklet_request_preempt();
         }
         return;
@@ -591,7 +592,7 @@ void wt_monitor_on_secure_timer(const wt_trap_frame_t* frame)
         return;
     }
 #endif
-    if (!wt_platform_ns_thread_mode_trap()) {
+    if (!wt_arch_trap_from_guest_thread()) {
         wt_tick_restart_backoff();
         return;
     }
@@ -609,12 +610,12 @@ void wt_monitor_on_guest_fault(const wt_trap_frame_t* frame,
         wt_platform_panic();
     }
 
-    wt_platform_mask_all_guest_irqs();
-    wt_platform_capture_guest_context(current->context, frame);
+    wt_arch_mask_all_guest_irqs();
+    wt_arch_guest_context_capture(current->context, frame);
     wt_platform_log_fault(g_scheduler.current_guest,
                           reason,
-                          wt_platform_read_fault_address(),
-                          wt_platform_trap_pc(frame));
+                          wt_arch_read_fault_address(),
+                          wt_arch_trap_pc(frame));
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
     /* The Arm suite's PROGRAMMER-ERROR checks that fault inside the NS client
      * (e.g. dereferencing a Secure address as an iovec array) expect a system

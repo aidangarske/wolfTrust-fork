@@ -28,6 +28,7 @@
 #include "wolftrust/arch/armv8m/cmse.h"
 #include "wolftrust/ffm_boot.h"
 #include "wolftrust/platform.h"
+#include "wolftrust/arch.h"
 #include "wolftrust/types.h"
 
 extern volatile uint32_t g_wt_ffm_call_trace;
@@ -55,7 +56,7 @@ void wt_ffm_nsc_install(void)
  * vnet NS veneers. Never trust a guest-supplied VM id. */
 static int wt_ffm_veneer_caller(psa_client_id_t* caller)
 {
-    uint32_t guest_id = wt_platform_active_guest_id();
+    uint32_t guest_id = wt_arch_active_guest_id();
 
     if (guest_id >= (uint32_t)WT_MAX_GUESTS) {
         return 0;

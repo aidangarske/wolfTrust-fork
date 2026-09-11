@@ -94,15 +94,9 @@ typedef enum wt_spm_op {
 #define WT_SPM_KS_LOCK_ACQUIRE 0
 #define WT_SPM_KS_LOCK_RELEASE 1
 
-/* True when executing as an unprivileged Secure thread (a confined
- * partition); such code reaches privileged platform services only through
- * the SVC gate. Handler mode is always privileged even when the interrupted
- * thread's CONTROL.nPRIV is set, so the gate's own re-entry into these seams
- * takes the direct path. Host builds are never unprivileged. The CMSE
- * definition reads CONTROL/IPSR and lives in the arch SVC layer so this core
- * header carries no architecture assembly. */
-#if defined(__ARM_FEATURE_CMSE)
-int wt_spm_thread_unprivileged(void);
+/* Gated Secure Partition calls, defined in the arch SVC layer. The
+ * unprivileged-thread query is wt_arch_thread_unprivileged (wolftrust/arch.h). */
+#ifdef WT_TARGET_BUILD
 /* Gated NVM-lock hop for the keystore lock callback (defined in the arch SVC
  * layer); loops internally until the lock is granted. Returns 0 on success. */
 int wt_spm_keystore_lock_call(int sub_op);
@@ -112,11 +106,6 @@ int wt_spm_keystore_lock_call(int sub_op);
  * Returns 0 on success. */
 int wt_spm_measure_read_call(unsigned int index, void* record,
                              unsigned int record_len, unsigned int* count);
-#else
-static inline int wt_spm_thread_unprivileged(void)
-{
-    return 0;
-}
 #endif
 
 /* SP-as-client iovec capacity per direction (i003 widens with the NS veneer). */

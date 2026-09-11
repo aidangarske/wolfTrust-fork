@@ -19,9 +19,11 @@
  */
 
 #include "wolftrust/platform.h"
+#include "wolftrust/arch.h"
 #include "wolftrust/guest_verify.h"
 #include "wolftrust/monitor.h"
 #include "wolftrust/arch/armv8m/context.h"
+#include "wolftrust/arch/armv8m/armv8m.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -488,14 +490,14 @@ static void wt_program_sp_domain_regions(const wt_memory_region_t* regions,
     wt_isb();
 }
 
-void wt_platform_program_secure_partition_domain(
+void wt_arch_program_secure_partition_domain(
     const wt_memory_region_t* regions, size_t count)
 {
     wt_program_sp_domain_regions(regions, count,
                                  WT_MPU_CTRL_HFNMIENA | WT_MPU_CTRL_ENABLE);
 }
 
-void wt_platform_program_sp_thread_domain(const wt_memory_region_t* regions,
+void wt_arch_program_sp_thread_domain(const wt_memory_region_t* regions,
                                           size_t count)
 {
     /* PRIVDEFENA: the unprivileged SP thread is confined to the mapped
@@ -506,7 +508,7 @@ void wt_platform_program_sp_thread_domain(const wt_memory_region_t* regions,
                                  WT_MPU_CTRL_HFNMIENA | WT_MPU_CTRL_ENABLE);
 }
 
-void wt_platform_restore_spm_domain(void)
+void wt_arch_restore_spm_domain(void)
 {
     wt_mpu_s_init();
 }
@@ -624,19 +626,19 @@ void wt_secure_thread_resume_trampoline(void)
     __builtin_unreachable();
 }
 
-bool wt_platform_in_handler_mode(void)
+bool wt_arch_in_handler_mode(void)
 {
     return wt_read_ipsr() != 0u;
 }
 
-bool wt_platform_ns_thread_mode_trap(void)
+bool wt_arch_trap_from_guest_thread(void)
 {
     return (g_live_exc_return &
             (WT_EXC_RETURN_MODE_THREAD | WT_EXC_RETURN_SECURITY_MASK)) ==
            (WT_EXC_RETURN_MODE_THREAD | WT_EXC_RETURN_RETURN_TO_NONSECURE);
 }
 
-bool wt_platform_secure_psp_thread_trap(void)
+bool wt_arch_trap_from_secure_thread(void)
 {
     /* True only when the tick landed on a Secure Thread running on PSP —
      * i.e. a coroutine is physically executing, not merely named current
@@ -649,7 +651,7 @@ bool wt_platform_secure_psp_thread_trap(void)
             WT_EXC_RETURN_SECURITY_MASK);
 }
 
-void wt_platform_return_to_secure_thread(
+void wt_arch_return_to_secure_thread(
     void (*entry)(void) __attribute__((noreturn)))
 {
     if (entry == NULL || wt_read_ipsr() == 0u) {
@@ -763,7 +765,7 @@ static void wt_exception_return_ns_msp(void)
 }
 
 __attribute__((naked, noreturn))
-void wt_platform_svc_guest_return(void)
+void wt_armv8m_svc_guest_return(void)
 {
     __asm volatile(
         "mrs r2, msp                    \n"
@@ -914,8 +916,8 @@ void wt_platform_init(void)
     }
     wt_rcc_enable_clock(WT_RCC_BASE_S, &rng_clock);
     wt_uart_gpio_init();
-    wt_platform_zero_guest_memory(WT_GUEST0_RAM_BASE, WT_GUEST_RAM_SIZE);
-    wt_platform_zero_guest_memory(WT_GUEST1_RAM_BASE, WT_GUEST_RAM_SIZE);
+    wt_arch_zero_guest_memory(WT_GUEST0_RAM_BASE, WT_GUEST_RAM_SIZE);
+    wt_arch_zero_guest_memory(WT_GUEST1_RAM_BASE, WT_GUEST_RAM_SIZE);
     g_switch_count = 0u;
     g_active_guest = UINT32_MAX;
     g_secure_service_depth = 0u;
@@ -923,7 +925,7 @@ void wt_platform_init(void)
     g_tasklet_fault_count = 0u;
 }
 
-void wt_platform_start_secure_timer(uint32_t timeslice_ms)
+void wt_arch_start_secure_timer(uint32_t timeslice_ms)
 {
     uint32_t reload;
 
@@ -945,7 +947,7 @@ static void wt_arm_secure_timer(void)
                   WT_SYST_CSR_ENABLE;
 }
 
-void wt_platform_mask_all_guest_irqs(void)
+void wt_arch_mask_all_guest_irqs(void)
 {
     volatile uint32_t* icer = (volatile uint32_t*)0xE000E180u;
     size_t i;
@@ -955,7 +957,7 @@ void wt_platform_mask_all_guest_irqs(void)
     }
 }
 
-void wt_platform_apply_irq_mask(const wt_irq_mask_t* mask)
+void wt_arch_apply_irq_mask(const wt_irq_mask_t* mask)
 {
     volatile uint32_t* iser = (volatile uint32_t*)0xE000E100u;
     size_t i;
@@ -969,7 +971,7 @@ void wt_platform_apply_irq_mask(const wt_irq_mask_t* mask)
     }
 }
 
-void wt_platform_quarantine_pending_irqs(const wt_irq_mask_t* allowed_mask)
+void wt_arch_quarantine_pending_irqs(const wt_irq_mask_t* allowed_mask)
 {
     volatile uint32_t* icpr = (volatile uint32_t*)0xE000E280u;
     size_t i;
@@ -1022,7 +1024,7 @@ void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
     wt_isb();
 }
 
-void wt_platform_program_ns_mpu(const wt_memory_region_t* regions, size_t count)
+void wt_arch_program_guest_domain(const wt_memory_region_t* regions, size_t count)
 {
     wt_program_ns_mpu_regions(regions, count);
 }
@@ -1211,7 +1213,7 @@ static void wt_virtual_systick_reset(wt_guest_id_t guest_id)
     systick->max_owed_ticks = 0u;
 }
 
-void wt_platform_prepare_guest_return(wt_guest_id_t guest_id,
+void wt_arch_guest_context_prepare(wt_guest_id_t guest_id,
                                       const wt_guest_context_t* context)
 {
     if (context == NULL) {
@@ -1232,12 +1234,12 @@ void wt_platform_prepare_guest_return(wt_guest_id_t guest_id,
     wt_virtual_systick_restore_arriving(guest_id);
 }
 
-uintptr_t wt_platform_trap_pc(const wt_trap_frame_t* frame)
+uintptr_t wt_arch_trap_pc(const wt_trap_frame_t* frame)
 {
     return frame->pc;
 }
 
-void wt_platform_capture_guest_context(wt_guest_context_t* context,
+void wt_arch_guest_context_capture(wt_guest_context_t* context,
                                        const wt_trap_frame_t* frame)
 {
     wt_trap_frame_t* stacked;
@@ -1276,7 +1278,7 @@ void wt_platform_capture_guest_context(wt_guest_context_t* context,
     context->frame_stacked = true;
 }
 
-void wt_platform_restore_guest_context(wt_guest_context_t* context)
+void wt_arch_guest_context_restore(wt_guest_context_t* context)
 {
     g_switch_count++;
 
@@ -1316,7 +1318,7 @@ void wt_platform_restore_guest_context(wt_guest_context_t* context)
     wt_exception_return_ns_msp();
 }
 
-void wt_platform_zero_guest_memory(uintptr_t base, size_t size)
+void wt_arch_zero_guest_memory(uintptr_t base, size_t size)
 {
     volatile uint32_t* ptr = (volatile uint32_t*)base;
     size_t words = size / sizeof(uint32_t);
@@ -1344,7 +1346,7 @@ void wt_platform_log_fault(wt_guest_id_t guest_id,
     g_last_fault_pc = (uint32_t)pc;
 }
 
-uintptr_t wt_platform_read_fault_address(void)
+uintptr_t wt_arch_read_fault_address(void)
 {
     return g_last_fault_address;
 }
@@ -1413,17 +1415,17 @@ void wt_platform_system_reset(void)
     }
 }
 
-void wt_platform_dmb(void)
+void wt_arch_dmb(void)
 {
     wt_dmb();
 }
 
-void wt_platform_dsb(void)
+void wt_arch_dsb(void)
 {
     wt_dsb();
 }
 
-bool wt_platform_guest_context_ready(const wt_guest_context_t* context)
+bool wt_arch_guest_context_ready(const wt_guest_context_t* context)
 {
     return (context != NULL) && (context->pc != 0u);
 }
@@ -1433,7 +1435,7 @@ bool wt_platform_guest_context_ready(const wt_guest_context_t* context)
  * not the exception-return path, so nothing else reinstates its NS bank — the
  * previous guest's CONTROL_NS/MSP_NS would leak in and the thread resumes on
  * the wrong stack. Mirrors wt_exception_return_ns_msp (MSPLIM_NS stays 0). */
-void wt_platform_restore_ns_bank(const wt_guest_context_t* context)
+void wt_arch_restore_guest_bank(const wt_guest_context_t* context)
 {
     uint32_t zero = 0u;
 
@@ -1449,7 +1451,7 @@ void wt_platform_restore_ns_bank(const wt_guest_context_t* context)
           "r"(context->psplim_ns), "r"(zero), "r"(context->control_ns));
 }
 
-void wt_platform_secure_irq_enable(uint32_t irq)
+void wt_arch_secure_irq_enable(uint32_t irq)
 {
     uint32_t word = irq >> 5;
     uint32_t bit = irq & 31u;
@@ -1473,7 +1475,7 @@ void wt_platform_secure_irq_enable(uint32_t irq)
         WT_NVIC_ISER1 = (1u << bit);
 }
 
-void wt_platform_secure_irq_disable(uint32_t irq)
+void wt_arch_secure_irq_disable(uint32_t irq)
 {
     uint32_t word = irq >> 5;
     uint32_t bit = irq & 31u;
@@ -1501,7 +1503,7 @@ void wt_conf_uart_irq_set(int on)
                           WT_LPUART1_CR1_TXEIE;
     } else {
         WT_LPUART1_CR1 &= ~WT_LPUART1_CR1_TXEIE;
-        wt_platform_secure_irq_disable(WT_LPUART1_IRQ);
+        wt_arch_secure_irq_disable(WT_LPUART1_IRQ);
     }
 }
 
@@ -1511,12 +1513,12 @@ void LPUART1_IRQHandler(void)
 }
 #endif
 
-uint32_t wt_platform_active_guest_id(void)
+uint32_t wt_arch_active_guest_id(void)
 {
     return g_active_guest;
 }
 
-void wt_platform_configure_ns_irq(uint32_t irq)
+void wt_arch_route_irq_to_guest(uint32_t irq)
 {
     volatile uint32_t *itns = (volatile uint32_t *)0xE000E380u;
     uint32_t word = irq >> 5;
@@ -1530,7 +1532,7 @@ void wt_platform_configure_ns_irq(uint32_t irq)
     itns[word] |= (1u << bit);
 }
 
-void wt_platform_set_ns_irq_pending(uint32_t irq, bool asserted)
+void wt_arch_set_guest_irq_pending(uint32_t irq, bool asserted)
 {
     uint32_t word = irq >> 5;
     uint32_t bit  = irq & 31u;

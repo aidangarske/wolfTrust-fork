@@ -2,7 +2,7 @@
 # mk/target-<soc>.mk and before mk/common.mk.
 TOOLPREFIX ?= arm-none-eabi-
 CPU_FLAGS := -mcpu=$(WT_CPU) -mthumb -mgeneral-regs-only
-ARCH_CFLAGS := -mcmse
+ARCH_CFLAGS := -mcmse -DWT_TARGET_BUILD=1
 WT_WOLFCRYPT_SP_ASM ?= 1
 WT_WOLFCRYPT_ARMASM ?= 1
 

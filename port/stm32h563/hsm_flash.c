@@ -27,6 +27,7 @@
 #include "wolftrust/arch/armv8m/spm_svc.h"
 #include "wolftrust/services/fwu_service.h"
 #include "wolftrust/spm_gate.h"
+#include "wolftrust/arch.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -333,7 +334,7 @@ static int wt_hsm_flash_cleanup(void *context)
     if (context == NULL) {
         return WH_ERROR_BADARGS;
     }
-    if (wt_spm_thread_unprivileged()) {
+    if (wt_arch_thread_unprivileged()) {
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_CLEANUP, 0u, 0u,
                                  NULL);
     }
@@ -387,7 +388,7 @@ static int wt_hsm_flash_read(void *context, uint32_t offset, uint32_t size,
     if (data == NULL && size != 0u) {
         return WH_ERROR_BADARGS;
     }
-    if (wt_spm_thread_unprivileged()) {
+    if (wt_arch_thread_unprivileged()) {
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_READ, offset, size,
                                  data);
     }
@@ -411,7 +412,7 @@ static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
     if (data == NULL && size != 0u) {
         return WH_ERROR_BADARGS;
     }
-    if (wt_spm_thread_unprivileged()) {
+    if (wt_arch_thread_unprivileged()) {
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_PROGRAM, offset,
                                  size, (void *)(uintptr_t)data);
     }
@@ -492,7 +493,7 @@ static int wt_hsm_flash_erase(void *context, uint32_t offset, uint32_t size)
     uint32_t start;
     uint32_t end;
 
-    if (wt_spm_thread_unprivileged()) {
+    if (wt_arch_thread_unprivileged()) {
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_ERASE, offset, size,
                                  NULL);
     }
@@ -579,7 +580,7 @@ static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
     if (data == NULL && size != 0u) {
         return WH_ERROR_BADARGS;
     }
-    if (wt_spm_thread_unprivileged()) {
+    if (wt_arch_thread_unprivileged()) {
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_VERIFY, offset,
                                  size, (void *)(uintptr_t)data);
     }
@@ -615,7 +616,7 @@ static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
     uint32_t i;
     int ret;
 
-    if (wt_spm_thread_unprivileged()) {
+    if (wt_arch_thread_unprivileged()) {
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_BLANKCHECK, offset,
                                  size, NULL);
     }

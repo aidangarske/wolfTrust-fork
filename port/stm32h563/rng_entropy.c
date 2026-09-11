@@ -33,6 +33,7 @@
 
 #include "wolftrust/arch/armv8m/spm_svc.h"
 #include "wolftrust/spm_gate.h"
+#include "wolftrust/arch.h"
 
 /* Prototype matches the declaration in user_settings.h (CUSTOM_RAND_GENERATE_BLOCK). */
 int wolftrust_rng_generate_block(unsigned char *output, unsigned int sz);
@@ -82,7 +83,7 @@ int wolftrust_rng_generate_block(unsigned char *output, unsigned int sz)
 {
     /* A confined keystore partition cannot touch the RNG peripheral or its
      * clock; the SVC dispatcher runs the direct half privileged. */
-    if (wt_spm_thread_unprivileged()) {
+    if (wt_arch_thread_unprivileged()) {
         wt_spm_call_t call;
 
         (void)memset(&call, 0, sizeof(call));

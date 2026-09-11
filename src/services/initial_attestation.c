@@ -22,6 +22,7 @@
 
 #include "wolftrust/guest_verify.h"
 #include "wolftrust/spm_gate.h"
+#include "wolftrust/arch.h"
 
 #include "wolftrust/services/attestation_cose.h"
 #include "wolftrust/services/hsm.h"
@@ -172,8 +173,8 @@ static int wt_attest_prepare(void)
  * privileged and host callers read the table directly. */
 static size_t wt_attest_measurement_count(void)
 {
-#if defined(__ARM_FEATURE_CMSE)
-    if (wt_spm_thread_unprivileged()) {
+#if defined(WT_TARGET_BUILD)
+    if (wt_arch_thread_unprivileged()) {
         unsigned int count = 0u;
 
         if (wt_spm_measure_read_call(0u, NULL, 0u, &count) != 0) {
@@ -190,8 +191,8 @@ static int wt_attest_measurement_get(size_t index,
 {
     const wt_guest_measurement_t* rec;
 
-#if defined(__ARM_FEATURE_CMSE)
-    if (wt_spm_thread_unprivileged()) {
+#if defined(WT_TARGET_BUILD)
+    if (wt_arch_thread_unprivileged()) {
         return wt_spm_measure_read_call((unsigned int)index, record,
                                         (unsigned int)sizeof(*record), NULL);
     }
