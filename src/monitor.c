@@ -301,8 +301,8 @@ static void wt_apply_partition(wt_guest_id_t guest_id)
 
     wt_platform_program_memory_windows(config->memory_windows,
                                        config->memory_window_count);
-    wt_platform_program_ns_mpu(config->mpu_regions,
-                               config->mpu_region_count);
+    wt_platform_program_ns_mpu(config->memory_regions,
+                               config->memory_region_count);
     /* Per-guest irq_mask is authoritative. Guests that want IRQ-driven
      * VNET RX must list WT_VNET_RX_IRQ in their partition config; the
      * dispatch-time reflection in wt_vnet_service_refresh_irq still

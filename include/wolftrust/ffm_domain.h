@@ -32,7 +32,7 @@
  * no Armv8-M or MPU register detail. WT-FFM-0011. */
 typedef struct wt_secure_domain {
     wt_domain_id_t domain_id;
-    wt_mpu_region_t regions[WT_MAX_MPU_REGIONS];
+    wt_memory_region_t regions[WT_MAX_MEMORY_REGIONS];
     size_t region_count;
     uintptr_t stack_base;
     size_t stack_size;
@@ -72,7 +72,7 @@ int wt_secure_domain_contains(const wt_secure_domain_t* domain,
  * unmapped and faulting. Fails closed when the combined set exceeds the MPU,
  * leaving out_table empty. */
 int wt_ffm_compose_secure_partition_table(const wt_secure_domain_t* domain,
-                                          const wt_mpu_region_t* shared,
+                                          const wt_memory_region_t* shared,
                                           size_t shared_count,
                                           wt_secure_domain_t* out_table);
 

@@ -36,6 +36,8 @@ echo "wolfTrust core/port split guard (CORE = src + include/wolftrust, minus arc
 scan hard 'core #include of an arch header' '#[[:space:]]*include[[:space:]]*"wolftrust/arch/'
 scan hard 'CMSE usage in core' '\bwt_cmse_[a-z_]+[[:space:]]*\(|__attribute__\(\([^)]*cmse'
 scan hard 'inline assembly in core' '__asm|asm[[:space:]]+volatile'
+retired='\bwt_mpu_region(_t)?\b|\bWT_MAX_MPU_REGIONS\b|\bmpu_region(s|_count)\b'
+scan hard 'retired MPU-named contract types in core' "$retired"
 scan soft 'MPU/GTZC/SAU/NVIC register names in core' 'MPU->|GTZC|\bSAU\b|NVIC->|NVIC_'
 
 echo

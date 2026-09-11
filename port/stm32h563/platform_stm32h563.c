@@ -412,9 +412,9 @@ static void wt_mpu_s_init(void)
         WT_MPU_RLAR_ATTRIDX_NORMAL);
 
     /* Silicon implements TYPE.DREGION secure regions (12 on STM32H563, more
-     * than WT_MAX_MPU_REGIONS); their reset state is UNKNOWN per PMSAv8, so
+     * than WT_MAX_MEMORY_REGIONS); their reset state is UNKNOWN per PMSAv8, so
      * explicitly disable every region beyond the whitelist. */
-    for (rnr = WT_MAX_MPU_REGIONS; rnr < dregion; rnr++) {
+    for (rnr = WT_MAX_MEMORY_REGIONS; rnr < dregion; rnr++) {
         WT_MPU_S_RNR  = rnr;
         WT_MPU_S_RBAR = 0u;
         WT_MPU_S_RLAR = 0u;
@@ -454,7 +454,7 @@ static void wt_program_secure_partition_region(uint32_t rnr, uintptr_t base,
     wt_mpu_s_set_region(rnr, base, base + size - 1u, rbar_flags, rlar_flags);
 }
 
-static void wt_program_sp_domain_regions(const wt_mpu_region_t* regions,
+static void wt_program_sp_domain_regions(const wt_memory_region_t* regions,
                                          size_t count, uint32_t ctrl)
 {
     size_t i;
@@ -469,7 +469,7 @@ static void wt_program_sp_domain_regions(const wt_mpu_region_t* regions,
                      WT_MPU_MAIR0_NOCACHE_AT_2;
     WT_MPU_S_MAIR1 = 0u;
 
-    for (i = 0u; i < WT_MAX_MPU_REGIONS; ++i) {
+    for (i = 0u; i < WT_MAX_MEMORY_REGIONS; ++i) {
         if (regions != NULL && i < count && regions[i].size != 0u) {
             wt_program_secure_partition_region((uint32_t)i, regions[i].base,
                                                regions[i].size,
@@ -481,7 +481,7 @@ static void wt_program_sp_domain_regions(const wt_mpu_region_t* regions,
             WT_MPU_S_RLAR = 0u;
         }
     }
-    for (rnr = WT_MAX_MPU_REGIONS; rnr < dregion; rnr++) {
+    for (rnr = WT_MAX_MEMORY_REGIONS; rnr < dregion; rnr++) {
         WT_MPU_S_RNR  = rnr;
         WT_MPU_S_RBAR = 0u;
         WT_MPU_S_RLAR = 0u;
@@ -493,14 +493,14 @@ static void wt_program_sp_domain_regions(const wt_mpu_region_t* regions,
     wt_isb();
 }
 
-void wt_platform_program_secure_partition_domain(const wt_mpu_region_t* regions,
-                                                 size_t count)
+void wt_platform_program_secure_partition_domain(
+    const wt_memory_region_t* regions, size_t count)
 {
     wt_program_sp_domain_regions(regions, count,
                                  WT_MPU_CTRL_HFNMIENA | WT_MPU_CTRL_ENABLE);
 }
 
-void wt_platform_program_sp_thread_domain(const wt_mpu_region_t* regions,
+void wt_platform_program_sp_thread_domain(const wt_memory_region_t* regions,
                                           size_t count)
 {
     /* PRIVDEFENA: the unprivileged SP thread is confined to the mapped
@@ -712,7 +712,7 @@ static void wt_program_ns_mpu_region(uintptr_t base, size_t size, uint32_t attri
     WT_MPU_NS_RLAR = rlar;
 }
 
-static void wt_program_ns_mpu_regions(const wt_mpu_region_t* regions,
+static void wt_program_ns_mpu_regions(const wt_memory_region_t* regions,
                                       size_t count)
 {
     size_t i;
@@ -720,7 +720,7 @@ static void wt_program_ns_mpu_regions(const wt_mpu_region_t* regions,
     WT_MPU_NS_CTRL = 0u;
     WT_MPU_NS_MAIR0 = 0x00000044u;
 
-    for (i = 0; i < WT_MAX_MPU_REGIONS; ++i) {
+    for (i = 0; i < WT_MAX_MEMORY_REGIONS; ++i) {
         WT_MPU_NS_RNR = (uint32_t)i;
         if (regions != NULL && i < count && regions[i].size != 0u) {
             wt_program_ns_mpu_region(regions[i].base, regions[i].size,
@@ -1027,7 +1027,7 @@ void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
     wt_isb();
 }
 
-void wt_platform_program_ns_mpu(const wt_mpu_region_t* regions, size_t count)
+void wt_platform_program_ns_mpu(const wt_memory_region_t* regions, size_t count)
 {
     wt_program_ns_mpu_regions(regions, count);
 }

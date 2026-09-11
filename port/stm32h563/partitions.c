@@ -119,7 +119,7 @@ static wt_guest_config_t g_partition_configs[] = {
              WT_RESOURCE_SHARE_NONE}
         },
         .memory_window_count = 2U,
-        .mpu_regions = {
+        .memory_regions = {
             {WT_GUEST0_FLASH_BASE, WT_GUEST0_FLASH_SIZE,
              WT_MEM_ATTR_READ | WT_MEM_ATTR_EXEC},
             {0x20000000U, 0x00010000U, WT_MEM_ATTR_READ | WT_MEM_ATTR_WRITE},
@@ -132,7 +132,7 @@ static wt_guest_config_t g_partition_configs[] = {
             {WT_FLASH_NSC_BASE, (WT_FLASH_NSC_END - WT_FLASH_NSC_BASE + 1U),
              WT_MEM_ATTR_READ | WT_MEM_ATTR_EXEC}
         },
-        .mpu_region_count = 4U,
+        .memory_region_count = 4U,
         .restart_policy = {
             .restart_limit = 3U,
             .restart_window_ticks = 64U,
@@ -165,7 +165,7 @@ static wt_guest_config_t g_partition_configs[] = {
              WT_RESOURCE_SHARE_NONE}
         },
         .memory_window_count = 2U,
-        .mpu_regions = {
+        .memory_regions = {
             {WT_GUEST1_FLASH_BASE, WT_GUEST1_FLASH_SIZE,
              WT_MEM_ATTR_READ | WT_MEM_ATTR_EXEC},
             {0x20010000U, 0x00010000U, WT_MEM_ATTR_READ | WT_MEM_ATTR_WRITE},
@@ -175,7 +175,7 @@ static wt_guest_config_t g_partition_configs[] = {
             {WT_FLASH_NSC_BASE, (WT_FLASH_NSC_END - WT_FLASH_NSC_BASE + 1U),
              WT_MEM_ATTR_READ | WT_MEM_ATTR_EXEC}
         },
-        .mpu_region_count = 4U,
+        .memory_region_count = 4U,
         .restart_policy = {
             .restart_limit = 3U,
             .restart_window_ticks = 64U,
@@ -383,7 +383,7 @@ int wt_partitions_bind_manifest(const wt_system_manifest_t* manifest)
          * resources become caller-band windows, the declared console UART is
          * the only device grant accepted (pinned to the compiled address),
          * and unused slots are cleared so no static grant survives. */
-        if (domain->memory_resource_count > WT_MAX_MPU_REGIONS - 1U) {
+        if (domain->memory_resource_count > WT_MAX_MEMORY_REGIONS - 1U) {
             return -1;
         }
         size_t window_count = 0U;
@@ -421,9 +421,9 @@ int wt_partitions_bind_manifest(const wt_system_manifest_t* manifest)
                 config->memory_windows[window_count] = *manifest_resource;
                 window_count++;
             }
-            config->mpu_regions[region_count].base = manifest_resource->base;
-            config->mpu_regions[region_count].size = manifest_resource->size;
-            config->mpu_regions[region_count].attributes = mpu_attributes;
+            config->memory_regions[region_count].base = manifest_resource->base;
+            config->memory_regions[region_count].size = manifest_resource->size;
+            config->memory_regions[region_count].attributes = mpu_attributes;
             region_count++;
         }
         if (window_count != config->memory_window_count) {
@@ -431,19 +431,19 @@ int wt_partitions_bind_manifest(const wt_system_manifest_t* manifest)
         }
         /* NSC veneer fetch window: a platform policy object every NS domain
          * needs to reach the SG gateway (SAU NSC + NS MPU execute). */
-        config->mpu_regions[region_count].base = WT_FLASH_NSC_BASE;
-        config->mpu_regions[region_count].size =
+        config->memory_regions[region_count].base = WT_FLASH_NSC_BASE;
+        config->memory_regions[region_count].size =
             WT_FLASH_NSC_END - WT_FLASH_NSC_BASE + 1U;
-        config->mpu_regions[region_count].attributes =
+        config->memory_regions[region_count].attributes =
             WT_MEM_ATTR_READ | WT_MEM_ATTR_EXEC;
         region_count++;
-        for (size_t clear = region_count; clear < WT_MAX_MPU_REGIONS;
+        for (size_t clear = region_count; clear < WT_MAX_MEMORY_REGIONS;
                 ++clear) {
-            config->mpu_regions[clear].base = 0U;
-            config->mpu_regions[clear].size = 0U;
-            config->mpu_regions[clear].attributes = 0U;
+            config->memory_regions[clear].base = 0U;
+            config->memory_regions[clear].size = 0U;
+            config->memory_regions[clear].attributes = 0U;
         }
-        config->mpu_region_count = region_count;
+        config->memory_region_count = region_count;
 
         if (domain->entry_point == 0U ||
                 domain->interrupt_resource_count > WT_MAX_IRQ_WORDS * 32U ||

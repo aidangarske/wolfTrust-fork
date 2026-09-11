@@ -33,7 +33,7 @@
 #endif
 #define WT_MAX_IRQ_WORDS 8U
 #define WT_MAX_MEMORY_WINDOWS 8U
-#define WT_MAX_MPU_REGIONS 8U
+#define WT_MAX_MEMORY_REGIONS 8U
 #define WT_MAX_NAME_LEN 16U
 
 #define WT_MEM_ATTR_READ          WT_MEMORY_ATTR_READ
@@ -68,11 +68,11 @@ typedef struct wt_irq_mask {
 
 typedef wt_memory_resource_t wt_memory_window_t;
 
-typedef struct wt_mpu_region {
+typedef struct wt_memory_region {
     uintptr_t base;
     size_t size;
     uint32_t attributes;
-} wt_mpu_region_t;
+} wt_memory_region_t;
 
 typedef struct wt_restart_policy {
     uint32_t restart_limit;

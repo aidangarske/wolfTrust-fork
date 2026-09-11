@@ -47,18 +47,19 @@ void wt_platform_apply_irq_mask(const wt_irq_mask_t* mask);
 void wt_platform_quarantine_pending_irqs(const wt_irq_mask_t* allowed_mask);
 void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
                                         size_t count);
-void wt_platform_program_ns_mpu(const wt_mpu_region_t* regions, size_t count);
+void wt_platform_program_ns_mpu(const wt_memory_region_t* regions,
+                                size_t count);
 /* Narrow the secure MPU to a single Secure Partition's protection domain
  * (WT-FFM-0011): program regions 0..count-1 from the composed table and
  * disable the rest, so any access outside the partition's regions faults.
  * wt_platform_restore_spm_domain reinstates the full SPM whitelist. */
-void wt_platform_program_secure_partition_domain(const wt_mpu_region_t* regions,
-                                                 size_t count);
+void wt_platform_program_secure_partition_domain(
+    const wt_memory_region_t* regions, size_t count);
 /* Variant for an unprivileged Secure Partition thread (P1t): identical
  * region set, but PRIVDEFENA stays on so the privileged SVC/PendSV/fault
  * handlers keep default-map access while the unprivileged thread is
  * confined to the mapped regions. */
-void wt_platform_program_sp_thread_domain(const wt_mpu_region_t* regions,
+void wt_platform_program_sp_thread_domain(const wt_memory_region_t* regions,
                                           size_t count);
 void wt_platform_restore_spm_domain(void);
 void wt_platform_prepare_guest_return(wt_guest_id_t guest_id,

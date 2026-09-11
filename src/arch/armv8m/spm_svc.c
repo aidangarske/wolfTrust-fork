@@ -1011,7 +1011,7 @@ static int wt_spm_sched_dispatch(void* context, wt_ffm_runtime_t* runtime,
 static size_t wt_spm_conf_grant(wt_secure_domain_t* table, size_t count,
                                 uintptr_t base, uintptr_t end)
 {
-    if (base < end && count < WT_MAX_MPU_REGIONS) {
+    if (base < end && count < WT_MAX_MEMORY_REGIONS) {
         table->regions[count].base = base;
         table->regions[count].size = (uint32_t)(end - base);
         table->regions[count].attributes = WT_MEM_ATTR_READ |
@@ -1027,7 +1027,7 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
                                    wt_spm_sp_entry_fn entry, void* arg)
 {
     wt_spm_sp_t* slot;
-    const wt_mpu_region_t* stack_region;
+    const wt_memory_region_t* stack_region;
     size_t region_count;
     size_t i;
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
@@ -1085,7 +1085,7 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
      * image window (constant data and the signed tail) read-only XN, plus the
      * domain's non-EXEC resources. Every scheduled SP is confined this way;
      * no wide privileged table exists any more (WT-FFM-0011/0010). NOTE: in
-     * conformance builds the Arm client SP uses exactly WT_MAX_MPU_REGIONS
+     * conformance builds the Arm client SP uses exactly WT_MAX_MEMORY_REGIONS
      * (2 flash + stack + 5 window grants) — a new fixed region needs a
      * budget re-count. */
     slot->table.regions[0].base = WT_FLASH_S_BASE;
@@ -1098,7 +1098,7 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
     slot->table.regions[1].attributes = WT_MEM_ATTR_READ;
     region_count = 2u;
     for (i = 0u; i < g_spm_sp_domain.region_count &&
-            region_count < WT_MAX_MPU_REGIONS; i++) {
+            region_count < WT_MAX_MEMORY_REGIONS; i++) {
         if ((g_spm_sp_domain.regions[i].attributes & WT_MEM_ATTR_EXEC) ==
                 0u) {
             slot->table.regions[region_count] =
@@ -1163,7 +1163,7 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
     slot->scrub2_base = 0u;
     slot->scrub2_size = 0u;
     for (i = 0u; i < g_spm_sp_domain.region_count; i++) {
-        const wt_mpu_region_t* region = &g_spm_sp_domain.regions[i];
+        const wt_memory_region_t* region = &g_spm_sp_domain.regions[i];
 
         if (region == stack_region ||
                 (region->attributes & WT_MEMORY_ATTR_RESTART_CLEAR) == 0u ||

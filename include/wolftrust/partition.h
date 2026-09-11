@@ -44,8 +44,8 @@ typedef struct wt_guest_config {
     wt_irq_mask_t irq_mask;
     wt_memory_window_t memory_windows[WT_MAX_MEMORY_WINDOWS];
     size_t memory_window_count;
-    wt_mpu_region_t mpu_regions[WT_MAX_MPU_REGIONS];
-    size_t mpu_region_count;
+    wt_memory_region_t memory_regions[WT_MAX_MEMORY_REGIONS];
+    size_t memory_region_count;
     wt_restart_policy_t restart_policy;
     uint32_t timeslice_ms;
     wt_guest_port_binding_t port;

@@ -60,7 +60,7 @@ int wt_ffm_resolve_secure_domain(const wt_system_manifest_t* manifest,
             domain->security_state != WT_SECURITY_STATE_SECURE) {
         return WT_SECURE_DOMAIN_ERROR_CLASS;
     }
-    if (domain->memory_resource_count > WT_MAX_MPU_REGIONS ||
+    if (domain->memory_resource_count > WT_MAX_MEMORY_REGIONS ||
             (domain->memory_resource_count != 0U &&
              domain->memory_resources == NULL)) {
         return WT_SECURE_DOMAIN_ERROR_CAPACITY;
@@ -101,7 +101,7 @@ int wt_secure_domain_contains(const wt_secure_domain_t* domain,
     end = addr + len;
 
     for (i = 0U; i < domain->region_count; i++) {
-        const wt_mpu_region_t* region = &domain->regions[i];
+        const wt_memory_region_t* region = &domain->regions[i];
         uintptr_t region_end;
 
         if (region->size == 0U ||
@@ -124,7 +124,7 @@ int wt_secure_domain_contains(const wt_secure_domain_t* domain,
 }
 
 int wt_ffm_compose_secure_partition_table(const wt_secure_domain_t* domain,
-                                          const wt_mpu_region_t* shared,
+                                          const wt_memory_region_t* shared,
                                           size_t shared_count,
                                           wt_secure_domain_t* out_table)
 {
@@ -140,7 +140,7 @@ int wt_ffm_compose_secure_partition_table(const wt_secure_domain_t* domain,
     out_table->region_count = 0U;
 
     total = shared_count + domain->region_count;
-    if (shared_count > WT_MAX_MPU_REGIONS || total > WT_MAX_MPU_REGIONS) {
+    if (shared_count > WT_MAX_MEMORY_REGIONS || total > WT_MAX_MEMORY_REGIONS) {
         return WT_SECURE_DOMAIN_ERROR_CAPACITY;
     }
 

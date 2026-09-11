@@ -86,7 +86,7 @@ static const wt_domain_descriptor_t domains[5] = {
         .domain_class = WT_DOMAIN_CLASS_SECURE_PARTITION,
         .security_state = WT_SECURITY_STATE_SECURE,
         .memory_resources = overflow_memory,
-        .memory_resource_count = WT_MAX_MPU_REGIONS + 1U
+        .memory_resource_count = WT_MAX_MEMORY_REGIONS + 1U
     }
 };
 
@@ -108,7 +108,7 @@ static void check(int ok, const char* what)
     }
 }
 
-static const wt_mpu_region_t secure_code[1] = {
+static const wt_memory_region_t secure_code[1] = {
     {SEC_CODE_BASE, SEC_CODE_SIZE, WT_MEM_ATTR_READ | WT_MEM_ATTR_EXEC}
 };
 
@@ -206,7 +206,7 @@ int main(void)
 
     /* Overflowing the MPU fails closed with an empty table. */
     result = wt_ffm_compose_secure_partition_table(&sp1, secure_code,
-        WT_MAX_MPU_REGIONS, &table);
+        WT_MAX_MEMORY_REGIONS, &table);
     check(result == WT_SECURE_DOMAIN_ERROR_CAPACITY,
           "oversized composition rejected");
     check(table.region_count == 0U, "oversized composition leaves empty");
