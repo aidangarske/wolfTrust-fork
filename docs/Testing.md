@@ -30,7 +30,8 @@ Current suites cover domain and manifest validation, lifecycle, guest
 verification, rollback decisions, IPC and FF-M behavior, SPM policy, gateway
 vectors, Secure Partition layout and recovery, HSM relay and key isolation,
 vault and storage services, attestation and COSE integration, firmware update,
-runtime remeasurement, VNET, public PSA headers, and negative paths.
+runtime remeasurement, VNET, public PSA headers, boot-handoff record
+consumption, and negative paths.
 
 Additional host checks:
 

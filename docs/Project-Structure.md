@@ -18,6 +18,7 @@
 | `mk/` | Build fragments: `common.mk` (every rule shared by all targets), `arch-<arch>.mk` (toolchain and architecture sources), `target-<soc>.mk` (SoC sources, placement, and image checks) |
 | `tools/manifest/` | Manifest validation and C/header generation |
 | `tools/measure/` | Guest-measurement record patching before image signing |
+| `tools/handoff/` | Boot-handoff record generation and validation for emulator runs and host tests |
 | `tests/host/` | Native unit and integration suites |
 | `tests/target/` | M33MU and STM32H563 build, flash, provisioning, and scenario runners |
 | `tests/firmware/` | Bare-metal, Zephyr, FreeRTOS, conformance, and VNET guest images |
