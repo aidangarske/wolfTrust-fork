@@ -104,6 +104,27 @@ void wt_arch_sp_fault_probe(unsigned int code)
     }
 }
 
+/* A failed service-side call is a programmer error: fault the partition so
+ * the SPM's fault path deals with it instead of running on bad state. The
+ * faulting read also identifies the failing wrapper in the emulator's
+ * register dump (PC/LR) — a silent spin here is undebuggable on target. */
+__attribute__((noreturn, noinline))
+void wt_arch_sp_panic(uint32_t op, uint32_t code, uint32_t extra)
+{
+    /* Pin the diagnostics into callee-saved registers the fault dump prints;
+     * plain unused params get optimized out of the call sites entirely. */
+    register uint32_t diag_op __asm__("r4") = op;
+    register uint32_t diag_code __asm__("r5") = code;
+    register uint32_t diag_extra __asm__("r6") = extra;
+    volatile uint32_t probe;
+
+    __asm__ volatile("" : : "r"(diag_op), "r"(diag_code), "r"(diag_extra));
+    probe = *(const volatile uint32_t*)0xEFFFFFF4u;
+    (void)probe;
+    for (;;) {
+    }
+}
+
 /* r0 = call in, r0 = gate-level status out (written into the stacked frame
  * by the privileged dispatcher). */
 __attribute__((naked))
@@ -115,49 +136,6 @@ int wt_arch_sp_trap(wt_spm_call_t* call __attribute__((unused)))
     );
 }
 
-/* SP-side transport: trap each request to the privileged gate. A blocking op
- * (wait, or an SP-to-SP connect/call/close) comes back with the stale
- * NOT_READY result after the coroutine is rewoken, so re-issue until the
- * request really completes. Only a call that actually suspended is re-issued:
- * a PSA_POLL wait miss also reports NOT_READY but must return, not spin. */
-int wt_spm_svc_transport(wt_ffm_runtime_t* runtime, wt_spm_call_t* call)
-{
-    int status;
-
-    (void)runtime;
-    for (;;) {
-        status = wt_arch_sp_trap(call);
-        if (status != WT_FFM_SUCCESS || wt_spm_call_would_block(call) == 0) {
-            break;
-        }
-    }
-    return status;
-}
-
-int wt_spm_sp_call(struct wt_spm_call* call)
-{
-    return wt_spm_svc_transport(NULL, call);
-}
-
-int wt_spm_measure_read_call(unsigned int index, void* record,
-                             unsigned int record_len, unsigned int* count)
-{
-    wt_spm_call_t call;
-
-    (void)memset(&call, 0, sizeof(call));
-    call.op = WT_SPM_OP_MEASURE_READ;
-    call.vec_idx = index;
-    call.buffer = record;
-    call.num_bytes = record_len;
-    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS) {
-        return -1;
-    }
-    if (count != NULL) {
-        *count = (unsigned int)call.ret_size;
-    }
-    return call.ret_int;
-}
-
 int wt_arch_thread_unprivileged(void)
 {
     unsigned int control;
@@ -165,26 +143,6 @@ int wt_arch_thread_unprivileged(void)
     __asm volatile("mrs %0, control" : "=r"(control));
     __asm volatile("mrs %0, ipsr" : "=r"(ipsr));
     return (int)(ipsr == 0u && (control & 1u) != 0u);
-}
-
-int wt_spm_keystore_lock_call(int sub_op)
-{
-    wt_spm_call_t call;
-
-    for (;;) {
-        (void)memset(&call, 0, sizeof(call));
-        call.op = WT_SPM_OP_KEYSTORE_LOCK;
-        call.call_type = sub_op;
-        if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS) {
-            return -1;
-        }
-        if (call.ret_int != 1) {
-            return call.ret_int;
-        }
-        /* Enqueued: the dispatcher blocked this coroutine on exception
-         * return; the release hands ownership over before waking, so the
-         * re-issue observes it and returns acquired. */
-    }
 }
 
 /* Diagnostic trap for a scheduler livelock: pack the scheduler state into the
@@ -213,3 +171,4 @@ void wt_arch_diag_trap(uint32_t a, uint32_t b, uint32_t c)
     (void)probe;
 #endif
 }
+

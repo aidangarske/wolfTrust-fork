@@ -30,7 +30,6 @@ ARCH_SRCS := \
     $(ROOT)/src/arch/armv8m/cmse.c \
     $(ROOT)/src/arch/armv8m/coroutine_armv8m.c \
     $(ROOT)/src/arch/armv8m/ffm_nsc.c \
-    $(ROOT)/src/arch/armv8m/spm_sp_api.c \
     $(ROOT)/src/arch/armv8m/spm_svc.c \
     $(ROOT)/src/arch/armv8m/guest_context_armv8m.c \
     $(ROOT)/src/arch/armv8m/sp_fault_armv8m.c \

@@ -19,7 +19,7 @@
  */
 
 /* Secure-Partition-side psa_* API (WT-FFM-0014): every call marshals a
- * wt_spm_call_t and traps to the privileged gate via SVC, so unmodified Arm
+ * wt_spm_call_t and traps to the privileged gate (wt_arch_sp_trap), so unmodified Arm
  * partition code links these symbols and runs unprivileged inside its manifest
  * MPU domain. Replaces the direct src/ffm_api.c implementations in the target
  * image — those touch SPM state an unprivileged thread cannot reach. */
@@ -30,29 +30,9 @@
 #include "psa/lifecycle.h"
 #include "psa/service.h"
 
+#include "wolftrust/arch.h"
 #include "wolftrust/spm_transport.h"
 #include "wolftrust/spm_gate.h"
-
-/* A failed service-side call is a programmer error: fault the partition so
- * the SPM's fault path deals with it instead of running on bad state. The
- * faulting read also identifies the failing wrapper in the emulator's
- * register dump (PC/LR) — a silent spin here is undebuggable on target. */
-__attribute__((noreturn, noinline))
-static void wt_sp_api_panic(uint32_t op, uint32_t code, uint32_t extra)
-{
-    /* Pin the diagnostics into callee-saved registers the fault dump prints;
-     * plain unused params get optimized out of the call sites entirely. */
-    register uint32_t diag_op __asm__("r4") = op;
-    register uint32_t diag_code __asm__("r5") = code;
-    register uint32_t diag_extra __asm__("r6") = extra;
-    volatile uint32_t probe;
-
-    __asm__ volatile("" : : "r"(diag_op), "r"(diag_code), "r"(diag_extra));
-    probe = *(const volatile uint32_t*)0xEFFFFFF4u;
-    (void)probe;
-    for (;;) {
-    }
-}
 
 psa_signal_t psa_wait(psa_signal_t signal_mask, uint32_t timeout)
 {
@@ -95,7 +75,7 @@ void psa_set_rhandle(psa_handle_t msg_handle, void* rhandle)
     call.rhandle = rhandle;
     if (wt_spm_sp_call(&call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
-        wt_sp_api_panic(call.op, (uint32_t)call.ret_int,
+        wt_arch_sp_panic(call.op, (uint32_t)call.ret_int,
                         (uint32_t)msg_handle);
     }
 }
@@ -145,7 +125,7 @@ void psa_write(psa_handle_t msg_handle, uint32_t outvec_idx,
     call.num_bytes = num_bytes;
     if (wt_spm_sp_call(&call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
-        wt_sp_api_panic(call.op, (uint32_t)call.ret_int,
+        wt_arch_sp_panic(call.op, (uint32_t)call.ret_int,
                         (uint32_t)msg_handle);
     }
 }
@@ -162,7 +142,7 @@ void psa_reply(psa_handle_t msg_handle, psa_status_t status)
      * default error, so checking it would panic on every reply. */
     if (wt_spm_sp_call(&call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
-        wt_sp_api_panic(call.op, (uint32_t)call.ret_int,
+        wt_arch_sp_panic(call.op, (uint32_t)call.ret_int,
                         (uint32_t)msg_handle);
     }
 }
@@ -176,7 +156,7 @@ void psa_notify(int32_t partition_id)
     call.notify_partition = partition_id;
     if (wt_spm_sp_call(&call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
-        wt_sp_api_panic(call.op, (uint32_t)call.ret_int,
+        wt_arch_sp_panic(call.op, (uint32_t)call.ret_int,
                         (uint32_t)partition_id);
     }
 }
@@ -189,7 +169,7 @@ void psa_clear(void)
     call.op = WT_SPM_OP_CLEAR;
     if (wt_spm_sp_call(&call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
-        wt_sp_api_panic(call.op, (uint32_t)call.ret_int, 0u);
+        wt_arch_sp_panic(call.op, (uint32_t)call.ret_int, 0u);
     }
 }
 
@@ -202,7 +182,7 @@ void psa_eoi(psa_signal_t irq_signal)
     call.signal_mask = irq_signal;
     if (wt_spm_sp_call(&call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
-        wt_sp_api_panic(call.op, (uint32_t)call.ret_int, irq_signal);
+        wt_arch_sp_panic(call.op, (uint32_t)call.ret_int, irq_signal);
     }
 }
 
@@ -215,13 +195,13 @@ void psa_irq_enable(psa_signal_t irq_signal)
     call.signal_mask = irq_signal;
     if (wt_spm_sp_call(&call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
-        wt_sp_api_panic(call.op, (uint32_t)call.ret_int, irq_signal);
+        wt_arch_sp_panic(call.op, (uint32_t)call.ret_int, irq_signal);
     }
 }
 
 void psa_panic(void)
 {
-    wt_sp_api_panic(0xAB0u, 0u, 0u);
+    wt_arch_sp_panic(0xAB0u, 0u, 0u);
 }
 
 uint32_t psa_rot_lifecycle_state(void)
@@ -285,7 +265,7 @@ psa_status_t psa_call(psa_handle_t handle, int32_t type,
     if (in_len > WT_SPM_SP_IOVEC || out_len > WT_SPM_SP_IOVEC) {
         /* FF-M: a Secure caller exceeding PSA_MAX_IOVEC is a PROGRAMMER ERROR
          * the framework must panic the partition for, never a status. */
-        wt_sp_api_panic(WT_SPM_OP_CALL, (uint32_t)in_len, (uint32_t)out_len);
+        wt_arch_sp_panic(WT_SPM_OP_CALL, (uint32_t)in_len, (uint32_t)out_len);
     }
     (void)memset(&call, 0, sizeof(call));
     call.op = WT_SPM_OP_CALL;
@@ -324,6 +304,70 @@ void psa_close(psa_handle_t handle)
     call.msg_handle = handle;
     if (wt_spm_sp_call(&call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
-        wt_sp_api_panic(call.op, (uint32_t)call.ret_int, (uint32_t)handle);
+        wt_arch_sp_panic(call.op, (uint32_t)call.ret_int, (uint32_t)handle);
     }
 }
+
+/* SP-side transport: trap each request to the privileged gate. A blocking op
+ * (wait, or an SP-to-SP connect/call/close) comes back with the stale
+ * NOT_READY result after the coroutine is rewoken, so re-issue until the
+ * request really completes. Only a call that actually suspended is re-issued:
+ * a PSA_POLL wait miss also reports NOT_READY but must return, not spin. */
+int wt_spm_svc_transport(wt_ffm_runtime_t* runtime, wt_spm_call_t* call)
+{
+    int status;
+
+    (void)runtime;
+    for (;;) {
+        status = wt_arch_sp_trap(call);
+        if (status != WT_FFM_SUCCESS || wt_spm_call_would_block(call) == 0) {
+            break;
+        }
+    }
+    return status;
+}
+
+int wt_spm_sp_call(struct wt_spm_call* call)
+{
+    return wt_spm_svc_transport(NULL, call);
+}
+
+int wt_spm_measure_read_call(unsigned int index, void* record,
+                             unsigned int record_len, unsigned int* count)
+{
+    wt_spm_call_t call;
+
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_MEASURE_READ;
+    call.vec_idx = index;
+    call.buffer = record;
+    call.num_bytes = record_len;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS) {
+        return -1;
+    }
+    if (count != NULL) {
+        *count = (unsigned int)call.ret_size;
+    }
+    return call.ret_int;
+}
+
+int wt_spm_keystore_lock_call(int sub_op)
+{
+    wt_spm_call_t call;
+
+    for (;;) {
+        (void)memset(&call, 0, sizeof(call));
+        call.op = WT_SPM_OP_KEYSTORE_LOCK;
+        call.call_type = sub_op;
+        if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS) {
+            return -1;
+        }
+        if (call.ret_int != 1) {
+            return call.ret_int;
+        }
+        /* Enqueued: the dispatcher blocked this coroutine on exception
+         * return; the release hands ownership over before waking, so the
+         * re-issue observes it and returns acquired. */
+    }
+}
+

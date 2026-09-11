@@ -120,6 +120,18 @@ void wt_arch_assert_privileged_thread(void);
 void wt_arch_sp_fault_probe(unsigned int code);
 /* Diagnostic trap with three words pinned where the fault dump shows them. */
 void wt_arch_diag_trap(uint32_t a, uint32_t b, uint32_t c);
+/* Partition-side programmer-error panic: pins the three words where the
+ * fault dump shows them and faults; never returns. */
+void wt_arch_sp_panic(uint32_t op, uint32_t code, uint32_t extra)
+    __attribute__((noreturn));
+
+/* NS-window range checks bound to the resolved NS caller (the FF-M memcheck
+ * callback shapes), and the caller-unbound writable check the gateway applies
+ * to the NS iovec block itself. */
+int wt_arch_ns_check_read(wt_guest_id_t guest_id,
+                          const void* address, size_t size);
+int wt_arch_ns_check_write(wt_guest_id_t guest_id, void* address, size_t size);
+int wt_arch_ns_check_writable(const void* address, size_t size);
 
 /* Non-zero when the calling Secure thread is unprivileged (a confined Secure
  * Partition), which reaches privileged platform services only through the

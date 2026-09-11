@@ -210,6 +210,8 @@ WOLFCRYPT_SECURE_SRCS += $(ARCH_WOLFCRYPT_ASM_SRCS)
 WT_SECURE_EXTRA_SRCS := \
     $(ARCH_SRCS) \
     $(ROOT)/src/arch/common/spm_gate_core.c \
+    $(ROOT)/src/arch/common/spm_sp_api.c \
+    $(ROOT)/src/arch/common/ffm_gateway.c \
     $(ROOT)/src/sched/coroutine.c \
     $(ROOT)/src/sync/mutex.c \
     $(TARGET_EXTRA_SRCS) \

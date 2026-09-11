@@ -35,7 +35,7 @@
 #include "memory_map.h"
 #include "stm32h563_regs.h"
 
-#include "wolftrust/arch/armv8m/ffm_nsc.h"
+#include "wolftrust/ffm_gateway.h"
 #include "wolftrust/spm_transport.h"
 #include "wolftrust/ffm.h"
 #include "wolftrust/ffm_boot.h"
@@ -367,7 +367,7 @@ void wt_platform_init(void)
     wt_clock_init();
     /* Arm the FF-M NS-window checks before any NS guest can reach the
      * WolfTrust_FFM_* veneers; the core fails closed until this runs. */
-    wt_ffm_nsc_install();
+    wt_ffm_gateway_install();
     /* The signed wolfBoot handoff reserves the manifest header at the slot
      * base; the Secure vector table begins at the image base after it. */
     WT_SCB_VTOR_S = WT_FLASH_IMAGE_BASE;
