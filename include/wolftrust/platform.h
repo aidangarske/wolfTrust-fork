@@ -121,6 +121,11 @@ void wt_platform_configure_ns_irq(uint32_t irq);
  * IRQ via the NS alias of NVIC ISPR/ICPR. Idempotent. */
 void wt_platform_set_ns_irq_pending(uint32_t irq, bool asserted);
 
+/* Secure RAM region the boot loader wrote its measured-boot record into.
+ * Returns the region base and sets *size to its length; NULL means the port
+ * has no handoff region. The core reads the record from the start of it. */
+volatile void* wt_platform_boot_handoff_region(size_t* size);
+
 /* Data-memory / data-synchronization barriers around a shared-memory handoff
  * (e.g. the wolfBoot handoff region). The port supplies the real barrier;
  * host builds no-op. */

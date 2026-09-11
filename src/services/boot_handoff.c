@@ -25,14 +25,21 @@
 
 int wt_boot_handoff_consume(wt_boot_handoff_t* handoff)
 {
-    volatile wt_boot_handoff_t* source =
-        (volatile wt_boot_handoff_t*)WT_BOOT_HANDOFF_ADDRESS;
-    volatile uint8_t* sourceBytes = (volatile uint8_t*)source;
+    volatile uint8_t* sourceBytes;
     uint8_t* outputBytes = (uint8_t*)handoff;
+    size_t regionSize = 0u;
     size_t i;
     int ret = -1;
 
     if (handoff == NULL) {
+        return -1;
+    }
+
+    sourceBytes = (volatile uint8_t*)wt_platform_boot_handoff_region(&regionSize);
+    if (sourceBytes == NULL || regionSize < sizeof(*handoff)) {
+        for (i = 0u; i < sizeof(*handoff); ++i) {
+            outputBytes[i] = 0u;
+        }
         return -1;
     }
 

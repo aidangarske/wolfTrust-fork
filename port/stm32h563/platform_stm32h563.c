@@ -291,6 +291,12 @@ static void wt_mpu_s_set_region(uint32_t rnr, uintptr_t base,
                     | rlar_flags | WT_MPU_RLAR_EN);
 }
 
+volatile void* wt_platform_boot_handoff_region(size_t* size)
+{
+    *size = WT_RAM_S_BASE - WT_BOOT_HANDOFF_ADDRESS;
+    return (volatile void*)WT_BOOT_HANDOFF_ADDRESS;
+}
+
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
 static void wt_clear_boot_handoff_scratch(void)
 {

@@ -83,6 +83,9 @@
 
 #define WT_RAM_S_BASE            0x30028000u
 #define WT_RAM_S_SIZE            0x00080000u
+/* wolfBoot writes its measured-boot record here; the scratch up to
+ * WT_RAM_S_BASE is cleared once the record is consumed. */
+#define WT_BOOT_HANDOFF_ADDRESS  0x30020000u
 
 /* Secure per-partition stacks (WT-FFM-0011 Level 3 isolation). Each Secure
  * Partition runs on its own secure stack so the secure MPU can confine it to
