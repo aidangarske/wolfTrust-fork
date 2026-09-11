@@ -31,7 +31,7 @@
 
 #include "board.h"
 
-#include "wolftrust/arch/armv8m/spm_svc.h"
+#include "wolftrust/spm_transport.h"
 #include "wolftrust/spm_gate.h"
 #include "wolftrust/arch.h"
 

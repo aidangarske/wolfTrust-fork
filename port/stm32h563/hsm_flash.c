@@ -24,7 +24,7 @@
 #include "memory_map.h"
 #include "stm32h563_regs.h"
 #include "wolfhsm/wh_error.h"
-#include "wolftrust/arch/armv8m/spm_svc.h"
+#include "wolftrust/spm_transport.h"
 #include "wolftrust/services/fwu_service.h"
 #include "wolftrust/spm_gate.h"
 #include "wolftrust/arch.h"

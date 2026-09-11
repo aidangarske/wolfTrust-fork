@@ -36,7 +36,7 @@
 #include "stm32h563_regs.h"
 
 #include "wolftrust/arch/armv8m/ffm_nsc.h"
-#include "wolftrust/arch/armv8m/spm_svc.h"
+#include "wolftrust/spm_transport.h"
 #include "wolftrust/ffm.h"
 #include "wolftrust/ffm_boot.h"
 #include "wolftrust/ffm_domain.h"
@@ -429,6 +429,99 @@ void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
     wt_dsb();
     wt_isb();
 }
+
+/* End of executable image code (secure.ld): the SP thread tables grant RX up
+ * to here (the manifest's 4K code window lies inside it and Armv8-M regions
+ * must not overlap — task #26 tracks per-partition narrowing) and the rest of
+ * the image window (constant data and the signed tail) read-only XN
+ * (WT-FFM-0010). */
+extern char _e_secure_text[];
+
+size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max)
+{
+    if (max < 2u) {
+        return 0u;
+    }
+    regions[0].base = WT_FLASH_S_BASE;
+    regions[0].size = (uintptr_t)_e_secure_text - WT_FLASH_S_BASE;
+    regions[0].attributes = WT_MEM_ATTR_READ | WT_MEM_ATTR_EXEC;
+    regions[1].base = (uintptr_t)_e_secure_text;
+    regions[1].size = WT_FLASH_S_BASE + WT_FLASH_S_SIZE -
+                      (uintptr_t)_e_secure_text;
+    regions[1].attributes = WT_MEM_ATTR_READ;
+    return 2u;
+}
+
+#if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+/* Per-partition private data bands (secure.ld), each denied to other SPs. */
+extern char _s_conf_server_data[];
+extern char _e_conf_server_data[];
+extern char _s_conf_driver_data[];
+extern char _e_conf_driver_data[];
+
+/* Append one RW grant segment to an SP's thread table (skips empty segments,
+ * fails closed by granting nothing when the table is full). */
+static size_t wt_conf_grant(wt_memory_region_t* regions, size_t count,
+                            size_t max, uintptr_t base, uintptr_t end)
+{
+    if (base < end && count < max) {
+        regions[count].base = base;
+        regions[count].size = (uint32_t)(end - base);
+        regions[count].attributes = WT_MEM_ATTR_READ | WT_MEM_ATTR_WRITE;
+        count++;
+    }
+    return count;
+}
+
+/* Hosted Arm partitions read their val_api/psa_api tables from .data, which
+ * the linker places in the shared CONFDATA window; grant it so the SP
+ * reaches its own data while SPM RAM stays denied. The per-partition
+ * pseudo-MMIO holes at the top of the window (memory_map.h) each belong to
+ * exactly one partition — every other SP gets the window with that hole
+ * carved out, so the L3 MMIO-isolation panic tests (i047/i055/i057) hit a
+ * genuine out-of-domain access and the must-panic reset path fires. Also
+ * carve the per-partition data bands (i080/i084): a cross-partition read of
+ * another SP's .data/.bss must fault. Bands are adjacent, so a non-owner's
+ * empty middle segment is skipped by wt_conf_grant. */
+size_t wt_platform_conf_sp_grants(int32_t partition_id,
+                                  wt_memory_region_t* regions,
+                                  size_t count, size_t max)
+{
+    uintptr_t conf_seg = WT_CONF_SP_DATA_BASE;
+
+    if (partition_id != SERVER_PARTITION_ID) {
+        count = wt_conf_grant(regions, count, max, conf_seg,
+                              (uintptr_t)_s_conf_server_data);
+        conf_seg = (uintptr_t)_e_conf_server_data;
+    }
+    if (partition_id != DRIVER_PARTITION_ID) {
+        count = wt_conf_grant(regions, count, max, conf_seg,
+                              (uintptr_t)_s_conf_driver_data);
+        conf_seg = (uintptr_t)_e_conf_driver_data;
+    }
+    if (partition_id != SERVER_PARTITION_ID) {
+        count = wt_conf_grant(regions, count, max, conf_seg,
+                              WT_CONF_SERVER_MMIO_BASE);
+        conf_seg = WT_CONF_SERVER_MMIO_BASE + WT_CONF_SERVER_MMIO_SIZE;
+    }
+    if (partition_id != DRIVER_PARTITION_ID) {
+        count = wt_conf_grant(regions, count, max, conf_seg,
+                              WT_CONF_DRV_MMIO_BASE);
+        conf_seg = WT_CONF_DRV_MMIO_BASE + WT_CONF_DRV_MMIO_SIZE;
+    }
+    count = wt_conf_grant(regions, count, max, conf_seg,
+                          WT_CONF_SP_DATA_BASE + WT_CONF_SP_DATA_SIZE);
+    return count;
+}
+#endif
+
+#if (defined(WT_FFM_NEGATIVE_PROBE) && (WT_FFM_NEGATIVE_PROBE == 1)) || \
+    (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1))
+uintptr_t wt_platform_out_of_domain_probe_address(void)
+{
+    return (uintptr_t)WT_RAM_S_BASE;
+}
+#endif
 
 void wt_platform_log_fault(wt_guest_id_t guest_id,
                            wt_fault_reason_t reason,

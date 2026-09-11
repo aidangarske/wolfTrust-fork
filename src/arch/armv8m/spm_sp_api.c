@@ -30,7 +30,7 @@
 #include "psa/lifecycle.h"
 #include "psa/service.h"
 
-#include "wolftrust/arch/armv8m/spm_svc.h"
+#include "wolftrust/spm_transport.h"
 #include "wolftrust/spm_gate.h"
 
 /* A failed service-side call is a programmer error: fault the partition so

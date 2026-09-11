@@ -160,6 +160,7 @@ SECURE_SRCS := \
     $(ROOT)/src/monitor.c \
     $(ROOT)/src/spm.c \
     $(ROOT)/src/boot.c \
+    $(ROOT)/src/spm_partitions.c \
     $(ROOT)/src/partition.c \
     $(TARGET_PARTITIONS_SRC)
 
@@ -208,6 +209,7 @@ WOLFCRYPT_SECURE_SRCS += $(ARCH_WOLFCRYPT_ASM_SRCS)
 
 WT_SECURE_EXTRA_SRCS := \
     $(ARCH_SRCS) \
+    $(ROOT)/src/arch/common/spm_gate_core.c \
     $(ROOT)/src/sched/coroutine.c \
     $(ROOT)/src/sync/mutex.c \
     $(TARGET_EXTRA_SRCS) \
@@ -1287,6 +1289,9 @@ $(BUILD_DIR)/wc_sec_%.o: $(WOLFSSL_DIR)/wolfcrypt/src/port/st/%.c $(WOLFHSM_CFG_
 	$(CC) $(HSM_LIB_CFLAGS) -c -o $@ $<
 
 $(BUILD_DIR)/wt_sec_%.o: $(ROOT)/src/arch/$(ARCH)/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
+	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
+
+$(BUILD_DIR)/wt_sec_%.o: $(ROOT)/src/arch/common/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
 
 $(BUILD_DIR)/wt_sec_%.o: $(ROOT)/src/sched/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)

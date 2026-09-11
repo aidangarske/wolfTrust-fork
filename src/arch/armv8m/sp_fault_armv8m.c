@@ -26,7 +26,7 @@
 #include "wolftrust/arch.h"
 #include "wolftrust/arch/armv8m/armv8m.h"
 #include "wolftrust/arch/armv8m/core_regs.h"
-#include "wolftrust/arch/armv8m/spm_svc.h"
+#include "wolftrust/spm_transport.h"
 #include "wolftrust/ffm.h"
 #include "wolftrust/sched/coroutine.h"
 

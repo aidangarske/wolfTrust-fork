@@ -25,7 +25,7 @@
 
 #include "conf_nvm.h"
 
-#include "wolftrust/arch/armv8m/spm_svc.h"
+#include "wolftrust/spm_transport.h"
 #include "wolftrust/spm_gate.h"
 
 #include "memory_map.h"

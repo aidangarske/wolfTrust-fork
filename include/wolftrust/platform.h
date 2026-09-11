@@ -73,6 +73,22 @@ void wt_platform_note_hsm_wait_skip(wt_guest_id_t guest_id);
  * has no handoff region. The core reads the record from the start of it. */
 volatile void* wt_platform_boot_handoff_region(size_t* size);
 
+/* Image windows every Secure Partition thread table shares (executable code
+ * RX, the rest of the image read-only); returns the regions written (<= max). */
+size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max);
+#if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+/* Conformance grant carving for partition_id, appended after `count`
+ * regions; returns the new count (<= max). */
+size_t wt_platform_conf_sp_grants(int32_t partition_id,
+                                  wt_memory_region_t* regions,
+                                  size_t count, size_t max);
+#endif
+#if (defined(WT_FFM_NEGATIVE_PROBE) && (WT_FFM_NEGATIVE_PROBE == 1)) || \
+    (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1))
+/* An address outside every partition domain, for the negative probes. */
+uintptr_t wt_platform_out_of_domain_probe_address(void);
+#endif
+
 /* Test-build probes the boot sequence runs before the monitor starts. */
 #if defined(WT_REMEASURE_PROBE)
 void wt_platform_remeasure_probe(void);

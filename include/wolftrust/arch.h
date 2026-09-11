@@ -104,6 +104,23 @@ void wt_arch_set_guest_irq_pending(uint32_t irq, bool asserted);
 void wt_arch_dmb(void);
 void wt_arch_dsb(void);
 
+/* Secure Partition trap primitives the neutral gate is built on. */
+struct wt_spm_call;
+/* SP-side: trap one call block to the privileged gate; returns the gate-level
+ * status. */
+int wt_arch_sp_trap(struct wt_spm_call* call);
+/* Stack pointer of the trapped SP thread, for the gate's rejection forensics. */
+uintptr_t wt_arch_sp_stack_pointer(void);
+/* Land the trapped partition on an undefined-instruction trap so its resume
+ * takes the graceful quarantine path (FF-M PROGRAMMER ERROR). */
+void wt_arch_sp_redirect_to_panic_trap(wt_trap_frame_t* frame);
+/* Re-assert privileged Thread execution before recovery runs. */
+void wt_arch_assert_privileged_thread(void);
+/* Deliberate faults keyed by the test-build probes. */
+void wt_arch_sp_fault_probe(unsigned int code);
+/* Diagnostic trap with three words pinned where the fault dump shows them. */
+void wt_arch_diag_trap(uint32_t a, uint32_t b, uint32_t c);
+
 /* Non-zero when the calling Secure thread is unprivileged (a confined Secure
  * Partition), which reaches privileged platform services only through the
  * SPM gate. Handler context is always privileged. Host builds never are. */

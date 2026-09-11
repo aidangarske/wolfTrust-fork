@@ -28,7 +28,7 @@
 #include "wolftrust/arch/armv8m/armv8m.h"
 #include "wolftrust/arch/armv8m/context.h"
 #include "wolftrust/arch/armv8m/core_regs.h"
-#include "wolftrust/arch/armv8m/spm_svc.h"
+#include "wolftrust/spm_transport.h"
 #include "wolftrust/monitor.h"
 
 #include "memory_map.h"
