@@ -25,9 +25,15 @@
 #include "wolftrust/manifest.h"
 #include "wolftrust/types.h"
 
-#define WT_PORT_CAPABILITY_VECTOR_READ_ALIAS (1U << 0)
+/* Enforcement a port declares it provides; the core refuses a guest binding
+ * or a manifest profile that needs more than the port claims. */
+#define WT_PORT_CAPABILITY_VECTOR_READ_ALIAS     (1U << 0)
+#define WT_PORT_CAPABILITY_NS_DOMAIN_PROGRAMMING (1U << 1)
+#define WT_PORT_CAPABILITY_TZ_FILTER             (1U << 2)
 #define WT_PORT_CAPABILITY_ALL \
-    (WT_PORT_CAPABILITY_VECTOR_READ_ALIAS)
+    (WT_PORT_CAPABILITY_VECTOR_READ_ALIAS | \
+     WT_PORT_CAPABILITY_NS_DOMAIN_PROGRAMMING | \
+     WT_PORT_CAPABILITY_TZ_FILTER)
 
 typedef struct wt_guest_port_binding {
     uint32_t required_capabilities;
@@ -71,7 +77,8 @@ typedef enum wt_port_validation_result {
     WT_PORT_VALID = 0,
     WT_PORT_ERROR_ARGUMENT = -500,
     WT_PORT_ERROR_CAPABILITY = -501,
-    WT_PORT_ERROR_VECTOR_ALIAS = -502
+    WT_PORT_ERROR_VECTOR_ALIAS = -502,
+    WT_PORT_ERROR_PROFILE = -503
 } wt_port_validation_result_t;
 
 const wt_guest_config_t* wt_partitions_config_table(size_t* count);
@@ -82,6 +89,11 @@ int wt_partitions_bind_manifest(const wt_system_manifest_t* manifest);
 int wt_partition_validate_port_binding(
     const wt_guest_config_t* config,
     const wt_domain_descriptor_t* domain);
+/* Refuse a manifest profile whose isolation claims exceed what the port
+ * provides: memory protection needs Non-secure domain programming or a
+ * TrustZone filter, domain isolation needs the filter. */
+int wt_partition_validate_profile(const wt_profile_capabilities_t* profile,
+                                  uint32_t provided_capabilities);
 void wt_partition_reset_runtime(const wt_guest_config_t* config,
                                 wt_guest_runtime_t* runtime);
 

@@ -505,6 +505,14 @@ void wt_monitor_init(void)
     if (wt_partitions_bind_manifest(wt_spm_manifest(&g_spm)) != 0) {
         wt_platform_panic();
     }
+    for (i = 0; i < count; ++i) {
+        if (wt_partition_validate_profile(
+                wt_partitions_profile_capabilities(),
+                g_scheduler.configs[i].port.provided_capabilities) !=
+                    WT_PORT_VALID) {
+            wt_platform_panic();
+        }
+    }
     if (wt_ffm_boot_init(wt_spm_manifest(&g_spm)) != WT_FFM_SUCCESS) {
         wt_platform_panic();
     }

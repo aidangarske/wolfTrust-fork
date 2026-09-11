@@ -159,6 +159,7 @@ SECURE_SRCS := \
     $(ROOT)/src/manifest.c \
     $(ROOT)/src/monitor.c \
     $(ROOT)/src/spm.c \
+    $(ROOT)/src/partition.c \
     $(TARGET_PARTITIONS_SRC)
 
 WOLFHSM_SECURE_SRCS := \

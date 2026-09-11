@@ -32,6 +32,12 @@
 #define WT_GUEST_MEAS_SLOT_MAGIC_LEN 16u
 #define WT_GUEST_MEAS_SLOT_UNPATCHED 0xFFFFFFFFu
 
+/* Enforcement the STM32H563 port really provides (WT-PORT-0008). */
+#define WT_STM32H563_PORT_CAPABILITIES \
+    (WT_PORT_CAPABILITY_VECTOR_READ_ALIAS | \
+     WT_PORT_CAPABILITY_NS_DOMAIN_PROGRAMMING | \
+     WT_PORT_CAPABILITY_TZ_FILTER)
+
 /* GTZC MPCBB security attribution is per 512-byte block, so two guest
  * windows sharing one block cannot be separated by the curtain. */
 #define WT_GTZC_MPCBB_BLOCK 512u
@@ -141,8 +147,8 @@ static wt_guest_config_t g_partition_configs[] = {
         .initial_state = WT_GUEST_READY,
         .timeslice_ms = WT_TIMESLICE_MS,
         .port = {
-            .required_capabilities = WT_PORT_CAPABILITY_ALL,
-            .provided_capabilities = WT_PORT_CAPABILITY_ALL,
+            .required_capabilities = WT_STM32H563_PORT_CAPABILITIES,
+            .provided_capabilities = WT_STM32H563_PORT_CAPABILITIES,
             .vector_read_address =
                 WT_FLASH_TO_S_ALIAS(WT_GUEST0_FLASH_BASE)
         }
@@ -184,8 +190,8 @@ static wt_guest_config_t g_partition_configs[] = {
         .initial_state = WT_GUEST_READY,
         .timeslice_ms = WT_TIMESLICE_MS,
         .port = {
-            .required_capabilities = WT_PORT_CAPABILITY_ALL,
-            .provided_capabilities = WT_PORT_CAPABILITY_ALL,
+            .required_capabilities = WT_STM32H563_PORT_CAPABILITIES,
+            .provided_capabilities = WT_STM32H563_PORT_CAPABILITIES,
             .vector_read_address =
                 WT_FLASH_TO_S_ALIAS(WT_GUEST1_FLASH_BASE)
         }
@@ -295,38 +301,6 @@ static const wt_domain_descriptor_t* wt_partition_manifest_domain(
     }
 
     return NULL;
-}
-
-int wt_partition_validate_port_binding(
-    const wt_guest_config_t* config,
-    const wt_domain_descriptor_t* domain)
-{
-    const wt_guest_port_binding_t* port;
-
-    if (config == NULL || domain == NULL ||
-            (domain->memory_resource_count != 0U &&
-             domain->memory_resources == NULL)) {
-        return WT_PORT_ERROR_ARGUMENT;
-    }
-
-    port = &config->port;
-    if (((port->required_capabilities | port->provided_capabilities) &
-            ~WT_PORT_CAPABILITY_ALL) != 0U ||
-            (port->required_capabilities &
-             port->provided_capabilities) !=
-                port->required_capabilities) {
-        return WT_PORT_ERROR_CAPABILITY;
-    }
-
-    if ((port->required_capabilities &
-            WT_PORT_CAPABILITY_VECTOR_READ_ALIAS) != 0U &&
-            (port->vector_read_address == 0U ||
-             (port->vector_read_address & (sizeof(uint32_t) - 1U)) != 0U ||
-             port->vector_read_address == config->vector_table)) {
-        return WT_PORT_ERROR_VECTOR_ALIAS;
-    }
-
-    return WT_PORT_VALID;
 }
 
 int wt_partitions_bind_manifest(const wt_system_manifest_t* manifest)
