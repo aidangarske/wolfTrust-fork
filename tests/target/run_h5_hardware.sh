@@ -336,11 +336,11 @@ if [ "$mode" != "build" ]; then
   [ "$scenario" = "bootupdate" ] && \
     update_d="-d $repo/build/wolftrust_v2_signed.bin 0x0C100000"
   # Guest flash is write-protected under WT_GUEST_FLASH_WRP, and a protected
-  # sector rejects the image write, so unlock before flashing and re-lock after.
-  if [ "${WT_GUEST_FLASH_WRP:-0}" = "1" ]; then
-    stage "clearing guest-flash WRP before flashing"
-    "$CLI" -c port=SWD mode=UR -ob WRPSGn1=0xFFFFFFFF >> "$LOGFILE" 2>&1 || true
-  fi
+  # sector silently keeps its old contents through erase and program, so the
+  # lock a previous WRP run left armed would fail every later verify. Always
+  # unlock before flashing; WRP runs re-lock after.
+  stage "clearing guest-flash WRP before flashing"
+  "$CLI" -c port=SWD mode=UR -ob WRPSGn1=0xFFFFFFFF >> "$LOGFILE" 2>&1 || true
   "$CLI" -c port=SWD mode=UR \
     -d "$repo/wolfBoot/wolfboot.bin" "$WOLFBOOT_ADDR" \
     -d "$repo/build/wolftrust_v1_signed.bin" "$WOLFTRUST_ADDR" \
