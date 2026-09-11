@@ -5,7 +5,7 @@ on:
   # schedule (via workflow_call from nightly.yml), and manual dispatch only.
   # Not on pull_request — PRs get the fast lane; M33MU verifies on merge/nightly.
   push:
-    branches: [master, main, wolfTrust-dev]
+    branches: [master, main, wolfTrust-dev, wolfTrust-dev2]
   workflow_dispatch:
   workflow_call:
 
