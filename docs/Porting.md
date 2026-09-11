@@ -17,50 +17,62 @@ must not claim security properties until they are tested on that target.
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| Common core | `src/` excluding `src/arch/` | Domains, manifest validation, monitor policy, IPC state, lifecycle, guest verification, recovery, and services |
-| Public and internal contracts | `include/psa/` and `include/wolftrust/` | PSA APIs, SPM types, port callbacks, manifests, and service interfaces |
-| Architecture | `src/arch/<arch>/` and `include/wolftrust/arch/<arch>/` | Architecture-specific gateway checks and Secure execution or transport mechanisms; currently the Armv8-M CMSE gateway and Secure Partition coroutine/SVC path |
-| MCU and board | `port/<target>/` | Device startup and guest exception paths, security attribution, guest and Secure MPU programming, context handling, clocks, timers, flash, entropy, IRQ routing, device registers, memory map, guest table, and manifest |
-| Build | `mk/secure-<arch>-<target>.mk` | Toolchain, source selection, generated manifest, linker layout, and image checks |
+| Common core | `src/` excluding `src/arch/` | Boot sequence, domains, manifest validation, monitor policy, IPC state, lifecycle, guest verification, recovery, services, and the Secure Partition entry bodies; names no architecture or SoC |
+| Public and internal contracts | `include/psa/` and `include/wolftrust/` | PSA APIs, SPM types, the two port contracts (`arch.h`, `platform.h`), manifests, and service interfaces |
+| Architecture-neutral gate | `src/arch/common/` | Secure Partition gate dispatch, fault recovery, scheduler, the SP-side PSA API, and the NS FF-M gateway bodies, written once over the `wolftrust/arch.h` primitives and linked by every architecture |
+| Architecture | `src/arch/<arch>/` and `include/wolftrust/arch/<arch>/` | Every `wt_arch_*` operation: reset entry, guest context save/restore, exception entry and return, the secure tick, interrupt masking and routing, memory-protection programming, the SP trap and its decoder, NS range checks, and the NS entry mechanism (Armv8-M: CMSE veneers) |
+| SoC and board | `port/<soc>/` | Every `wt_platform_*` operation plus the SoC facts: clocks, fabric-level TrustZone filter windows, the memory-protection region tables, UART, flash, entropy, reset, the memory map, guest tables, and the manifest |
+| Build | `mk/common.mk`, `mk/arch-<arch>.mk`, `mk/target-<soc>.mk` | Shared rules; toolchain and architecture sources; SoC sources, placement, and image checks |
 | Guest integration | `tests/firmware/` or an application repository | Application-domain linker layout, PSA client shim, architecture-specific client boundary, and OS wiring; Armv8-M uses a CMSE import library |
 
 ## Current architecture and target contract
 
-The common runtime treats `wt_guest_context_t` as an opaque,
-architecture-owned type. The current internal callback ABI is not fully
-architecture-neutral: `include/wolftrust/platform.h` also exposes an M-profile
-exception frame and MPU-oriented region types.
+The common runtime treats `wt_guest_context_t` and `wt_trap_frame_t` as
+opaque, architecture-owned types, and describes memory as
+`wt_memory_region_t` lists that carry attributes, never protection-unit
+encodings. Two headers split the port contract:
 
-For the supported Armv8-M and STM32H563 pair, `src/arch/armv8m/` supplies the
-CMSE gateway and pointer-security checks, Secure Partition coroutine switching,
-and the Secure SVC transport. `port/stm32h563/platform_stm32h563.c` implements
-the `wt_platform_*` callbacks. Together the two layers supply:
+- `include/wolftrust/arch.h` declares the `wt_arch_*` operations an
+  architecture implements once for every SoC that uses it: boot setup, the
+  secure tick, interrupt masking and routing, guest and partition domain
+  programming, guest context prepare/capture/restore, the transitions between
+  handler mode, Secure threads and guest threads, fault address and PC
+  reads, barriers, privilege queries, the Secure Partition trap and its
+  frame-level helpers, deliberate test faults, and the NS range checks.
+- `include/wolftrust/platform.h` declares the `wt_platform_*` operations an
+  SoC implements: initialization, fabric-level memory windows, fault logging,
+  guest measurements, guest-flash write-protection checks, panic, reset,
+  the boot-handoff region, the image windows every partition shares, the
+  conformance grants, and the test-build probes.
 
-- the concrete guest context and context save/restore path;
-- exception entry and return between Secure handlers, Secure threads, and
-  Non-secure threads;
-- the target Secure-call transport used by scheduled partitions;
-- the Non-secure gateway and pointer-security checks;
-- guest and Secure Partition MPU programming;
-- privilege-state transitions and handler-mode queries; and
-- interrupt target, mask, pending, enable, and end-of-interrupt mechanics.
+For the supported Armv8-M and STM32H563 pair, `src/arch/armv8m/` supplies
+the `wt_arch_*` operations (reset entry, context switching, the exception
+handlers, the virtual SysTick, NVIC routing, table-driven SAU and MPU
+programming, the SVC trap decoder, the CMSE checks, and the five NS veneers),
+`src/arch/common/` supplies the architecture-neutral gate, scheduler, SP-side
+PSA API and NS gateway bodies on top of them, and
+`port/stm32h563/platform_stm32h563.c` implements the `wt_platform_*`
+operations together with the SoC's SAU and MPU region tables.
 
-The full current callback contract is declared in
-`include/wolftrust/platform.h`. A future architecture may replace this
-internal split while preserving the public manifest, service, IPC, and PSA
-APIs.
+A port declares what its hardware can do through the capability bits in
+`include/wolftrust/partition.h`; the core refuses a manifest that assumes a
+capability the port does not provide, so an A-profile port that has no
+Non-secure MPU says so instead of faking it.
 
 ## MCU and board contract
 
 A target directory must provide:
 
-### Platform callbacks
+### Platform operations
 
-Implement every `wt_platform_*` callback used by the selected build.
-The callbacks cover initialization, timer programming, memory windows, guest
-MPU state, Secure Partition MPU state, context handling, interrupt routing,
-fault reporting, reset, barriers, active-guest identity, guest memory clearing,
-and guest-flash protection checks.
+Implement every `wt_platform_*` operation in `include/wolftrust/platform.h`
+used by the selected build: initialization (which calls `wt_arch_init()`
+once the fabric and memory windows are programmed), fabric-level memory
+windows, fault logging, guest measurements, guest-flash write-protection
+checks, panic, reset, the boot-handoff region, the shared image windows
+every partition's thread table starts with, the conformance grants, and the
+test-build probes. Never define a `wt_arch_*` operation in a port; the split
+guard rejects that.
 
 Do not return unconditional success for a missing security mechanism. Report
 the capability accurately and reject a manifest that requires more.
@@ -148,12 +160,14 @@ measurement, and version data and adjust the image layout.
 
 ## Add a target
 
-1. Add `src/arch/<arch>/` only when the architecture cannot reuse an
-   existing implementation.
-2. Create `port/<target>/` with the platform, flash, entropy, board,
-   memory-map, partition-table, and manifest files.
-3. Add `mk/secure-<arch>-<target>.mk` and route the tuple from the root
-   Makefile.
+1. Add `src/arch/<arch>/` and `include/wolftrust/arch/<arch>/` only when
+   the architecture cannot reuse an existing implementation; implement every
+   `wt_arch_*` operation there and leave `src/arch/common/` untouched.
+2. Create `port/<soc>/` with the platform, flash, entropy, board,
+   memory-map, protection-region-table, partition-table, and manifest files.
+3. Add `mk/arch-<arch>.mk` (if new) and `mk/target-<soc>.mk`; the root
+   Makefile selects them from `ARCH` and `TARGET`, and `mk/common.mk` needs
+   no change.
 4. Supply startup/vector and linker handling appropriate to the target.
 5. Generate the manifest at build time and include its digest in the signed
    Secure image.
@@ -169,7 +183,13 @@ measurement, and version data and adjust the image layout.
 
 - Run `make test` for common policy and service behavior.
 - Run `WT_SPLIT_STRICT=1 tools/check-core-port-split.sh` and resolve
-  hard core-to-architecture leaks.
+  hard core-to-architecture leaks (arch or port headers, CMSE, inline
+  assembly, retired names, M-profile or A-profile register vocabulary in
+  core code, and `wt_arch_*` definitions inside a port).
+- Run `tools/check-port-only-diff.sh <base> <arch> <soc>` on a port change
+  and confirm it touches nothing outside `src/arch/common/`,
+  `src/arch/<arch>/`, `include/wolftrust/arch/<arch>/`, `port/<soc>/`, the
+  two build fragments, tests, docs, and workflows.
 - Cross-build the Secure image with warnings enabled.
 - On the current Armv8-M port, inspect `nm` output and confirm only the five
   FF-M veneers are Non-secure-callable.

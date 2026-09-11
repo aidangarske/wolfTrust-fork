@@ -51,7 +51,7 @@ static int wt_ffm_boot_caller_guest(psa_client_id_t caller,
 }
 
 /* NS-window checks are installed by the architecture port (Armv8-M:
- * wt_ffm_nsc_install). NULL fails closed: every NS window is rejected until
+ * wt_ffm_gateway_install). NULL fails closed: every NS window is rejected until
  * a port provides its checker. */
 static wt_ffm_ns_check_read_fn g_ns_check_read;
 static wt_ffm_ns_check_write_fn g_ns_check_write;

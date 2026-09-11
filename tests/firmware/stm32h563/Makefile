@@ -68,13 +68,6 @@ GUEST0_BIN := $(BUILD_DIR)/guest0.bin
 GUEST1_ELF := $(BUILD_DIR)/guest1.elf
 GUEST1_BIN := $(BUILD_DIR)/guest1.bin
 
-SECURE_SRCS := \
-	$(WOLFHSM_RUNNER_DIR)/ivt.c \
-	$(WOLFHSM_RUNNER_DIR)/runtime.c \
-	$(PORT_DIR)/platform_stm32h563.c \
-	$(ROOT)/src/monitor.c \
-	$(PORT_DIR)/partitions.c
-
 NONSECURE_SRCS := nonsecure/guest.c
 
 # ---------------------------------------------------------------------------
@@ -236,29 +229,6 @@ WOLFCRYPT_SECURE_SRCS += \
 endif
 endif
 
-# wolftrust sources always present for the HSM build
-WT_SECURE_EXTRA_SRCS := \
-    $(ROOT)/src/arch/armv8m/cmse.c \
-    $(ROOT)/src/arch/armv8m/coroutine_armv8m.c \
-    $(ROOT)/src/sched/coroutine.c \
-    $(ROOT)/src/sync/mutex.c
-
-# Target entropy source — include only when the port provides it.
-WT_SECURE_EXTRA_SRCS += $(wildcard $(PORT_DIR)/rng_entropy.c)
-WT_SECURE_EXTRA_SRCS += $(wildcard $(PORT_DIR)/hsm_flash.c)
-WT_SECURE_EXTRA_SRCS += \
-    $(WOLFHAL_DIR)/src/reg.c \
-    $(WOLFHAL_DIR)/src/rng/stm32h5_rng.c
-
-# libc stubs (memcpy/memset/memmove/memcmp/strlen/etc) — wolfCrypt needs them
-# and we build -nostdlib -fno-builtin.
-WT_SECURE_EXTRA_SRCS += $(wildcard $(WOLFHSM_RUNNER_DIR)/libc_stubs.c)
-
-# Wave 3/4: services + cmse_transport — include only when present
-WT_SECURE_EXTRA_SRCS += \
-    $(wildcard $(ROOT)/src/services/wolfhsm/*.c) \
-    $(wildcard $(ROOT)/src/arch/armv8m/cmse_transport.c)
-
 # ---- guest-side source lists ------------------------------------------------
 
 WOLFHSM_GUEST_SRCS := \
@@ -320,10 +290,8 @@ NONSECURE_COMMON_SRCS := $(filter-out nonsecure/guest.c,$(NONSECURE_SRCS))
 
 # ---- object lists -----------------------------------------------------------
 
-HSM_SECURE_BASE_OBJS    := $(patsubst %.c,$(BUILD_DIR)/sec_%.o,$(notdir $(SECURE_SRCS)))
 HSM_WOLFHSM_SEC_OBJS    := $(patsubst %.c,$(BUILD_DIR)/wh_sec_%.o,$(notdir $(WOLFHSM_SECURE_SRCS)))
 HSM_WOLFCRYPT_SEC_OBJS  := $(patsubst %.c,$(BUILD_DIR)/wc_sec_%.o,$(notdir $(WOLFCRYPT_SECURE_SRCS)))
-HSM_WT_EXTRA_OBJS       := $(patsubst %.c,$(BUILD_DIR)/wt_sec_%.o,$(notdir $(WT_SECURE_EXTRA_SRCS)))
 
 HSM_NONSECURE_BASE_OBJS  := $(patsubst %.c,$(BUILD_DIR)/ns_%.o,$(notdir $(NONSECURE_COMMON_SRCS)))
 HSM_WOLFHSM_GUEST_OBJS   := $(patsubst %.c,$(BUILD_DIR)/wh_guest_%.o,$(notdir $(WOLFHSM_GUEST_SRCS)))
@@ -333,10 +301,8 @@ HSM_GUEST0_MAIN_OBJ      := $(BUILD_DIR)/ns_guest0_guest.o
 HSM_GUEST1_MAIN_OBJ      := $(BUILD_DIR)/ns_guest1_guest.o
 
 ALL_SECURE_OBJS := \
-    $(HSM_SECURE_BASE_OBJS) \
     $(HSM_WOLFHSM_SEC_OBJS) \
-    $(HSM_WOLFCRYPT_SEC_OBJS) \
-    $(HSM_WT_EXTRA_OBJS)
+    $(HSM_WOLFCRYPT_SEC_OBJS)
 
 ALL_GUEST_COMMON_OBJS := \
     $(HSM_NONSECURE_BASE_OBJS) \

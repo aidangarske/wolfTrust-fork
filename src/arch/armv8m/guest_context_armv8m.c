@@ -77,8 +77,6 @@ static volatile uint32_t g_last_fault_address;
 static volatile uint32_t g_last_fault_pc;
 static volatile uint32_t g_switch_count;
 static volatile uint32_t g_active_guest;
-static volatile uint32_t g_last_fault_address;
-static volatile uint32_t g_last_fault_pc;
 static void (*g_secure_thread_resume_entry)(void)
     __attribute__((noreturn, used));
 
