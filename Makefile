@@ -52,26 +52,7 @@ test-target:
 	@if ! tests/target/detect_m33mu.sh >/dev/null 2>&1; then \
 		echo "SKIP: FF-M target scenarios ($$(tests/target/detect_m33mu.sh 2>&1))"; \
 	else \
-		mkdir -p logs; rc=0; \
-		for s in positive restart crossdomain confboot; do \
-			echo "RUN: target/$$s"; \
-			if tests/target/run_m33mu_scenario.sh $$s \
-					> logs/target-$$s.log 2>&1; then \
-				grep -F '  [check] ' logs/target-$$s.log || true; \
-				echo "PASS: target/$$s"; \
-			else \
-				grep -F '  [check] ' logs/target-$$s.log || true; \
-				echo "FAIL: target/$$s (tail of logs/target-$$s.log):"; \
-				tail -20 logs/target-$$s.log; rc=1; \
-			fi; \
-			echo "LOG: logs/target-$$s.log"; \
-		done; \
-		if [ $$rc -eq 0 ]; then \
-			echo "PASS: target/all"; \
-		else \
-			echo "FAIL: target/all"; \
-			exit 1; \
-		fi; \
+		tests/target/run_suite.sh m33mu positive restart crossdomain confboot; \
 	fi
 
 # Real STM32H563 hardware equivalence suite: positive lifecycle + restart
@@ -243,17 +224,7 @@ test-vnet-target:
 	@if ! tests/target/detect_m33mu.sh >/dev/null 2>&1; then \
 		echo "SKIP: wolfIP vnet target scenario ($$(tests/target/detect_m33mu.sh 2>&1))"; \
 	else \
-		mkdir -p logs; \
-		echo "RUN: target/vnet (wolfIP virtual network)"; \
-		if tests/target/run_m33mu_scenario.sh vnet > logs/target-vnet.log 2>&1; then \
-			grep -F '  [check] ' logs/target-vnet.log || true; \
-			echo "PASS: target/vnet"; \
-		else \
-			grep -F '  [check] ' logs/target-vnet.log || true; \
-			echo "FAIL: target/vnet (tail of logs/target-vnet.log):"; \
-			tail -20 logs/target-vnet.log; exit 1; \
-		fi; \
-		echo "LOG: logs/target-vnet.log"; \
+		tests/target/run_suite.sh m33mu vnet; \
 	fi
 
 # wolfIP virtual network end-to-end scenario on real STM32H563 silicon: the
