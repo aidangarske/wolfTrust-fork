@@ -190,6 +190,8 @@ measurement, and version data and adjust the image layout.
   and confirm it touches nothing outside `src/arch/common/`,
   `src/arch/<arch>/`, `include/wolftrust/arch/<arch>/`, `port/<soc>/`, the
   two build fragments, tests, docs, and workflows.
+- Run `tools/check-docs-no-internal-links.sh`; `docs/` is published to the
+  wiki and must not reference internal ledgers or developer paths.
 - Cross-build the Secure image with warnings enabled.
 - On the current Armv8-M port, inspect `nm` output and confirm only the five
   FF-M veneers are Non-secure-callable.

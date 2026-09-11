@@ -174,7 +174,8 @@ The workflows under `.github/workflows/` separately run:
 - compiler variants, sanitizers, and Valgrind;
 - Cortex-M33 cross-compilation;
 - dependency integration;
-- the core/port split guard;
+- the core/port split guard and the docs guard (no internal-ledger or
+  home-directory references in the published docs);
 - fuzz targets; and
 - selected and nightly M33MU scenarios.
 

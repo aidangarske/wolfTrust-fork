@@ -29,10 +29,14 @@ jobs:
         run: |
           tools/check-core-port-split.sh --selftest
           tools/check-port-only-diff.sh --selftest
+          tools/check-docs-no-internal-links.sh --selftest
           tests/target/lib/expect.sh --selftest
 
       - name: Enforce the core/port split (strict)
         run: WT_SPLIT_STRICT=1 tools/check-core-port-split.sh
+
+      - name: Keep internal ledger references out of the public docs
+        run: tools/check-docs-no-internal-links.sh
 
       - name: Initialize wolfTrust dependencies
         run: git submodule update --init --single-branch
