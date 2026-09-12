@@ -33,7 +33,7 @@ vault and storage services, attestation and COSE integration, firmware update,
 runtime remeasurement, VNET, public PSA headers, boot-handoff record
 consumption, the FF-A function-id table and version rules, the FF-A boot
 information protocol, the AArch64 exception-syndrome decoder, the AArch64
-partition stage-1 table builder, and negative paths.
+partition stage-1 table builder and domain switches, and negative paths.
 
 Additional host checks:
 
