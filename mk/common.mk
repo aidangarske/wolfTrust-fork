@@ -248,13 +248,19 @@ HSM_WOLFHSM_SEC_OBJS := $(patsubst %.c,$(BUILD_DIR)/wh_sec_%.o,$(notdir $(WOLFHS
 HSM_WOLFCRYPT_SEC_OBJS := $(patsubst %.c,$(BUILD_DIR)/wc_sec_%.o,$(notdir $(WOLFCRYPT_SECURE_SRCS)))
 HSM_WT_EXTRA_OBJS := $(patsubst %.c,$(BUILD_DIR)/wt_sec_%.o,$(notdir $(WT_SECURE_EXTRA_SRCS)))
 MANIFEST_OBJ := $(BUILD_DIR)/wt_sec_wolftrust_manifest_generated.o
+# Arch sources that live in subdirectories of src/arch/<arch>/ (C or assembly);
+# each gets its own rule below because the pattern rules key on one directory.
+ARCH_TREE_SRCS ?=
+ARCH_ASM_SRCS ?=
+ARCH_TREE_OBJS := $(foreach s,$(ARCH_TREE_SRCS) $(ARCH_ASM_SRCS),$(BUILD_DIR)/wt_sec_$(notdir $(basename $(s))).o)
 
-ALL_SECURE_OBJS := \
+ALL_SECURE_OBJS := $(strip \
     $(HSM_SECURE_BASE_OBJS) \
     $(HSM_WOLFHSM_SEC_OBJS) \
     $(HSM_WOLFCRYPT_SEC_OBJS) \
     $(HSM_WT_EXTRA_OBJS) \
-    $(MANIFEST_OBJ)
+    $(ARCH_TREE_OBJS) \
+    $(MANIFEST_OBJ))
 
 # Arm PSA-FF conformance partitions (P3a): the unmodified upstream server and
 # client partitions plus the i001/i002 test bodies, compiled into the secure
@@ -1329,6 +1335,12 @@ $(BUILD_DIR)/wt_sec_%.o: $(ROOT)/src/services/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_
 $(BUILD_DIR)/wt_sec_%.o: $(WOLFCOSE_DIR)/src/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
 
+define wt_arch_tree_rule
+$(BUILD_DIR)/wt_sec_$(notdir $(basename $(1))).o: $(1) $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
+	$$(CC) $$(SECURE_CFLAGS) -c -o $$@ $$<
+endef
+$(foreach s,$(ARCH_TREE_SRCS) $(ARCH_ASM_SRCS),$(eval $(call wt_arch_tree_rule,$(s))))
+
 $(BUILD_DIR)/sec_monitor.o: $(ROOT)/src/monitor.c $(MANIFEST_GEN_H) \
 		$(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
@@ -1363,3 +1375,9 @@ $(SECURE_ELF) $(ARCH_LINK_OUTPUTS) &: $(ALL_SECURE_OBJS) $(SECURE_LD) $(BUILD_MO
 
 $(SECURE_BIN): $(SECURE_ELF)
 	$(OBJCOPY) -O binary $< $@
+
+# What `make` builds by default; an arch fragment overrides it while its full
+# secure image cannot link yet (an EL3-only monitor image, for example).
+ARCH_DEFAULT_GOALS ?= secure-image
+secure-image: $(SECURE_BIN) $(SECURE_ELF)
+	@$(SIZE) $(SECURE_ELF)

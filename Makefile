@@ -21,7 +21,7 @@ include mk/common.mk
 
 .DEFAULT_GOAL := all
 
-.PHONY: all test test-conformance test-target test-target-a test-hardware fetch-psa-ff-tests \
+.PHONY: all secure-image test test-conformance test-target test-target-a test-hardware fetch-psa-ff-tests \
 		clean firmware-stm32h563 run-stm32h563 run-stm32h563-tui run-stm32h563-uarts \
 		test-domain-host test-domain-compilers test-domain-sanitize \
 		test-domain-valgrind test-manifest-host test-manifest-compilers \
@@ -37,8 +37,7 @@ include mk/common.mk
 		test-wolfcose-host \
 		run-stm32h563-vnet
 
-all: $(SECURE_BIN) $(SECURE_ELF)
-	@$(SIZE) $(SECURE_ELF)
+all: $(ARCH_DEFAULT_GOALS)
 
 test:
 	@$(MAKE) --no-print-directory -C tests/host test
