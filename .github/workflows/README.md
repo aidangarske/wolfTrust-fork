@@ -8,7 +8,7 @@ onto a PR before merge.
 
 | Tier | Trigger | Purpose |
 |------|---------|---------|
-| **Fast (per-PR)** | every PR; push to master/main/dev/churn | host unit suites (one check each), Arm PSA-FF conformance, cross-compile, compiler matrix, sanitizers, valgrind, integrations, core/port split guard |
+| **Fast (per-PR)** | every PR; push to master/main/dev/churn | host unit suites (one check each), Arm PSA-FF conformance, cross-compile (Cortex-M33, and the AArch64 EL3 smoke on QEMU virt/versal-virt), compiler matrix, sanitizers, valgrind, integrations, core/port split guard |
 | **Nightly M33MU** | `cron: 0 8 * * *`, or `workflow_dispatch` | full M33MU emulator matrix — 11 concurrent jobs (see below) |
 | **PR opt-in** | add a `ci:*` label to a PR | run one M33MU scenario, or the whole matrix, on the PR branch |
 
