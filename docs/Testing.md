@@ -31,8 +31,9 @@ verification, rollback decisions, IPC and FF-M behavior, SPM policy, gateway
 vectors, Secure Partition layout and recovery, HSM relay and key isolation,
 vault and storage services, attestation and COSE integration, firmware update,
 runtime remeasurement, VNET, public PSA headers, boot-handoff record
-consumption, the FF-A function-id table and version rules, the AArch64
-exception-syndrome decoder, and negative paths.
+consumption, the FF-A function-id table and version rules, the FF-A boot
+information protocol, the AArch64 exception-syndrome decoder, and negative
+paths.
 
 Additional host checks:
 
