@@ -31,7 +31,8 @@ verification, rollback decisions, IPC and FF-M behavior, SPM policy, gateway
 vectors, Secure Partition layout and recovery, HSM relay and key isolation,
 vault and storage services, attestation and COSE integration, firmware update,
 runtime remeasurement, VNET, public PSA headers, boot-handoff record
-consumption, and negative paths.
+consumption, the FF-A function-id table and version rules, the AArch64
+exception-syndrome decoder, and negative paths.
 
 Additional host checks:
 
@@ -205,7 +206,8 @@ The workflows under `.github/workflows/` separately run:
 - host unit tests;
 - compiler variants, sanitizers, and Valgrind;
 - Cortex-M33 cross-compilation;
-- AArch64 cross-compilation with the EL3 smoke on QEMU (`virt` GICv2 and
+- AArch64 cross-compilation with the EL3 symbol guard at link and the
+  `smoke`, `boot`, and `boot-smp2` scenarios on QEMU (`virt` GICv2 and
   GICv3, `xlnx-versal-virt`);
 - dependency integration;
 - the core/port split guard and the docs guard (no internal-ledger or
