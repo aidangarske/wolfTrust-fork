@@ -27,30 +27,19 @@
 #include "wolftrust/services/attestation_cose.h"
 #include "wolftrust/services/hsm.h"
 
+#include "psa/lifecycle.h"
+
 #include "wolfssl/wolfcrypt/sha256.h"
 #include "wolfssl/wolfcrypt/hash.h"
 
 #include "wolfhsm/wh_error.h"
 
 #include <wolfcose/wolfcose.h>
+#include <wolfcose/eat_psa.h>
 
 #include <stdbool.h>
 #include <string.h>
 
-#define WT_EAT_CLAIM_NONCE 10
-#define WT_EAT_CLAIM_UEID 256
-#define WT_EAT_CLAIM_PROFILE 265
-#define WT_EAT_CLAIM_BOOT_SEED 268
-#define WT_PSA_CLAIM_CLIENT_ID 2394
-#define WT_PSA_CLAIM_LIFECYCLE 2395
-#define WT_PSA_CLAIM_IMPLEMENTATION_ID 2396
-#define WT_PSA_CLAIM_CERT_REFERENCE 2398
-#define WT_PSA_CLAIM_SW_COMPONENTS 2399
-#define WT_PSA_CLAIM_VERIFICATION_SERVICE 2400
-#define WT_PSA_SW_MEASUREMENT_TYPE 1
-#define WT_PSA_SW_MEASUREMENT_VALUE 2
-#define WT_PSA_SW_MEASUREMENT_SIGNER_ID 5
-#define WT_PSA_SW_MEASUREMENT_DESCRIPTION 6
 #define WT_UEID_TYPE_RANDOM 0x01u
 /* Sized for the standard claim set plus one lean measurement+signer component
  * per verified guest (WT-FFM-0049); the signed token stays under the 640-byte
@@ -61,10 +50,6 @@
 
 static const uint8_t g_measurement_type[] = "sha-256";
 static const uint8_t g_measurement_description[] = "wolftrust";
-/* RFC 9783 final profile identifier for the PSA claim set (registered CBOR
- * keys 2394-2400 plus the EAT nonce, UEID, profile, and boot-seed claims). */
-static const uint8_t g_profile_definition[] =
-    "tag:psacertified.org,2023:psa#tfm";
 #ifdef WT_ATTEST_CERT_REFERENCE
 static const uint8_t g_cert_reference[] = WT_ATTEST_CERT_REFERENCE;
 #endif
@@ -205,174 +190,119 @@ static int wt_attest_measurement_get(size_t index,
     return 0;
 }
 
-static int wt_attest_encode_payload(wt_guest_id_t guestId,
-    const uint8_t* challenge, size_t challengeSize, uint8_t* payload,
-    size_t payloadCapacity, size_t* payloadSize)
+/* COSE external-signer callback: wolfCOSE hands us the digest of the
+ * Sig_structure; forward it to the IAK held in the secure HSM. */
+static int wt_attest_eat_sign(void* context, int32_t algorithm,
+    const uint8_t* digest, size_t digestSize, uint8_t* signature,
+    size_t signatureSize, size_t* signatureLength)
 {
-    WOLFCOSE_CBOR_CTX cbor;
-    unsigned int claimCount;
-    int ret;
+    (void)context;
+    if (algorithm != WOLFCOSE_ALG_ES256) {
+        return WOLFCOSE_E_INVALID_ARG;
+    }
+    return wt_hsm_attest_sign(digest, digestSize, signature,
+                              signatureSize, signatureLength);
+}
 
-    if ((challenge == NULL) || (payload == NULL) || (payloadSize == NULL)) {
+static int wt_attest_build_claims(wt_guest_id_t guestId,
+    const uint8_t* challenge, size_t challengeSize,
+    WOLFCOSE_EAT_PSA_CLAIMS* claims, WOLFCOSE_EAT_PSA_COMPONENT* components,
+    size_t componentCap, wt_guest_measurement_t* records, size_t recordCap)
+{
+    size_t count;
+    size_t index;
+    int ret = WT_ATTEST_SUCCESS;
+
+    if ((challenge == NULL) || (claims == NULL) || (components == NULL) ||
+        (records == NULL)) {
+        return WT_ATTEST_ERROR_INVALID_ARGUMENT;
+    }
+    /* Reject out-of-range guest ids so the negative client-id map below cannot
+     * overflow int32 or turn positive. */
+    if (guestId >= WT_MAX_GUESTS) {
         return WT_ATTEST_ERROR_INVALID_ARGUMENT;
     }
 
-    (void)memset(&cbor, 0, sizeof(cbor));
-    cbor.buf = payload;
-    cbor.bufSz = payloadCapacity;
-
-    /* nonce, ueid, profile, boot-seed, implementation-id, client-id,
-     * lifecycle, software-components, plus any build-configured claims. */
-    claimCount = 8u;
-#ifdef WT_ATTEST_CERT_REFERENCE
-    claimCount += 1u;
-#endif
-#ifdef WT_ATTEST_VERIFICATION_SERVICE
-    claimCount += 1u;
-#endif
-
-    ret = wc_CBOR_EncodeMapStart(&cbor, claimCount);
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_EAT_CLAIM_NONCE);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeBstr(&cbor, challenge, challengeSize);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_EAT_CLAIM_UEID);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeBstr(&cbor, g_ueid, sizeof(g_ueid));
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_EAT_CLAIM_PROFILE);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeTstr(&cbor, g_profile_definition,
-                                 sizeof(g_profile_definition) - 1u);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_EAT_CLAIM_BOOT_SEED);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeBstr(&cbor, g_boot_seed, sizeof(g_boot_seed));
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_PSA_CLAIM_IMPLEMENTATION_ID);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeBstr(&cbor, g_implementation_id,
-                                 sizeof(g_implementation_id));
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_PSA_CLAIM_CLIENT_ID);
-    }
-    if (ret == 0) {
-        /* The claim carries the caller's PSA client id; NSPE callers are
-         * negative (guest N maps to -(N + 1)), never a positive value. */
-        ret = wc_CBOR_EncodeInt(&cbor, -((int64_t)guestId + 1));
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_PSA_CLAIM_LIFECYCLE);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeUint(&cbor, g_boot_handoff.lifecycle);
-    }
-#ifdef WT_ATTEST_CERT_REFERENCE
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_PSA_CLAIM_CERT_REFERENCE);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeTstr(&cbor, g_cert_reference,
-                                 sizeof(g_cert_reference) - 1u);
-    }
-#endif
-#ifdef WT_ATTEST_VERIFICATION_SERVICE
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_PSA_CLAIM_VERIFICATION_SERVICE);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeTstr(&cbor, g_verification_service,
-                                 sizeof(g_verification_service) - 1u);
-    }
-#endif
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeInt(&cbor, WT_PSA_CLAIM_SW_COMPONENTS);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeArrayStart(&cbor,
-                  1u + (unsigned int)wt_attest_measurement_count());
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeMapStart(&cbor, 4u);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeUint(&cbor, WT_PSA_SW_MEASUREMENT_TYPE);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeTstr(&cbor, g_measurement_type,
-                                 sizeof(g_measurement_type) - 1u);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeUint(&cbor, WT_PSA_SW_MEASUREMENT_VALUE);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeBstr(&cbor, g_boot_handoff.measurement,
-                                 g_boot_handoff.measurement_size);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeUint(&cbor, WT_PSA_SW_MEASUREMENT_SIGNER_ID);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeBstr(&cbor, g_signer_id, sizeof(g_signer_id));
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeUint(&cbor,
-                                 WT_PSA_SW_MEASUREMENT_DESCRIPTION);
-    }
-    if (ret == 0) {
-        ret = wc_CBOR_EncodeTstr(&cbor, g_measurement_description,
-                                 sizeof(g_measurement_description) - 1u);
-    }
-
-    /* One lean component per launch-verified guest (WT-FFM-0049): the pinned
-     * digest and the boot-chain signer that authenticated the pin. */
-    if (ret == 0) {
-        size_t component;
-
-        for (component = 0u;
-             (ret == 0) && (component < wt_attest_measurement_count());
-             component++) {
-            wt_guest_measurement_t guest;
-
-            if (wt_attest_measurement_get(component, &guest) != 0) {
-                ret = -1;
-                break;
-            }
-            ret = wc_CBOR_EncodeMapStart(&cbor, 2u);
-            if (ret == 0) {
-                ret = wc_CBOR_EncodeUint(&cbor, WT_PSA_SW_MEASUREMENT_VALUE);
-            }
-            if (ret == 0) {
-                ret = wc_CBOR_EncodeBstr(&cbor, guest.digest,
-                                         sizeof(guest.digest));
-            }
-            if (ret == 0) {
-                ret = wc_CBOR_EncodeUint(&cbor,
-                                         WT_PSA_SW_MEASUREMENT_SIGNER_ID);
-            }
-            if (ret == 0) {
-                ret = wc_CBOR_EncodeBstr(&cbor, g_signer_id,
-                                         sizeof(g_signer_id));
-            }
-        }
-    }
-    if (ret != 0) {
+    count = wt_attest_measurement_count();
+    if ((count > recordCap) || ((count + 1u) > componentCap)) {
         return WT_ATTEST_ERROR_BUFFER_TOO_SMALL;
     }
 
-    *payloadSize = cbor.idx;
-    return WT_ATTEST_SUCCESS;
+    (void)memset(claims, 0, sizeof(*claims));
+    (void)memset(components, 0, sizeof(*components) * componentCap);
+
+    /* Descriptor component: the wolfBoot measurement and its signer. */
+    components[0].measurementType.data = g_measurement_type;
+    components[0].measurementType.len = sizeof(g_measurement_type) - 1u;
+    components[0].measurementValue.data = g_boot_handoff.measurement;
+    components[0].measurementValue.len = g_boot_handoff.measurement_size;
+    components[0].signerId.data = g_signer_id;
+    components[0].signerId.len = sizeof(g_signer_id);
+    components[0].measurementDesc.data = g_measurement_description;
+    components[0].measurementDesc.len = sizeof(g_measurement_description) - 1u;
+
+    /* One lean component per launch-verified guest (WT-FFM-0049): the pinned
+     * digest and the boot-chain signer that authenticated the pin. */
+    for (index = 0u; (ret == WT_ATTEST_SUCCESS) && (index < count); index++) {
+        if (wt_attest_measurement_get(index, &records[index]) != 0) {
+            ret = WT_ATTEST_ERROR_CRYPTO;
+        }
+        else {
+            components[index + 1u].measurementValue.data =
+                records[index].digest;
+            components[index + 1u].measurementValue.len =
+                sizeof(records[index].digest);
+            components[index + 1u].signerId.data = g_signer_id;
+            components[index + 1u].signerId.len = sizeof(g_signer_id);
+        }
+    }
+
+    if (ret == WT_ATTEST_SUCCESS) {
+        claims->nonce.data = challenge;
+        claims->nonce.len = challengeSize;
+        claims->ueid.data = g_ueid;
+        claims->ueid.len = sizeof(g_ueid);
+        claims->implementationId.data = g_implementation_id;
+        claims->implementationId.len = sizeof(g_implementation_id);
+        claims->bootSeed.data = g_boot_seed;
+        claims->bootSeed.len = sizeof(g_boot_seed);
+#ifdef WT_ATTEST_CERT_REFERENCE
+        claims->certificationReference.data = g_cert_reference;
+        claims->certificationReference.len = sizeof(g_cert_reference) - 1u;
+#endif
+#ifdef WT_ATTEST_VERIFICATION_SERVICE
+        claims->verificationServiceIndicator.data = g_verification_service;
+        claims->verificationServiceIndicator.len =
+            sizeof(g_verification_service) - 1u;
+#endif
+        /* NSPE callers map guest N to PSA client id -(N + 1); never positive. */
+        claims->clientId = -((int32_t)guestId + 1);
+        claims->lifecycle = (uint16_t)g_boot_handoff.lifecycle;
+        claims->components = components;
+        claims->componentCount = count + 1u;
+    }
+
+    return ret;
+}
+
+/* Accept only the PSA lifecycle major states the wolfCOSE EAT encoder allows
+ * (RFC 9783), so init fails closed instead of arming a path that can never
+ * issue a token. */
+static int wt_attest_lifecycle_valid(uint32_t lifecycle)
+{
+    uint16_t major;
+
+    if (lifecycle > 0xFFFFu) {
+        return 0;
+    }
+    major = (uint16_t)(lifecycle & PSA_LIFECYCLE_PSA_STATE_MASK);
+    return ((major == PSA_LIFECYCLE_UNKNOWN) ||
+            (major == PSA_LIFECYCLE_ASSEMBLY_AND_TEST) ||
+            (major == PSA_LIFECYCLE_PSA_ROT_PROVISIONING) ||
+            (major == PSA_LIFECYCLE_SECURED) ||
+            (major == PSA_LIFECYCLE_NON_PSA_ROT_DEBUG) ||
+            (major == PSA_LIFECYCLE_RECOVERABLE_PSA_ROT_DEBUG) ||
+            (major == PSA_LIFECYCLE_DECOMMISSIONED)) ? 1 : 0;
 }
 
 int wt_initial_attest_init(const wt_boot_handoff_t* handoff)
@@ -386,6 +316,11 @@ int wt_initial_attest_init(const wt_boot_handoff_t* handoff)
         (handoff->measurement_size != WT_BOOT_HANDOFF_DIGEST_SIZE)) {
         return WT_ATTEST_ERROR_INVALID_ARGUMENT;
     }
+    /* Reject a handoff whose lifecycle is not a PSA state the EAT encoder
+     * accepts, so a doomed handoff is refused here rather than at token time. */
+    if (wt_attest_lifecycle_valid(handoff->lifecycle) == 0) {
+        return WT_ATTEST_ERROR_INVALID_ARGUMENT;
+    }
 
     ret = wc_Sha256Hash(g_implementation_name,
         (word32)(sizeof(g_implementation_name) - 1u),
@@ -397,6 +332,9 @@ int wt_initial_attest_init(const wt_boot_handoff_t* handoff)
     if (ret == 0) {
         (void)memcpy(&g_boot_handoff, handoff, sizeof(g_boot_handoff));
         g_handoff_ready = true;
+        /* Drop the cached UEID and boot-seed so a new handoff re-derives them;
+         * a stale boot-binding must never be carried into a signed token. */
+        g_attest_ready = false;
     }
 
     return ret == 0 ? WT_ATTEST_SUCCESS : WT_ATTEST_ERROR_CRYPTO;
@@ -407,6 +345,9 @@ int wt_initial_attest_get_token_size(size_t challengeSize,
 {
     uint8_t challenge[WT_ATTEST_CHALLENGE_SIZE_64];
     uint8_t payload[WT_ATTEST_PAYLOAD_SIZE];
+    WOLFCOSE_EAT_PSA_CLAIMS claims;
+    WOLFCOSE_EAT_PSA_COMPONENT components[1u + WT_MAX_GUESTS];
+    wt_guest_measurement_t records[WT_MAX_GUESTS];
     wt_attest_cose_signer_t signer;
     size_t payloadSize = 0u;
     int ret;
@@ -424,8 +365,19 @@ int wt_initial_attest_get_token_size(size_t challengeSize,
     ret = wt_attest_prepare();
     if (ret == WT_ATTEST_SUCCESS) {
         (void)memset(challenge, 0, sizeof(challenge));
-        ret = wt_attest_encode_payload(0u, challenge, challengeSize, payload,
-                                       sizeof(payload), &payloadSize);
+        ret = wt_attest_build_claims(0u, challenge, challengeSize, &claims,
+            components, sizeof(components) / sizeof(components[0]),
+            records, sizeof(records) / sizeof(records[0]));
+    }
+    if (ret == WT_ATTEST_SUCCESS) {
+        ret = wc_CoseEatPsaToken_EncodeClaims(&claims, payload,
+                                              sizeof(payload), &payloadSize);
+        if (ret == WOLFCOSE_E_BUFFER_TOO_SMALL) {
+            ret = WT_ATTEST_ERROR_BUFFER_TOO_SMALL;
+        }
+        else if (ret != WOLFCOSE_SUCCESS) {
+            ret = WT_ATTEST_ERROR_CRYPTO;
+        }
     }
     if (ret == WT_ATTEST_SUCCESS) {
         (void)memset(&signer, 0, sizeof(signer));
@@ -442,13 +394,17 @@ int wt_initial_attest_get_token(wt_guest_id_t guestId,
     const uint8_t* challenge, size_t challengeSize, uint8_t* token,
     size_t tokenCapacity, size_t* tokenSize)
 {
-    uint8_t payload[WT_ATTEST_PAYLOAD_SIZE];
+    uint8_t claimsBuf[WT_ATTEST_PAYLOAD_SIZE];
     uint8_t scratch[WT_ATTEST_SCRATCH_SIZE];
-    wt_attest_cose_signer_t signer;
-    size_t payloadSize = 0u;
+    WOLFCOSE_EAT_PSA_CLAIMS claims;
+    WOLFCOSE_EAT_PSA_COMPONENT components[1u + WT_MAX_GUESTS];
+    wt_guest_measurement_t records[WT_MAX_GUESTS];
+    WOLFCOSE_KEY key;
+    int keyReady = 0;
     int ret;
 
-    if ((challenge == NULL) || (token == NULL) || (tokenSize == NULL)) {
+    if ((challenge == NULL) || (token == NULL) || (tokenSize == NULL) ||
+        (tokenCapacity == 0u)) {
         return WT_ATTEST_ERROR_INVALID_ARGUMENT;
     }
     *tokenSize = 0u;
@@ -460,21 +416,41 @@ int wt_initial_attest_get_token(wt_guest_id_t guestId,
 
     ret = wt_attest_prepare();
     if (ret == WT_ATTEST_SUCCESS) {
-        ret = wt_attest_encode_payload(guestId, challenge, challengeSize,
-                                       payload, sizeof(payload), &payloadSize);
+        ret = wt_attest_build_claims(guestId, challenge, challengeSize, &claims,
+            components, sizeof(components) / sizeof(components[0]),
+            records, sizeof(records) / sizeof(records[0]));
     }
     if (ret == WT_ATTEST_SUCCESS) {
-        (void)memset(&signer, 0, sizeof(signer));
-        signer.sign = wt_attest_hsm_sign;
-        ret = wt_attest_cose_sign1_encode(&signer, payload, payloadSize,
-            0u, scratch, sizeof(scratch), token,
-            tokenCapacity, tokenSize);
-        if (ret == WT_ATTEST_COSE_E_BUFFER) {
+        if (wc_CoseKey_Init(&key) != WOLFCOSE_SUCCESS) {
+            ret = WT_ATTEST_ERROR_CRYPTO;
+        }
+        else {
+            keyReady = 1;
+            key.kty = WOLFCOSE_KTY_EC2;
+            key.crv = WOLFCOSE_CRV_P256;
+            key.alg = WOLFCOSE_ALG_ES256;
+            if (wc_CoseKey_SetExtSigner(&key, wt_attest_eat_sign, NULL) !=
+                WOLFCOSE_SUCCESS) {
+                ret = WT_ATTEST_ERROR_CRYPTO;
+            }
+        }
+    }
+    if (ret == WT_ATTEST_SUCCESS) {
+        ret = wc_CoseEatPsaToken_CreateSign1(&key, WOLFCOSE_ALG_ES256, &claims,
+            claimsBuf, sizeof(claimsBuf), scratch, sizeof(scratch), token,
+            tokenCapacity, tokenSize, NULL);
+        if (ret == WOLFCOSE_E_BUFFER_TOO_SMALL) {
             ret = WT_ATTEST_ERROR_BUFFER_TOO_SMALL;
+        }
+        else if (ret != WOLFCOSE_SUCCESS) {
+            ret = WT_ATTEST_ERROR_CRYPTO;
         }
     }
 
-    wt_attest_force_zero(payload, sizeof(payload));
+    if (keyReady != 0) {
+        wc_CoseKey_Free(&key);
+    }
+    wt_attest_force_zero(claimsBuf, sizeof(claimsBuf));
     wt_attest_force_zero(scratch, sizeof(scratch));
     return ret;
 }

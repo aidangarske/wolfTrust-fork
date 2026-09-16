@@ -31,6 +31,10 @@ CFLAGS := \
     -DWOLFSSL_USER_SETTINGS \
     -UHAVE_CONFIG_H \
     -DWOLFCOSE_ENABLE_EXT_SIGN \
+    -DWOLFCOSE_ENABLE_EAT_PSA \
+    -DWOLFCOSE_ENABLE_EAT_PSA_CURRENT \
+    -DWOLFCOSE_ENABLE_EAT_PSA_ISSUE \
+    -DWOLFCOSE_ENABLE_EAT_PSA_SIGN1_ISSUE \
     -DWOLFHSM_CFG_NO_CRYPTO \
     -DWOLFHSM_CFG_NO_SYS_TIME \
     -I. \
@@ -72,8 +76,22 @@ _WC_SRCS := \
     $(WOLFSSL)/wolfcrypt/src/misc.c
 
 _CO_SRCS := \
-    $(WOLFCOSE)/src/wolfcose.c \
-    $(WOLFCOSE)/src/wolfcose_cbor.c
+    $(WOLFCOSE)/src/wolfcose_cbor.c \
+    $(WOLFCOSE)/src/wolfcose_util.c \
+    $(WOLFCOSE)/src/wolfcose_alg.c \
+    $(WOLFCOSE)/src/wolfcose_ecc.c \
+    $(WOLFCOSE)/src/wolfcose_hdr.c \
+    $(WOLFCOSE)/src/wolfcose_key.c \
+    $(WOLFCOSE)/src/wolfcose_struct.c \
+    $(WOLFCOSE)/src/wolfcose_recipient.c \
+    $(WOLFCOSE)/src/wolfcose_sign1.c \
+    $(WOLFCOSE)/src/wolfcose_sign.c \
+    $(WOLFCOSE)/src/wolfcose_countersign.c \
+    $(WOLFCOSE)/src/wolfcose_encrypt0.c \
+    $(WOLFCOSE)/src/wolfcose_mac0.c \
+    $(WOLFCOSE)/src/wolfcose_encrypt.c \
+    $(WOLFCOSE)/src/wolfcose_mac.c \
+    $(WOLFCOSE)/src/wolfcose_eat_psa.c
 
 _TEST_SRCS := main.c
 

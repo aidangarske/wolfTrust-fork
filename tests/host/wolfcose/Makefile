@@ -25,8 +25,22 @@ LDLIBS += -L$(WOLFSSL_PREFIX)/lib -lwolfssl
 TARGET := test_wolfcose_integration
 SOURCES := test_wolfcose_integration.c \
     $(ROOT)/src/services/attestation_cose.c \
-    $(WOLFCOSE)/src/wolfcose.c \
-    $(WOLFCOSE)/src/wolfcose_cbor.c
+    $(WOLFCOSE)/src/wolfcose_cbor.c \
+    $(WOLFCOSE)/src/wolfcose_util.c \
+    $(WOLFCOSE)/src/wolfcose_alg.c \
+    $(WOLFCOSE)/src/wolfcose_ecc.c \
+    $(WOLFCOSE)/src/wolfcose_hdr.c \
+    $(WOLFCOSE)/src/wolfcose_key.c \
+    $(WOLFCOSE)/src/wolfcose_struct.c \
+    $(WOLFCOSE)/src/wolfcose_recipient.c \
+    $(WOLFCOSE)/src/wolfcose_sign1.c \
+    $(WOLFCOSE)/src/wolfcose_sign.c \
+    $(WOLFCOSE)/src/wolfcose_countersign.c \
+    $(WOLFCOSE)/src/wolfcose_encrypt0.c \
+    $(WOLFCOSE)/src/wolfcose_mac0.c \
+    $(WOLFCOSE)/src/wolfcose_encrypt.c \
+    $(WOLFCOSE)/src/wolfcose_mac.c \
+    $(WOLFCOSE)/src/wolfcose_eat_psa.c
 
 .PHONY: all run clean
 

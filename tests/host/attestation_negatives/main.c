@@ -163,6 +163,17 @@ int main(void)
     check(ret == WT_ATTEST_ERROR_INVALID_ARGUMENT,
           "handoff with a truncated measurement is rejected");
 
+    bad.measurement_size = WT_BOOT_HANDOFF_DIGEST_SIZE;
+    bad.lifecycle = 0x10000u;
+    ret = wt_initial_attest_init(&bad);
+    check(ret == WT_ATTEST_ERROR_INVALID_ARGUMENT,
+          "handoff with an out-of-range lifecycle is rejected");
+
+    bad.lifecycle = 0x7000u;
+    ret = wt_initial_attest_init(&bad);
+    check(ret == WT_ATTEST_ERROR_INVALID_ARGUMENT,
+          "handoff with an unsupported lifecycle state is rejected");
+
     ret = wt_initial_attest_get_token(0u, challenge,
         WT_ATTEST_CHALLENGE_SIZE_32, token, sizeof(token), &tokenSize);
     check(ret == WT_ATTEST_ERROR_NOT_READY,
@@ -212,6 +223,14 @@ int main(void)
                                       token, sizeof(token), &tokenSize);
     check(ret == WT_ATTEST_ERROR_INVALID_ARGUMENT,
           "NULL challenge is rejected");
+    ret = wt_initial_attest_get_token(WT_MAX_GUESTS, challenge,
+        WT_ATTEST_CHALLENGE_SIZE_32, token, sizeof(token), &tokenSize);
+    check(ret == WT_ATTEST_ERROR_INVALID_ARGUMENT,
+          "out-of-range guest id is rejected");
+    ret = wt_initial_attest_get_token(0u, challenge, WT_ATTEST_CHALLENGE_SIZE_32,
+                                      token, 0u, &tokenSize);
+    check(ret == WT_ATTEST_ERROR_INVALID_ARGUMENT,
+          "zero-capacity token buffer is rejected");
 
     /* A good token binds the boot measurement. */
     ret = wt_initial_attest_get_token(0u, challenge,

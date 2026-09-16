@@ -58,7 +58,11 @@ SECURE_CFLAGS_COSE := -I$(WOLFCOSE_DIR)/include \
     -DWOLFCOSE_LEAN -DWOLFCOSE_ENABLE_EXT_SIGN \
     -DWOLFCOSE_NO_SIGN1_VERIFY -DWOLFCOSE_NO_ENCRYPT0 \
     -DWOLFCOSE_NO_MAC0 -DWOLFCOSE_NO_KEY_ENCODE \
-    -DWOLFCOSE_NO_KEY_DECODE
+    -DWOLFCOSE_NO_KEY_DECODE \
+    -DWOLFCOSE_ENABLE_EAT_PSA \
+    -DWOLFCOSE_ENABLE_EAT_PSA_CURRENT \
+    -DWOLFCOSE_ENABLE_EAT_PSA_ISSUE \
+    -DWOLFCOSE_ENABLE_EAT_PSA_SIGN1_ISSUE
 endif
 
 SECURE_CFLAGS := $(CPU_FLAGS) -ffreestanding -fno-builtin -nostdlib -Os -g \
@@ -252,8 +256,22 @@ WT_SECURE_EXTRA_SRCS += \
     $(ROOT)/src/services/attestation_cose.c \
     $(ROOT)/src/services/attestation_service.c \
     $(ROOT)/src/services/initial_attestation.c \
-    $(WOLFCOSE_DIR)/src/wolfcose.c \
-    $(WOLFCOSE_DIR)/src/wolfcose_cbor.c
+    $(WOLFCOSE_DIR)/src/wolfcose_cbor.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_util.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_alg.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_ecc.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_hdr.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_key.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_struct.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_recipient.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_sign1.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_sign.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_countersign.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_encrypt0.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_mac0.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_encrypt.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_mac.c \
+    $(WOLFCOSE_DIR)/src/wolfcose_eat_psa.c
 endif
 
 ifeq ($(CONFIG_VNET),y)

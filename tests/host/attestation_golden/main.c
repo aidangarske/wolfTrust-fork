@@ -19,14 +19,12 @@
  */
 
 /*
- * P5-S1 deterministic EAT claims: with a fixed IAK (RFC 6979 P-256 test key),
+ * Deterministic EAT claims: with a fixed IAK (RFC 6979 P-256 test key),
  * fixed boot handoff, and fixed challenge, the production claim encoder must
- * emit a byte-stable claim set — pinned here against an embedded golden
- * vector so any unintended change to the token wire format fails CI. The
- * profile decision is also pinned: profile-2 claim set, no boot-seed claim
- * (val counts boot_seed only under profile-1). Rebuild with
- * EXTRA_CFLAGS=-DWT_GOLDEN_GEN to print a fresh vector after an intended
- * claim change.
+ * emit a byte-stable RFC 9783 #tfm claim set — pinned here against an embedded
+ * golden vector so any unintended change to the token wire format fails CI.
+ * Rebuild with EXTRA_CFLAGS=-DWT_GOLDEN_GEN to print a fresh vector after an
+ * intended claim change.
  */
 
 #include "wolftrust/services/initial_attestation.h"

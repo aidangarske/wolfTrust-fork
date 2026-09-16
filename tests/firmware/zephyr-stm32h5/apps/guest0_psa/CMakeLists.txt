@@ -18,8 +18,22 @@ target_sources(app PRIVATE
   src/main.c
   src/attestation_verify.c
   ${WOLFTRUST_CMSE_IMPLIB}
-  ${WT_WOLFCOSE_DIR}/src/wolfcose.c
   ${WT_WOLFCOSE_DIR}/src/wolfcose_cbor.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_util.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_alg.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_ecc.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_hdr.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_key.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_struct.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_recipient.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_sign1.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_sign.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_countersign.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_encrypt0.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_mac0.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_encrypt.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_mac.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_eat_psa.c
 )
 target_include_directories(app PRIVATE
   ${WT_WOLFCOSE_DIR}/include
@@ -78,8 +92,22 @@ if(WT_M33MU_EXPECT_BKPT)
 endif()
 
 set_source_files_properties(
-  ${WT_WOLFCOSE_DIR}/src/wolfcose.c
   ${WT_WOLFCOSE_DIR}/src/wolfcose_cbor.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_util.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_alg.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_ecc.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_hdr.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_key.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_struct.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_recipient.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_sign1.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_sign.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_countersign.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_encrypt0.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_mac0.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_encrypt.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_mac.c
+  ${WT_WOLFCOSE_DIR}/src/wolfcose_eat_psa.c
   PROPERTIES COMPILE_OPTIONS
     "-Wno-unused-function;-Wno-unused-variable;-Wno-unused-parameter;-Wno-type-limits"
 )

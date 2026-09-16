@@ -90,6 +90,14 @@ jobs:
             esac
             picked="$picked {\"key\":\"$s\",\"name\":\"$n\"},"
           done
+          # ci:all/ci:m33mu run every scenario in the full build job, so the
+          # per-scenario matrix is empty; emit a green sentinel, not a grey skip.
+          if [ -z "$picked" ]; then
+            case " $sel " in
+              *" all "*|*" m33mu "*)
+                picked='{"key":"__full__","name":"FF-M scenarios (run in the full build)"},' ;;
+            esac
+          fi
           echo "scenarios={\"scenario\":[${picked%,}]}" >> "$GITHUB_OUTPUT"
 
   scenario:
@@ -112,7 +120,12 @@ jobs:
           git config --global url."https://github.com/".insteadOf git@github.com:
 
       - name: Run FF-M target scenario
-        run: tests/target/run_m33mu_scenario.sh ${{ matrix.scenario.key }}
+        run: |
+          if [ "${{ matrix.scenario.key }}" = "__full__" ]; then
+            echo "ci:all/ci:m33mu selected; every scenario runs in the full build job."
+            exit 0
+          fi
+          tests/target/run_m33mu_scenario.sh ${{ matrix.scenario.key }}
 
   full:
     needs: select
