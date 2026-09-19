@@ -42,10 +42,15 @@ static void check(int ok, const char* what)
     }
 }
 
+/* Manifest-derived resources bound to the domain; validation checks these,
+ * not the compiled template windows. */
+static wt_memory_resource_t g_res[2];
+
 static void fixture(wt_guest_config_t* config, wt_domain_descriptor_t* domain)
 {
     memset(config, 0, sizeof(*config));
     memset(domain, 0, sizeof(*domain));
+    memset(g_res, 0, sizeof(g_res));
     config->vector_table = 0x08020000u;
     config->memory_windows[0].base = 0x20000000u;
     config->memory_windows[0].size = 0x00010000u;
@@ -60,6 +65,14 @@ static void fixture(wt_guest_config_t* config, wt_domain_descriptor_t* domain)
     config->port.required_capabilities = WT_PORT_CAPABILITY_ALL;
     config->port.provided_capabilities = WT_PORT_CAPABILITY_ALL;
     config->port.vector_read_address = 0x0C020000u;
+    g_res[0].base = 0x20000000u;
+    g_res[0].size = 0x00010000u;
+    g_res[0].attributes = WT_MEMORY_ATTR_READ | WT_MEMORY_ATTR_WRITE;
+    g_res[1].base = 0x08020000u;
+    g_res[1].size = 0x00020000u;
+    g_res[1].attributes = WT_MEMORY_ATTR_READ | WT_MEMORY_ATTR_EXECUTE;
+    domain->memory_resources = g_res;
+    domain->memory_resource_count = 2u;
 }
 
 static int bind(const wt_guest_config_t* config,
@@ -121,20 +134,28 @@ int main(void)
     config.port.required_capabilities = caps;
     config.port.provided_capabilities = caps;
     check(bind(&config, &domain) == WT_PORT_ERROR_CAPABILITY,
-          "a writable window needs the TrustZone filter");
+          "a writable manifest resource needs the TrustZone filter");
 
-    config.memory_windows[0].attributes = WT_MEMORY_ATTR_READ;
+    g_res[0].attributes = WT_MEMORY_ATTR_READ;
     check(bind(&config, &domain) == WT_PORT_VALID,
-          "read-only windows need no TrustZone filter");
+          "read-only manifest resources need no TrustZone filter");
+
+    /* The manifest, not the compiled template, decides the filter need: a
+     * read-only template window with a writable manifest resource must still
+     * be refused on a filter-less port. */
+    g_res[0].attributes = WT_MEMORY_ATTR_READ | WT_MEMORY_ATTR_WRITE;
+    config.memory_windows[0].attributes = WT_MEMORY_ATTR_READ;
+    check(bind(&config, &domain) == WT_PORT_ERROR_CAPABILITY,
+          "a writable manifest resource is refused even when the template is read-only");
 
     fixture(&config, &domain);
     caps = WT_PORT_CAPABILITY_VECTOR_READ_ALIAS;
     config.port.required_capabilities = caps;
     config.port.provided_capabilities = caps;
     config.memory_region_count = 0u;
-    config.memory_windows[0].attributes = WT_MEMORY_ATTR_READ;
+    g_res[0].attributes = WT_MEMORY_ATTR_READ;
     check(bind(&config, &domain) == WT_PORT_VALID,
-          "no regions and read-only windows bind to a filter-less port");
+          "no regions and read-only manifest resources bind to a filter-less port");
 
     memset(&profile, 0, sizeof(profile));
     profile.capabilities = WT_CAPABILITY_MEMORY_PROTECTION |

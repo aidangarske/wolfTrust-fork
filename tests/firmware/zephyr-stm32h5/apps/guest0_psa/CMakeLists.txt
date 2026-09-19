@@ -41,6 +41,7 @@ target_include_directories(app PRIVATE
 )
 target_compile_definitions(app PRIVATE
   WOLFCOSE_LEAN
+  WOLFCOSE_ENABLE_DEPRECATED_ALGS
   WOLFCOSE_NO_SIGN1_SIGN
   WOLFCOSE_NO_ENCRYPT0
   WOLFCOSE_NO_MAC0

@@ -44,21 +44,6 @@
 /* Read over the debug port by the hardware harness. */
 static volatile uint32_t g_wt_attest_degraded __attribute__((used));
 
-#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-static void wt_boot_clear_handoff_region(void)
-{
-    size_t size = 0u;
-    volatile uint8_t* scratch =
-        (volatile uint8_t*)wt_platform_boot_handoff_region(&size);
-    size_t i;
-
-    for (i = 0u; i < size; ++i) {
-        scratch[i] = 0u;
-    }
-    wt_arch_dsb();
-}
-#endif
-
 void wt_boot_run(void)
 {
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
@@ -69,7 +54,7 @@ void wt_boot_run(void)
     wt_monitor_init();
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
     handoffRet = wt_boot_handoff_consume(&bootHandoff);
-    wt_boot_clear_handoff_region();
+    wt_boot_handoff_clear();
 #endif
 #ifdef WT_ENGINE_HSM
     /* Bring up the secure-side wolfHSM service before dispatching guests:
@@ -127,9 +112,11 @@ void wt_boot_run(void)
         }
     }
 #endif
+#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
     if (handoffRet == 0) {
         wt_ffm_set_lifecycle(wt_ffm_boot_runtime_mut(), bootHandoff.lifecycle);
     }
+#endif
     /* P1t: crypto SP becomes a scheduled unprivileged coroutine now that
      * the tasklet scheduler exists. Fail closed — guests depend on it. */
     if (wt_ffm_boot_start_sched() != WT_FFM_SUCCESS) {

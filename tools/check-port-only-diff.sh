@@ -9,7 +9,7 @@
 #
 # Exits non-zero and lists every offending path when the diff against
 # <base-ref> reaches outside the allow-list. arch/soc default to any.
-set -u
+set -uo pipefail
 
 allow_re() { # arch soc
   local arch="$1" soc="$2"
@@ -46,6 +46,8 @@ selftest() {
     echo "SELFTEST FAIL: include/wolftrust/arch.h accepted"; fails=$((fails + 1)); fi
   if printf '%s\n' 'src/arch/armv8m/spm_svc.c' | audit "$re" > /dev/null; then
     echo "SELFTEST FAIL: another arch accepted"; fails=$((fails + 1)); fi
+  if "$0" refs/heads/__cpodiff_missing_ref__ > /dev/null 2>&1; then
+    echo "SELFTEST FAIL: invalid base ref approved"; fails=$((fails + 1)); fi
   if [ "$fails" -ne 0 ]; then echo "SELFTEST: $fails failure(s)"; exit 1; fi
   echo "SELFTEST: ok"
   exit 0
@@ -58,6 +60,11 @@ base="$1"
 arch="${2:-[a-z0-9_]+}"
 soc="${3:-[a-z0-9_]+}"
 re="$(allow_re "$arch" "$soc")"
+
+if ! git rev-parse --verify --quiet "$base^{commit}" > /dev/null; then
+  echo "FAIL: base ref '$base' does not resolve" >&2
+  exit 2
+fi
 
 echo "port-only diff audit: $base..HEAD (arch=$arch soc=$soc)"
 if git diff --name-only "$base"...HEAD | audit "$re"; then

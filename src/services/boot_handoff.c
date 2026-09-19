@@ -71,3 +71,18 @@ int wt_boot_handoff_consume(wt_boot_handoff_t* handoff)
 
     return ret;
 }
+
+void wt_boot_handoff_clear(void)
+{
+    size_t regionSize = 0u;
+    volatile uint8_t* regionBytes =
+        (volatile uint8_t*)wt_platform_boot_handoff_region(&regionSize);
+    size_t i;
+
+    if (regionBytes != NULL) {
+        for (i = 0u; i < regionSize; ++i) {
+            regionBytes[i] = 0u;
+        }
+        wt_arch_dsb();
+    }
+}

@@ -29,7 +29,7 @@ BUILD_DIR ?= build
 CFLAGS := \
     -DWOLFSSL_USER_SETTINGS \
     -UHAVE_CONFIG_H \
-    -DWOLFCOSE_ENABLE_EXT_SIGN \
+    -DWOLFCOSE_ENABLE_EXT_SIGN -DWOLFCOSE_ENABLE_DEPRECATED_ALGS \
     -I. \
     -I$(SHIM) \
     -I$(ROOT)/include \
@@ -125,6 +125,7 @@ QCBOR_DIR ?= $(ROOT)/build/upstream/qcbor
 INTEROP_BIN := $(BUILD_DIR)/test_real_qcbor
 INTEROP_CFLAGS := \
     -DWOLFSSL_USER_SETTINGS -UHAVE_CONFIG_H -DWOLFCOSE_ENABLE_EXT_SIGN \
+    -DWOLFCOSE_ENABLE_DEPRECATED_ALGS \
     -I. -I$(ROOT)/include -I$(WOLFSSL) -I$(WOLFCOSE)/include \
     -I$(QCBOR_DIR)/inc -I$(QCBOR_DIR)/inc/qcbor \
     -std=c11 -O0 -g -Wall -Wextra -Wno-unused-function -Wno-unused-parameter \

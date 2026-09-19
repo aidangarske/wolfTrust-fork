@@ -44,4 +44,8 @@ typedef struct wt_boot_handoff {
  * before return so it cannot be replayed by a later service request. */
 int wt_boot_handoff_consume(wt_boot_handoff_t* handoff);
 
+/* Zero and barrier the boot-handoff scratch region. A no-op when the port
+ * reports no handoff region (wt_platform_boot_handoff_region returns NULL). */
+void wt_boot_handoff_clear(void);
+
 #endif /* WOLFTRUST_BOOT_HANDOFF_H */

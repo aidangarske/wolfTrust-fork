@@ -52,6 +52,7 @@ _Static_assert(offsetof(wt_boot_handoff_t, measurement) == 24u,
 
 static uint8_t g_region[REGION_SIZE];
 static size_t g_region_size = REGION_SIZE;
+static int g_region_null;
 static int checks;
 static int failures;
 
@@ -59,6 +60,9 @@ volatile void* wt_platform_boot_handoff_region(size_t* size)
 {
     if (size != NULL) {
         *size = g_region_size;
+    }
+    if (g_region_null) {
+        return NULL;
     }
     return g_region;
 }
@@ -103,6 +107,18 @@ static int region_cleared(void)
     size_t i;
 
     for (i = 0u; i < sizeof(wt_boot_handoff_t); ++i) {
+        if (g_region[i] != 0u) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int region_all_zero(void)
+{
+    size_t i;
+
+    for (i = 0u; i < sizeof(g_region); ++i) {
         if (g_region[i] != 0u) {
             return 0;
         }
@@ -194,6 +210,22 @@ int main(int argc, char** argv)
     g_region_size = REGION_SIZE;
 
     check(wt_boot_handoff_consume(NULL) != 0, "NULL output refused");
+
+    /* Boot-cleanup contract (wt_boot_handoff_clear): zero a present region, and
+     * be a safe no-op when the port reports no handoff region. The absent case
+     * pairs a NULL pointer with a nonzero size; reaching the next check without
+     * a fault (caught hard under ASan/Valgrind) is the assertion. */
+    g_region_null = 0;
+    g_region_size = REGION_SIZE;
+    memset(g_region, 0xA5, sizeof(g_region));
+    wt_boot_handoff_clear();
+    check(region_all_zero(), "clear zeroes a present handoff region");
+
+    g_region_null = 1;
+    g_region_size = REGION_SIZE;
+    wt_boot_handoff_clear();
+    check(1, "clear is a safe no-op when the region is absent (NULL, nonzero size)");
+    g_region_null = 0;
 
     printf("boot_handoff: %d checks, %d failures\n", checks, failures);
     return (failures == 0) ? 0 : 1;
