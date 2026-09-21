@@ -108,7 +108,7 @@ port's five CMSE gateway veneers.
 | [Threat Model](Threat-Model.md) | Protected assets, attacker capabilities, controls, and residual risks |
 | [API Reference](API-Reference.md) | PSA client, service, storage, update, lifecycle, attestation, and gateway APIs |
 | [Services](Services.md) | Behavior and access policy for each Secure service |
-| [TF-M Compatibility](TF-M-Compatibility.md) | Supported interfaces, intentional differences, and migration guidance |
+| [FF-M and PSA Compatibility](FF-M-and-PSA-Compatibility.md) | Standards alignment, intentional differences, and TF-M migration guidance |
 | [Macros](Macros.md) | Supported build and manifest configuration |
 | [Porting](Porting.md) | Architecture and target port contracts |
 | [Building](Building.md) | Build targets, outputs, and cross-build options |

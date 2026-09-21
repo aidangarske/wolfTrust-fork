@@ -148,7 +148,7 @@ documentation source:
 - [Threat Model](docs/Threat-Model.md)
 - [API Reference](docs/API-Reference.md)
 - [Services](docs/Services.md)
-- [TF-M Compatibility](docs/TF-M-Compatibility.md)
+- [FF-M and PSA Compatibility](docs/FF-M-and-PSA-Compatibility.md)
 - [Macros](docs/Macros.md)
 - [Porting](docs/Porting.md)
 - [Building](docs/Building.md)

@@ -1,15 +1,16 @@
-# TF-M Compatibility
+# FF-M and PSA Compatibility
 
-wolfTrust implements the PSA interfaces needed by its reference applications
-without linking the Trusted Firmware-M runtime. Compatibility is at the C API
-and service-behavior level; image layout, manifests, build integration, and
-the SPM implementation are wolfTrust-specific.
+wolfTrust implements PSA interfaces based on Arm's Firmware Framework for
+M (FF-M) without linking the Trusted Firmware-M (TF-M) runtime. This register
+records standards alignment, interoperability boundaries, and known
+deviations. It does not claim drop-in TF-M compatibility: image layout,
+manifests, build integration, and the SPM implementation are wolfTrust-specific.
 
 This register describes the code in the repository. It is not a certification
 statement, and a declaration in a vendored header does not mean every optional
 algorithm or feature is enabled in every build.
 
-## Compatibility register
+## Standards compatibility register
 
 | API or behavior | Version | Status | Repository evidence |
 | --- | --- | --- | --- |
@@ -70,7 +71,7 @@ requested and validated wolfTrust policy level, not by itself as proof of
 independent TF-M isolation certification. [Security Model](Security-Model.md) describes the
 actual boundary.
 
-## Migrating an application
+## Porting an application from TF-M
 
 1. Keep application calls on standard PSA headers where wolfTrust provides the
    corresponding Non-secure adapter: FF-M client, Crypto, ITS, Protected

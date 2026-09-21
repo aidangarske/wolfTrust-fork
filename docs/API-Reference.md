@@ -31,7 +31,7 @@ configuration.
 | Internal Trusted Storage | `include/psa/internal_trusted_storage.h` | 1.0 |
 | Protected Storage | `include/psa/protected_storage.h` | 1.0 |
 | Firmware Update | `include/psa/update.h` | 1.0 |
-| Initial Attestation | `lib/wolfPSA/wolfpsa/psa/initial_attestation.h` | 1.0 API operations; see [TF-M Compatibility](TF-M-Compatibility.md) for API and token-profile deviations |
+| Initial Attestation | `lib/wolfPSA/wolfpsa/psa/initial_attestation.h` | 1.0 API operations; see [FF-M and PSA Compatibility](FF-M-and-PSA-Compatibility.md) for API and token-profile deviations |
 | Lifecycle | `include/psa/lifecycle.h` | FF-M 1.0, Secure Partition only |
 | Gateway vector ABI | `include/wolftrust/ffm_veneer.h` | wolfTrust ABI |
 
@@ -501,7 +501,7 @@ returns `PSA_ERROR_INVALID_ARGUMENT`; other undersized buffers return
 `PSA_ERROR_BUFFER_TOO_SMALL`.
 
 The token advertises `tag:psacertified.org,2023:psa#tfm` but has the
-token-profile deviations listed in [TF-M Compatibility](TF-M-Compatibility.md) and must not be
+token-profile deviations listed in [FF-M and PSA Compatibility](FF-M-and-PSA-Compatibility.md) and must not be
 represented as conformant with that profile. The only working Non-secure
 attestation adapter currently resides at
 `tests/firmware/zephyr-stm32h5/module/wolftrust-tee/src/wolftrust_attestation_client.c`.
@@ -591,4 +591,4 @@ vector layout is in `include/wolftrust/ffm_veneer.h`, and
 | `PSA_ERROR_INSUFFICIENT_POWER` | -161 | Power is insufficient for the operation |
 
 For service availability and deviations, see [Services](Services.md) and
-[TF-M Compatibility](TF-M-Compatibility.md).
+[FF-M and PSA Compatibility](FF-M-and-PSA-Compatibility.md).

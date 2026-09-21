@@ -7,7 +7,7 @@
 - [[Threat Model]]
 - [[API Reference]]
 - [[Services]]
-- [[TF-M Compatibility]]
+- [[FF-M and PSA Compatibility]]
 - [[Macros]]
 - [[Porting]]
 - [[Building]]

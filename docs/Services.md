@@ -124,7 +124,7 @@ across equivalent boots, its software-component measurement type and
 description values are reversed, its signer ID hashes the literal name
 `wolfBoot` rather than identifying the signing key, and its implementation ID
 hashes a software label rather than identifying the immutable PSA RoT hardware
-assembly. [TF-M Compatibility](TF-M-Compatibility.md) records these token-profile and API deviations.
+assembly. [FF-M and PSA Compatibility](FF-M-and-PSA-Compatibility.md) records these token-profile and API deviations.
 
 The EAT/PSA claim set binds:
 
