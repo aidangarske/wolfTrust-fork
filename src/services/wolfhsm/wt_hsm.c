@@ -941,10 +941,15 @@ int wt_hsm_signal_fault(wt_guest_id_t guest_id)
         wt_hsm_release_locks(g->tasklet);
     }
 
-    /* Tell the NS client. Failure here just means the transport was
-     * never wired (guest_id outside transport range) — still safe. */
+    /* Notify through the optional port hook before erasing transport state. */
     (void)g_hsm_fault_notify(guest_id);
 
+    wt_hsm_force_zero(&g_relay_bufs[guest_id],
+                      sizeof(g_relay_bufs[guest_id]));
+    wt_hsm_force_zero(&g->server, sizeof(g->server));
+    wt_hsm_force_zero(&g->crypto, sizeof(g->crypto));
+    wt_hsm_force_zero(&g_co_stack_slots[guest_id],
+                      sizeof(g_co_stack_slots[guest_id]));
     g->ready = false;
     return WH_ERROR_OK;
 }
