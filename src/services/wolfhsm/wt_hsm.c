@@ -334,6 +334,7 @@ int wt_hsm_rollback_image_floor(uint32_t* floor)
  * Forward declaration — tasklet body defined below.
  * ---------------------------------------------------------------------- */
 static void wt_hsm_tasklet_main(void *arg);
+static void wt_hsm_force_zero(void* memory, size_t size);
 
 /* =========================================================================
  * wt_hsm_init
@@ -672,7 +673,9 @@ static int wt_hsm_relay_srv_send(void* context, uint16_t size,
 
 static int wt_hsm_relay_srv_cleanup(void* context)
 {
-    (void)context;
+    if (context != NULL) {
+        wt_hsm_force_zero(context, sizeof(wt_hsm_relay_buf_t));
+    }
     return WH_ERROR_OK;
 }
 
@@ -716,6 +719,7 @@ int wt_hsm_relay_submit(void* submit_ctx, int32_t client_id,
     }
     g = &g_guests[gid];
     buf = &g_relay_bufs[gid];
+    *resp_len = 0U;
     if (!g->ready || g->transport_ctx != buf) {
         return WH_ERROR_NOTREADY;
     }
@@ -751,15 +755,18 @@ int wt_hsm_relay_submit(void* submit_ctx, int32_t client_id,
         }
     }
     if (buf->resp_ready == 0u) {
-        buf->req_pending = 0u;
-        return (rc != WH_ERROR_OK) ? rc : WH_ERROR_ABORTED;
+        rc = (rc != WH_ERROR_OK) ? rc : WH_ERROR_ABORTED;
     }
-    if (buf->resp_len > resp_cap) {
-        return WH_ERROR_ABORTED;
+    else if (buf->resp_len > resp_cap) {
+        rc = WH_ERROR_ABORTED;
     }
-    (void)memcpy(resp, buf->resp, buf->resp_len);
-    *resp_len = buf->resp_len;
-    return WH_ERROR_OK;
+    else {
+        (void)memcpy(resp, buf->resp, buf->resp_len);
+        *resp_len = buf->resp_len;
+        rc = WH_ERROR_OK;
+    }
+    wt_hsm_force_zero(buf, sizeof(*buf));
+    return rc;
 }
 
 /* =========================================================================
