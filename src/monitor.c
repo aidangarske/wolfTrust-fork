@@ -639,6 +639,8 @@ void wt_monitor_quarantine_guest(wt_guest_id_t guest_id)
         return;
     }
 
+    (void)wt_ffm_fail_client_connections(wt_ffm_boot_runtime_mut(),
+                                         -(psa_client_id_t)(guest_id + 1U));
     runtime->state = WT_GUEST_FAULTED;
     g_wt_quarantine_events++;
     g_wt_launch_refused_mask |= (uint32_t)1U << guest_id;
