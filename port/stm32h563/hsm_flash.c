@@ -619,7 +619,7 @@ static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
     const wt_hsm_flash_config_t *geom = wt_flash_geometry(context);
     uint8_t flash_data[16];
     uint32_t checked = 0u;
-    int ret;
+    int ret = WH_ERROR_OK;
 
     if (data == NULL && size != 0u) {
         return WH_ERROR_BADARGS;
@@ -631,7 +631,7 @@ static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
     if (!wt_flash_range_ok(geom, offset, size)) {
         return WH_ERROR_BADARGS;
     }
-    while (checked < size) {
+    while (checked < size && ret == WH_ERROR_OK) {
         uint32_t chunk = size - checked;
 
         if (chunk > sizeof(flash_data)) {
@@ -640,15 +640,16 @@ static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
         ret = wt_flash_read_checked(
                 (const uint8_t *)(geom->base + offset + checked), flash_data,
                 chunk);
-        if (ret != WH_ERROR_OK) {
-            return ret;
+        if (ret == WH_ERROR_OK &&
+                memcmp(flash_data, data + checked, chunk) != 0) {
+            ret = WH_ERROR_NOTVERIFIED;
         }
-        if (memcmp(flash_data, data + checked, chunk) != 0) {
-            return WH_ERROR_NOTVERIFIED;
+        if (ret == WH_ERROR_OK) {
+            checked += chunk;
         }
-        checked += chunk;
     }
-    return WH_ERROR_OK;
+    wt_forceZero(flash_data, sizeof(flash_data));
+    return ret;
 }
 
 static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
@@ -658,7 +659,7 @@ static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
     uint8_t flash_data[16];
     uint32_t checked = 0u;
     uint32_t i;
-    int ret;
+    int ret = WH_ERROR_OK;
 
     if (wt_arch_thread_unprivileged()) {
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_BLANKCHECK, offset,
@@ -667,7 +668,7 @@ static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
     if (!wt_flash_range_ok(geom, offset, size)) {
         return WH_ERROR_BADARGS;
     }
-    while (checked < size) {
+    while (checked < size && ret == WH_ERROR_OK) {
         uint32_t chunk = size - checked;
 
         if (chunk > sizeof(flash_data)) {
@@ -676,17 +677,17 @@ static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
         ret = wt_flash_read_checked(
                 (const uint8_t *)(geom->base + offset + checked), flash_data,
                 chunk);
-        if (ret != WH_ERROR_OK) {
-            return ret;
-        }
-        for (i = 0u; i < chunk; i++) {
+        for (i = 0u; i < chunk && ret == WH_ERROR_OK; i++) {
             if (flash_data[i] != 0xFFu) {
-                return WH_ERROR_NOTBLANK;
+                ret = WH_ERROR_NOTBLANK;
             }
         }
-        checked += chunk;
+        if (ret == WH_ERROR_OK) {
+            checked += chunk;
+        }
     }
-    return WH_ERROR_OK;
+    wt_forceZero(flash_data, sizeof(flash_data));
+    return ret;
 }
 
 const whFlashCb g_wt_hsm_flash_cb = {
