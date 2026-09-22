@@ -413,6 +413,10 @@ static void wt_restart_guest(wt_guest_id_t guest_id, wt_fault_reason_t reason)
     /* Quarantined or restarted, the guest will never close its handles. */
     (void)wt_ffm_fail_client_connections(wt_ffm_boot_runtime_mut(),
                                          -(psa_client_id_t)(guest_id + 1U));
+    restart_window = wt_find_restart_clear_window(config);
+    if (restart_window != NULL) {
+        wt_arch_zero_guest_memory(restart_window->base, restart_window->size);
+    }
     if (wt_restart_policy_evaluate(config->restart_policy.restart_limit,
                                    config->restart_policy.restart_window_ticks,
                                    g_scheduler.monotonic_ticks,
@@ -431,10 +435,6 @@ static void wt_restart_guest(wt_guest_id_t guest_id, wt_fault_reason_t reason)
     runtime->remaining_delay_ticks =
         config->restart_policy.initial_delay_ticks;
 
-    restart_window = wt_find_restart_clear_window(config);
-    if (restart_window != NULL) {
-        wt_arch_zero_guest_memory(restart_window->base, restart_window->size);
-    }
 }
 
 static void wt_schedule_next_guest(void)
