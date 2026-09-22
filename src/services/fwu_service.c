@@ -211,15 +211,17 @@ psa_status_t wt_fwu_install(wt_fwu_service_ctx_t* ctx)
     if (ctx->state != PSA_FWU_CANDIDATE) {
         return PSA_ERROR_BAD_STATE;
     }
+    if (ctx->backend->arm == NULL || ctx->backend->disarm == NULL) {
+        return PSA_ERROR_BAD_STATE;
+    }
     /* Final anti-rollback guard immediately before the swap is armed. */
     if (ctx->candidate_version < ctx->version_floor) {
         ctx->state = PSA_FWU_FAILED;
         ctx->error = PSA_ERROR_NOT_PERMITTED;
         return PSA_ERROR_NOT_PERMITTED;
     }
-    if (ctx->backend->arm != NULL &&
-            ctx->backend->arm(ctx->backend_ctx, ctx->write_high,
-                              ctx->candidate_version) != 0) {
+    if (ctx->backend->arm(ctx->backend_ctx, ctx->write_high,
+                          ctx->candidate_version) != 0) {
         /* Arming failed: stay a candidate, no swap pending. */
         return PSA_ERROR_STORAGE_FAILURE;
     }
@@ -404,11 +406,12 @@ int wt_fwu_owner_expired(psa_client_id_t owner, uint32_t owner_tick,
 
 /* Reclaim an abandoned session: disarm any pending swap and return to READY so
  * a new client may start. Never advances the version floor or arms a swap. */
-static void wt_fwu_force_reset(wt_fwu_service_ctx_t* ctx)
+static psa_status_t wt_fwu_force_reset(wt_fwu_service_ctx_t* ctx)
 {
-    if (ctx->armed != 0u && ctx->backend != NULL &&
-            ctx->backend->disarm != NULL) {
-        (void)ctx->backend->disarm(ctx->backend_ctx);
+    if (ctx->armed != 0u &&
+            (ctx->backend == NULL || ctx->backend->disarm == NULL ||
+             ctx->backend->disarm(ctx->backend_ctx) != 0)) {
+        return PSA_ERROR_STORAGE_FAILURE;
     }
     ctx->state = PSA_FWU_READY;
     ctx->write_high = 0u;
@@ -416,6 +419,7 @@ static void wt_fwu_force_reset(wt_fwu_service_ctx_t* ctx)
     ctx->armed = 0u;
     ctx->error = PSA_SUCCESS;
     ctx->owner = 0;
+    return PSA_SUCCESS;
 }
 
 static psa_status_t wt_fwu_service_call(wt_fwu_service_ctx_t* ctx,
@@ -449,7 +453,10 @@ static psa_status_t wt_fwu_service_call(wt_fwu_service_ctx_t* ctx,
      * (DoS). An active owner refreshes its clock on every op below. */
     if (wt_fwu_owner_expired(ctx->owner, ctx->owner_tick, now_tick,
                              msg->client_id)) {
-        wt_fwu_force_reset(ctx);
+        status = wt_fwu_force_reset(ctx);
+        if (status != PSA_SUCCESS) {
+            return status;
+        }
     }
 
     /* Per-transaction owner: only the client that opened the update (START)
