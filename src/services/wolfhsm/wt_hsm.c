@@ -738,6 +738,9 @@ int wt_hsm_relay_reinit_servers(void)
         wt_hsm_server_pin(gid);
         (void)wh_Server_Cleanup(&g->server);
         (void)wc_FreeRng(g->crypto.rng);
+        wt_hsm_force_zero(&g_relay_bufs[gid], sizeof(g_relay_bufs[gid]));
+        wt_hsm_force_zero(&g->server, sizeof(g->server));
+        wt_hsm_force_zero(&g->crypto, sizeof(g->crypto));
         rc = wc_InitRng_ex(g->crypto.rng, NULL, INVALID_DEVID);
         if (rc == 0) {
             wt_hsm_bind_server_cfg(gid);
@@ -747,6 +750,8 @@ int wt_hsm_relay_reinit_servers(void)
             rc = wh_Server_SetConnected(&g->server, WH_COMM_CONNECTED);
         }
         if (rc != 0) {
+            wt_hsm_force_zero(&g->server, sizeof(g->server));
+            wt_hsm_force_zero(&g->crypto, sizeof(g->crypto));
             g->ready = false;
             break;
         }
