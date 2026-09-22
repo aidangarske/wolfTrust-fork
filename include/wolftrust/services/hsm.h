@@ -111,11 +111,9 @@ struct wt_co *wt_hsm_guest_tasklet(wt_guest_id_t guest_id);
  * dispatcher to map a faulted tasklet back to its NS client. */
 wt_guest_id_t wt_hsm_guest_for_tasklet(const struct wt_co *tasklet);
 
-/* Signal a terminal Secure-side fault for guest_id: drops the NVM lock
- * if the dying tasklet was holding it, writes a WH_ERROR_ABORTED
- * fatal-response into the guest's transport, and clears the ready bit
- * so subsequent NSC veneers reject HSM calls from this guest. Safe to
- * call from handler mode. Returns WH_ERROR_OK on success. */
+/* Signal a terminal Secure-side fault for guest_id: drop held locks, invoke
+ * the optional fault-notification hook, erase retained tasklet state, and
+ * clear the ready bit. Safe from handler mode. */
 int wt_hsm_signal_fault(wt_guest_id_t guest_id);
 
 /* Drop every secure-side wolfHSM lock held by a faulted coroutine. Used by the
@@ -134,9 +132,8 @@ struct wt_mutex *wt_hsm_nvm_lock_mutex(void);
  * state unusable. Fails closed — a guest whose re-init fails stays down. */
 int wt_hsm_relay_reinit_servers(void);
 
-/* Terminal-fault NS-client notifier. wt_hsm_signal_fault calls the installed
- * callback; the arch transport installs its concrete notifier at boot. The
- * default is a no-op so engine-less/host builds link. */
+/* Terminal-fault NS-client notifier. The default is a no-op, and no current
+ * port installs a replacement, so this path does not notify NS clients. */
 typedef int (*wt_hsm_fault_notify_fn)(wt_guest_id_t guest_id);
 void wt_hsm_set_fault_notify(wt_hsm_fault_notify_fn fn);
 

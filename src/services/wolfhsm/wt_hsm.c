@@ -849,12 +849,10 @@ wt_guest_id_t wt_hsm_guest_for_tasklet(const struct wt_co *tasklet)
 /* =========================================================================
  * wt_hsm_signal_fault
  *
- * Called from the Secure fault dispatcher after wt_tasklet_mark_faulted has
- * removed the tasklet from the scheduler. Drops any NVM lock the dying
- * tasklet still held, writes a WH_ERROR_ABORTED fatal-response into
- * the guest's transport so the NS client unblocks with a clean error,
- * and clears the ready bit so future NSC veneers reject HSM calls from
- * this guest.
+ * Called from the Secure fault dispatcher for a terminal tasklet fault. Drops
+ * any NVM lock the tasklet held, invokes the optional transport notification
+ * hook, erases retained tasklet state, and clears the ready bit. The default
+ * notification hook is a no-op, and no current port replaces it.
  *
  * Idempotent: calling on an already-faulted guest is harmless.
  * ====================================================================== */
