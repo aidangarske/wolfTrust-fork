@@ -652,11 +652,10 @@ void wt_arch_guest_context_restore(wt_guest_context_t* context)
 
 void wt_arch_zero_guest_memory(uintptr_t base, size_t size)
 {
-    volatile uint32_t* ptr = (volatile uint32_t*)base;
-    size_t words = size / sizeof(uint32_t);
+    volatile uint8_t* ptr = (volatile uint8_t*)base;
     size_t i;
 
-    for (i = 0; i < words; ++i) {
+    for (i = 0U; i < size; ++i) {
         ptr[i] = 0u;
     }
     if (base == WT_GUEST0_RAM_BASE && size >= WT_GUEST_RAM_SIZE) {
