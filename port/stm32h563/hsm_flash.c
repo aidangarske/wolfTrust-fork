@@ -28,6 +28,7 @@
 #include "wolftrust/services/fwu_service.h"
 #include "wolftrust/spm_gate.h"
 #include "wolftrust/arch.h"
+#include "wolftrust/zeroize.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -475,6 +476,7 @@ static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
             g_wt_flash_first_err_sr = WT_FLASH_SR;
         }
         ret = wt_flash_check_errors();
+        wt_forceZero(word, sizeof(word));
         if (ret != WH_ERROR_OK) {
             break;
         }
