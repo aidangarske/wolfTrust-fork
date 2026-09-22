@@ -19,6 +19,7 @@
  */
 
 #include "wolftrust/services/hsm_relay.h"
+#include "wolftrust/zeroize.h"
 
 #include <string.h>
 
@@ -115,46 +116,48 @@ static psa_status_t wt_hsm_relay_call(wt_ffm_runtime_t* runtime,
     size_t req_len = 0U;
     size_t resp_len = 0U;
     size_t resp_cap;
+    psa_status_t status;
     wt_hsm_relay_submit_fn submit = g_relay_submit;
 
-    if (msg->in_size[0] == 0U ||
-            msg->in_size[0] > sizeof(g_relay_io.req)) {
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
+    status = PSA_ERROR_INVALID_ARGUMENT;
     resp_cap = msg->out_size[0];
-    if (resp_cap == 0U) {
-        return PSA_ERROR_INVALID_ARGUMENT;
+    if (msg->in_size[0] != 0U &&
+            msg->in_size[0] <= sizeof(g_relay_io.req) && resp_cap != 0U) {
+        if (resp_cap > sizeof(g_relay_io.resp)) {
+            resp_cap = sizeof(g_relay_io.resp);
+        }
+        if (submit == NULL) {
+            /* Fail closed: no platform submit hook, no path to the server. */
+            submit = wt_hsm_relay_default_submit;
+        }
+        if (wt_hsm_relay_read_req(runtime, partition_id, msg->handle,
+                                  g_relay_io.req, sizeof(g_relay_io.req),
+                                  &req_len) != WT_FFM_SUCCESS ||
+                req_len != msg->in_size[0]) {
+            status = PSA_ERROR_INVALID_ARGUMENT;
+        }
+        else if (submit == wt_hsm_relay_default_submit) {
+            status = PSA_ERROR_NOT_SUPPORTED;
+        }
+        else if (submit(g_relay_submit_ctx, msg->client_id,
+                        g_relay_io.req, req_len, g_relay_io.resp,
+                        resp_cap, &resp_len) != 0) {
+            status = PSA_ERROR_GENERIC_ERROR;
+        }
+        else if (resp_len == 0U || resp_len > resp_cap) {
+            status = PSA_ERROR_GENERIC_ERROR;
+        }
+        else if (wt_hsm_relay_write_resp(runtime, partition_id, msg->handle,
+                                         g_relay_io.resp, resp_len) !=
+                WT_FFM_SUCCESS) {
+            status = PSA_ERROR_GENERIC_ERROR;
+        }
+        else {
+            status = PSA_SUCCESS;
+        }
     }
-    if (resp_cap > sizeof(g_relay_io.resp)) {
-        resp_cap = sizeof(g_relay_io.resp);
-    }
-    if (submit == NULL) {
-        /* Fail closed: no platform submit hook, no path to the server. */
-        submit = wt_hsm_relay_default_submit;
-    }
-    if (wt_hsm_relay_read_req(runtime, partition_id, msg->handle,
-                              g_relay_io.req, sizeof(g_relay_io.req),
-                              &req_len) != WT_FFM_SUCCESS ||
-            req_len != msg->in_size[0]) {
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-    if (submit == wt_hsm_relay_default_submit) {
-        return PSA_ERROR_NOT_SUPPORTED;
-    }
-    if (submit(g_relay_submit_ctx, msg->client_id, g_relay_io.req, req_len,
-               g_relay_io.resp,
-               resp_cap, &resp_len) != 0) {
-        return PSA_ERROR_GENERIC_ERROR;
-    }
-    if (resp_len == 0U || resp_len > resp_cap) {
-        return PSA_ERROR_GENERIC_ERROR;
-    }
-    if (wt_hsm_relay_write_resp(runtime, partition_id, msg->handle,
-                                g_relay_io.resp, resp_len) !=
-            WT_FFM_SUCCESS) {
-        return PSA_ERROR_GENERIC_ERROR;
-    }
-    return PSA_SUCCESS;
+    wt_forceZero(&g_relay_io, sizeof(g_relay_io));
+    return status;
 }
 
 int wt_hsm_relay_dispatch(void* context, wt_ffm_runtime_t* runtime,
