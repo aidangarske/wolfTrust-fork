@@ -167,9 +167,9 @@ int wt_hsm_vault_init(struct whNvmContext_t* nvm);
 struct wt_vault_backend;
 extern const struct wt_vault_backend wt_hsm_vault_backend;
 
-/* Vault sealer (WT-FFM-0048): AES-GCM confidentiality + rollback binding for
- * WT_VAULT_FLAG_SEALED objects, running entirely inside the privileged vault
- * domain — the device-unique key never reaches any Secure Partition. seal
+/* Vault sealer (WT-FFM-0048): AES-GCM confidentiality and rollback binding
+ * for WT_VAULT_FLAG_SEALED objects. Operations run in the confined vault SP,
+ * with the device-unique key kept in the shared keystore trust band. seal
  * writes pt_len + WT_VAULT_SEAL_TAG_LEN bytes ([ciphertext][tag]); unseal
  * takes ct_len >= tag length and writes ct_len - tag plaintext bytes. The
  * monotonic rollback counter is the GCM nonce, so a replayed (rolled-back)
@@ -200,7 +200,7 @@ void wt_hsm_vault_set_sealer(const wt_vault_sealer_t* sealer);
 int wt_hsm_seal_init(struct whNvmContext_t* nvm);
 extern const wt_vault_sealer_t wt_hsm_sealer;
 
-/* Shared vault directory helpers (wt_hsm_vault.c) for privileged backends:
+/* Shared vault directory helpers (wt_hsm_vault.c) for confined backends:
  * label-addressed lookup over the vault NVM id window, and the label
  * make/flags codec. whNvmMetadata is an untagged typedef, so wh_common.h
  * must be included for the real type. */
@@ -211,10 +211,9 @@ void wt_hsm_vault_make_label(uint8_t* label, int32_t owner, int32_t sub,
                              uint64_t uid, uint32_t flags);
 uint32_t wt_hsm_vault_flags_of(const uint8_t* label);
 
-/* Vault-domain RNG (WT-FFM-0054): entropy for SERVICE_VAULT's RANDOM face,
- * produced by a wolfCrypt DRBG owned by the privileged vault domain. Installed
- * via wt_vault_service_set_rng at boot. Only linked into builds that carry
- * wolfCrypt. */
+/* Vault RNG (WT-FFM-0054): entropy for SERVICE_VAULT's RANDOM face, produced
+ * by a wolfCrypt DRBG in the shared keystore trust band. Installed via
+ * wt_vault_service_set_rng at boot. Only linked into wolfCrypt builds. */
 psa_status_t wt_hsm_vault_random(uint8_t* out, size_t len);
 
 #endif /* WOLFTRUST_SERVICES_HSM_H */

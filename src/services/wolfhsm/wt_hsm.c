@@ -407,10 +407,10 @@ static int wt_hsm_vault_format(void)
     return rc;
 }
 
-/* Vault-domain RNG (WT-FFM-0054): a wolfCrypt DRBG owned by the privileged
- * vault domain, installed on SERVICE_VAULT's RANDOM face at boot. Kept
- * separate from the wolfHSM server keystore — the single crypto backend for
- * keys — because this is entropy plumbing, not key storage. */
+/* Vault RNG (WT-FFM-0054): a wolfCrypt DRBG in the shared keystore trust
+ * band, installed on SERVICE_VAULT's RANDOM face at boot. It remains separate
+ * from the wolfHSM server keystore because this is entropy plumbing, not key
+ * storage. */
 static WC_RNG g_vault_rng;
 static int g_vault_rng_ready;
 

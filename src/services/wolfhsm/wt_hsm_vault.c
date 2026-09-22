@@ -66,7 +66,7 @@ typedef struct wt_hsm_vault_table {
 static whNvmContext* g_vault_nvm;
 static const wt_vault_sealer_t* g_vault_sealer;
 
-/* Sealed-object staging, privileged vault domain only. */
+/* Sealed-object staging in the shared keystore trust band. */
 static uint8_t g_vault_ct[WT_VAULT_OBJECT_MAX + WT_VAULT_SEAL_TAG_LEN];
 static uint8_t g_vault_pt[WT_VAULT_OBJECT_MAX];
 
@@ -368,7 +368,7 @@ static psa_status_t wt_hsm_vault_recover(wt_hsm_vault_table_t* table)
     return wt_hsm_vault_destroy_stage();
 }
 
-/* Shared directory lookup for privileged vault backends: find the
+/* Shared directory lookup for confined vault backends: find the
  * (owner, sub, uid) object in the vault id window. Returns PSA_SUCCESS
  * with the id + metadata, or PSA_ERROR_DOES_NOT_EXIST. out_free_id receives
  * the lowest unused id in the window (WH_NVM_ID_INVALID when full). */

@@ -677,8 +677,8 @@ int wt_hsm_flash_format(void)
 }
 
 /* SERVICE_FWU staging into the wolfBoot update partition (WT-FWU-0002). The
- * privileged FWU coroutine erases each target sector lazily, programs the
- * candidate, and verifies every block against the memory-mapped secure flash.
+ * unprivileged FWU SP crosses the privileged SVC gate to erase each target
+ * sector lazily, program the candidate, and verify each block in secure flash.
  * install() arms wolfBoot's real WRITEONCE update trigger in the UPDATE
  * partition trailer (wt_fwu_wolfboot_arm_trailer), so the next boot swaps the
  * staged image; the swapped image is still gated by authenticated launch and
