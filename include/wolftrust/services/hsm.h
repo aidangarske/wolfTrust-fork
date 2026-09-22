@@ -99,11 +99,9 @@ uint16_t wt_hsm_guest_client_id(wt_guest_id_t guest_id);
  * registry can be unit-tested on the host. */
 #include "wolftrust/hsm_priv.h"
 
-/* Signal a terminal Secure-side fault for guest_id: drops the NVM lock
- * if the dying tasklet was holding it, writes a WH_ERROR_ABORTED
- * fatal-response into the guest's transport, and clears the ready bit
- * so subsequent NSC veneers reject HSM calls from this guest. Safe to
- * call from handler mode. Returns WH_ERROR_OK on success. */
+/* Signal a terminal Secure-side fault for guest_id: drop held locks, invoke
+ * the optional fault-notification hook, erase retained tasklet state, and
+ * clear the ready bit. Safe from handler mode. */
 int wt_hsm_signal_fault(wt_guest_id_t guest_id);
 
 /* Drop every secure-side wolfHSM lock held by a faulted coroutine. Used by the
@@ -122,9 +120,8 @@ struct wt_mutex *wt_hsm_nvm_lock_mutex(void);
  * state unusable. Fails closed — a guest whose re-init fails stays down. */
 int wt_hsm_relay_reinit_servers(void);
 
-/* Terminal-fault NS-client notifier. wt_hsm_signal_fault calls the installed
- * callback; the arch transport installs its concrete notifier at boot. The
- * default is a no-op so engine-less/host builds link. */
+/* Terminal-fault NS-client notifier. The default is a no-op, and no current
+ * port installs a replacement, so this path does not notify NS clients. */
 typedef int (*wt_hsm_fault_notify_fn)(wt_guest_id_t guest_id);
 void wt_hsm_set_fault_notify(wt_hsm_fault_notify_fn fn);
 
@@ -199,9 +196,18 @@ void wt_hsm_vault_make_label(uint8_t* label, int32_t owner, int32_t sub,
                              uint64_t uid, uint32_t flags);
 uint32_t wt_hsm_vault_flags_of(const uint8_t* label);
 
-/* Vault RNG (WT-FFM-0054): entropy for SERVICE_VAULT's RANDOM face, produced
- * by a wolfCrypt DRBG in the shared keystore trust band. Installed via
- * wt_vault_service_set_rng at boot. Only linked into wolfCrypt builds. */
+/* Reserve pool space for a shared-store object add of len bytes, holding back
+ * the counter-table headroom and compacting reclaimable entries first. A
+ * writer must call this before wh_Nvm_AddObject so a doomed add on a full pool
+ * cannot fail mid-write and poison later adds, and so key churn cannot starve
+ * the seal-counter table or the rollback floor. Returns INSUFFICIENT_STORAGE
+ * when even reclaim cannot make room. */
+psa_status_t wt_hsm_vault_reserve_object(whNvmSize len);
+
+/* Vault-domain RNG (WT-FFM-0054): entropy for SERVICE_VAULT's RANDOM face,
+ * produced by a wolfCrypt DRBG owned by the privileged vault domain. Installed
+ * via wt_vault_service_set_rng at boot. Only linked into builds that carry
+ * wolfCrypt. */
 psa_status_t wt_hsm_vault_random(uint8_t* out, size_t len);
 
 #endif /* WOLFTRUST_SERVICES_HSM_H */
