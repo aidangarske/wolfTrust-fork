@@ -98,6 +98,7 @@ static wt_virtual_systick_t g_guest_systick[WT_MAX_GUESTS];
  * NS bank is restored lets the tick preempt the dispatch window and stack
  * through the new VTOR_NS onto the departing guest's MSP_NS. */
 static volatile uint32_t g_arriving_systick_csr;
+static volatile uint32_t g_arriving_systick_rvr;
 static volatile uint32_t g_arriving_systick_inject;
 
 void wt_arch_init(void)
@@ -460,6 +461,7 @@ static void wt_virtual_systick_account_elapsed(wt_virtual_systick_t* systick)
 static void wt_virtual_systick_restore_arriving(wt_guest_id_t guest_id)
 {
     wt_virtual_systick_t* systick;
+    uint32_t first_reload;
 
     WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR;
     if (guest_id >= WT_MAX_GUESTS) {
@@ -470,12 +472,23 @@ static void wt_virtual_systick_restore_arriving(wt_guest_id_t guest_id)
     wt_virtual_systick_account_elapsed(systick);
 
     WT_SYST_NS_CSR = 0u;
-    WT_SYST_NS_RVR = systick->rvr;
-    WT_SYST_NS_CVR = 0u;
     g_arriving_systick_csr = 0u;
+    g_arriving_systick_rvr = systick->rvr & 0x00FFFFFFu;
     g_arriving_systick_inject = 0u;
     if (wt_virtual_systick_active(systick)) {
+        first_reload = systick->cvr & 0x00FFFFFFu;
+        if (first_reload == 0u || first_reload > g_arriving_systick_rvr) {
+            first_reload = g_arriving_systick_rvr;
+        }
+        /* Load the accounted residual for the first resumed period. The
+         * normal reload is restored immediately after the counter is armed. */
+        WT_SYST_NS_RVR = first_reload;
+        WT_SYST_NS_CVR = 0u;
         g_arriving_systick_csr = systick->csr & ~WT_SYST_CSR_COUNTFLAG;
+    }
+    else {
+        WT_SYST_NS_RVR = g_arriving_systick_rvr;
+        WT_SYST_NS_CVR = 0u;
     }
 
     if (systick->owed_ticks > 0u && wt_virtual_systick_irq_enabled(systick)) {
@@ -496,10 +509,14 @@ static void wt_virtual_systick_arm_arriving(void) __attribute__((used));
 static void wt_virtual_systick_arm_arriving(void)
 {
     uint32_t csr = g_arriving_systick_csr;
+    uint32_t reload = g_arriving_systick_rvr;
 
     g_arriving_systick_csr = 0u;
+    g_arriving_systick_rvr = 0u;
     if (csr != 0u) {
         WT_SYST_NS_CSR = csr;
+        __asm volatile("dsb\nisb" ::: "memory");
+        WT_SYST_NS_RVR = reload;
     }
     if (g_arriving_systick_inject != 0u) {
         g_arriving_systick_inject = 0u;
