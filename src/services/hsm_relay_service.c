@@ -109,18 +109,6 @@ static int wt_hsm_relay_write_resp(wt_ffm_runtime_t* runtime,
     return WT_FFM_SUCCESS;
 }
 
-/* Scrub a relay copy buffer. volatile so the clear is not optimized away; the
- * relay unit is port-free and does not link wolfCrypt's ForceZero. */
-static void wt_hsm_relay_zeroize(uint8_t* buf, size_t len)
-{
-    volatile uint8_t* p = buf;
-    size_t i;
-
-    for (i = 0U; i < len; i++) {
-        p[i] = 0U;
-    }
-}
-
 static psa_status_t wt_hsm_relay_call_inner(wt_ffm_runtime_t* runtime,
                                             int32_t partition_id,
                                             const psa_msg_t* msg)
@@ -128,62 +116,54 @@ static psa_status_t wt_hsm_relay_call_inner(wt_ffm_runtime_t* runtime,
     size_t req_len = 0U;
     size_t resp_len = 0U;
     size_t resp_cap;
-    psa_status_t status;
     wt_hsm_relay_submit_fn submit = g_relay_submit;
 
-    status = PSA_ERROR_INVALID_ARGUMENT;
-    resp_cap = msg->out_size[0];
-    if (msg->in_size[0] != 0U &&
-            msg->in_size[0] <= sizeof(g_relay_io.req) && resp_cap != 0U) {
-        if (resp_cap > sizeof(g_relay_io.resp)) {
-            resp_cap = sizeof(g_relay_io.resp);
-        }
-        if (submit == NULL) {
-            /* Fail closed: no platform submit hook, no path to the server. */
-            submit = wt_hsm_relay_default_submit;
-        }
-        if (wt_hsm_relay_read_req(runtime, partition_id, msg->handle,
-                                  g_relay_io.req, sizeof(g_relay_io.req),
-                                  &req_len) != WT_FFM_SUCCESS ||
-                req_len != msg->in_size[0]) {
-            status = PSA_ERROR_INVALID_ARGUMENT;
-        }
-        else if (submit == wt_hsm_relay_default_submit) {
-            status = PSA_ERROR_NOT_SUPPORTED;
-        }
-        else if (submit(g_relay_submit_ctx, msg->client_id,
-                        g_relay_io.req, req_len, g_relay_io.resp,
-                        resp_cap, &resp_len) != 0) {
-            status = PSA_ERROR_GENERIC_ERROR;
-        }
-        else if (resp_len == 0U || resp_len > resp_cap) {
-            status = PSA_ERROR_GENERIC_ERROR;
-        }
-        else if (wt_hsm_relay_write_resp(runtime, partition_id, msg->handle,
-                                         g_relay_io.resp, resp_len) !=
-                WT_FFM_SUCCESS) {
-            status = PSA_ERROR_GENERIC_ERROR;
-        }
-        else {
-            status = PSA_SUCCESS;
-        }
+    if (msg->in_size[0] == 0U ||
+            msg->in_size[0] > sizeof(g_relay_io.req)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
     }
-    wt_forceZero(&g_relay_io, sizeof(g_relay_io));
-    return status;
+    resp_cap = msg->out_size[0];
+    if (resp_cap == 0U) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (resp_cap > sizeof(g_relay_io.resp)) {
+        resp_cap = sizeof(g_relay_io.resp);
+    }
+    if (submit == NULL) {
+        /* Fail closed: no platform submit hook, no path to the server. */
+        submit = wt_hsm_relay_default_submit;
+    }
+    if (wt_hsm_relay_read_req(runtime, partition_id, msg->handle,
+                              g_relay_io.req, sizeof(g_relay_io.req),
+                              &req_len) != WT_FFM_SUCCESS ||
+            req_len != msg->in_size[0]) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (submit == wt_hsm_relay_default_submit) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (submit(g_relay_submit_ctx, msg->client_id, g_relay_io.req, req_len,
+               g_relay_io.resp, resp_cap, &resp_len) != 0) {
+        return PSA_ERROR_GENERIC_ERROR;
+    }
+    if (resp_len == 0U || resp_len > resp_cap) {
+        return PSA_ERROR_GENERIC_ERROR;
+    }
+    if (wt_hsm_relay_write_resp(runtime, partition_id, msg->handle,
+                                g_relay_io.resp, resp_len) != WT_FFM_SUCCESS) {
+        return PSA_ERROR_GENERIC_ERROR;
+    }
+    return PSA_SUCCESS;
 }
 
-/* Single cleanup path (key hygiene): the relay copy buffers live in the shared
- * keystore band and carry imported key material and decrypted plaintext, so
- * scrub both after every call, on success and on every error path. */
+/* Relay packets carry key material, so scrub them on every call path. */
 static psa_status_t wt_hsm_relay_call(wt_ffm_runtime_t* runtime,
                                       int32_t partition_id,
                                       const psa_msg_t* msg)
 {
-    psa_status_t status;
+    psa_status_t status = wt_hsm_relay_call_inner(runtime, partition_id, msg);
 
-    status = wt_hsm_relay_call_inner(runtime, partition_id, msg);
-    wt_hsm_relay_zeroize(g_relay_io.req, sizeof(g_relay_io.req));
-    wt_hsm_relay_zeroize(g_relay_io.resp, sizeof(g_relay_io.resp));
+    wt_forceZero(&g_relay_io, sizeof(g_relay_io));
     return status;
 }
 
