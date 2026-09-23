@@ -65,6 +65,7 @@ typedef struct mock_backend {
     uint32_t fail_write_call;
     int fail_write;
     int fail_arm;
+    int fail_disarm;
     int fail_verify;
 } mock_backend_t;
 
@@ -110,6 +111,9 @@ static int mock_disarm(void* ctx)
 {
     mock_backend_t* b = (mock_backend_t*)ctx;
 
+    if (b->fail_disarm) {
+        return -1;
+    }
     b->armed = 0u;
     return 0;
 }
@@ -565,6 +569,24 @@ static void test_ipc_round_trip(void)
                       &info, sizeof(info));
     check(status == PSA_SUCCESS && info.state == PSA_FWU_STAGED,
           "WT-FWU-0001 IPC query reports STAGED after install");
+
+    /* A timed-out owner cannot be reclaimed while disarming the pending
+     * update fails. A later retry can safely return the service to READY. */
+    fwu_ctx.owner = 42;
+    fwu_ctx.owner_tick = (uint32_t)(0U - WT_FWU_OWNER_IDLE_TIMEOUT_TICKS);
+    mem.fail_disarm = 1;
+    status = fwu_call(&runtime, handle, WT_FWU_OP_QUERY, 0u, 0u, 0u, NULL, 0U,
+                      &info, sizeof(info));
+    check(status == PSA_ERROR_STORAGE_FAILURE && fwu_ctx.armed == 1u &&
+              mem.armed == 1u && fwu_ctx.owner == 42 &&
+              fwu_ctx.state == PSA_FWU_STAGED,
+          "WT-FWU-0003 failed disarm preserves the staged update and owner");
+    mem.fail_disarm = 0;
+    status = fwu_call(&runtime, handle, WT_FWU_OP_QUERY, 0u, 0u, 0u, NULL, 0U,
+                      &info, sizeof(info));
+    check(status == PSA_SUCCESS && info.state == PSA_FWU_READY &&
+              mem.armed == 0u && fwu_ctx.owner == 0,
+          "WT-FWU-0003 disarm retry reclaims the staged update");
 }
 
 /* WT-FWU-0002: the wolfBoot update trigger the FWU backend arms into the
