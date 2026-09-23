@@ -62,6 +62,7 @@
 
 /* wolfTrust headers. */
 #include "wolftrust/types.h"
+#include "wolftrust/arch.h"
 #include "wolftrust/guest_verify.h"
 #include "wolftrust/monitor.h"
 #include "wolftrust/rollback.h"
@@ -280,7 +281,7 @@ static void wt_hsm_tasklet_main(void *arg)
 #if defined(WT_HSM_FAULT_PROBE) && (WT_HSM_FAULT_PROBE == 1)
     if (gid == 0U && fault_probe_fired == 0) {
         fault_probe_fired = 1;
-        __asm volatile("udf #0");
+        wt_arch_sp_fault_probe(0U);
     }
 #endif
 
@@ -703,6 +704,10 @@ int wt_hsm_relay_reinit_servers(void)
         if (rc != 0) {
             wt_hsm_force_zero(&g->server, sizeof(g->server));
             wt_hsm_force_zero(&g->crypto, sizeof(g->crypto));
+            if (g->tasklet != NULL) {
+                wt_hsm_release_locks(g->tasklet);
+                wt_tasklet_mark_faulted(g->tasklet);
+            }
             g->ready = false;
             break;
         }

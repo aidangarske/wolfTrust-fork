@@ -311,6 +311,8 @@ jobs:
           - { key: gtzcneg,         name: "NS MPU bypass cannot reach peer guest RAM" }
           - { key: spbudgetneg,     name: "SP restart-budget exhaustion escalates" }
         exclude:
+          # The native engine has no per-guest HSM tasklet to fault.
+          - { engine: native, scenario: { key: hsmfaultneg, name: "HSM tasklet fault containment" } }
           # hsmattackneg drives the raw wolfHSM client wire from the guest;
           # the native engine does not link that wire, so the attack surface
           # under test does not exist there.
