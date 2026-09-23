@@ -766,7 +766,8 @@ static psa_status_t wt_hsm_vault_remove(int32_t owner, int32_t sub,
         return status;
     }
     flags = wt_hsm_vault_flags_of(meta.label);
-    if ((flags & (WT_VAULT_FLAG_KEY | WT_VAULT_FLAG_WRITE_ONCE)) != 0U) {
+    if ((flags & WT_VAULT_FLAG_KEY) != 0U ||
+            (flags & WT_VAULT_FLAG_WRITE_ONCE) != 0U) {
         return PSA_ERROR_NOT_PERMITTED;
     }
     if ((flags & WT_VAULT_FLAG_SEALED) != 0U) {
