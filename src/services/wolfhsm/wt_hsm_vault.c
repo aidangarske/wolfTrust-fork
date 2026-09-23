@@ -333,6 +333,7 @@ static psa_status_t wt_hsm_vault_recover(wt_hsm_vault_table_t* table)
     whNvmMetadata stage_meta;
     whNvmId id;
     uint32_t slot;
+    uint32_t label_magic;
     size_t pt_len;
     psa_status_t status;
 
@@ -342,10 +343,26 @@ static psa_status_t wt_hsm_vault_recover(wt_hsm_vault_table_t* table)
         status = wt_hsm_vault_map_err(
             wh_Nvm_GetMetadata(g_vault_nvm, id, &meta));
         if (status == PSA_SUCCESS) {
-            status = wt_hsm_vault_map_err(
-                wh_Nvm_DestroyObjectsChecked(g_vault_nvm, 1U, &id));
+            (void)memcpy(&label_magic, meta.label, sizeof(label_magic));
+            /* Only the key writer bypasses table recovery. Preserve a key
+             * that reused the slot; reclaim the old sealed object even if
+             * its ciphertext is corrupt and cannot be authenticated. */
+            if (label_magic != WT_HSM_VAULT_LABEL_MAGIC ||
+                    (wt_hsm_vault_flags_of(meta.label) &
+                     WT_VAULT_FLAG_KEY) == 0U ||
+                    (wt_hsm_vault_flags_of(meta.label) &
+                     WT_VAULT_FLAG_SEALED) != 0U ||
+                    (meta.flags & WH_NVM_FLAGS_NONEXPORTABLE) == 0U) {
+                status = wt_hsm_vault_map_err(
+                    wh_Nvm_DestroyObjectsChecked(g_vault_nvm, 1U, &id));
+                if (status != PSA_SUCCESS &&
+                        status != PSA_ERROR_DOES_NOT_EXIST) {
+                    return status;
+                }
+            }
         }
-        if (status != PSA_SUCCESS && status != PSA_ERROR_DOES_NOT_EXIST) {
+        else if (status != PSA_SUCCESS &&
+                 status != PSA_ERROR_DOES_NOT_EXIST) {
             return status;
         }
         table->slot[slot] = 0U;
