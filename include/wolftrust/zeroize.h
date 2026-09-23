@@ -27,6 +27,14 @@ static inline void wt_forceZero(void* memory, size_t size)
 {
     volatile unsigned char* bytes = (volatile unsigned char*)memory;
 
+    while (size >= 4U) {
+        bytes[0] = 0U;
+        bytes[1] = 0U;
+        bytes[2] = 0U;
+        bytes[3] = 0U;
+        bytes += 4;
+        size -= 4U;
+    }
     while (size > 0U) {
         *bytes++ = 0U;
         size--;
