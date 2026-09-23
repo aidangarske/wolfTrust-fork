@@ -286,6 +286,7 @@ jobs:
           - { key: crossdomain,     name: "Cross-domain isolation (L3)" }
           - { key: keystoreneg,     name: "Keystore-band isolation (L3)" }
           - { key: spfaultneg,      name: "Graceful SP fault recovery" }
+          - { key: hsmfaultneg,     name: "HSM tasklet fault containment" }
           - { key: panicneg,        name: "Secure-caller misuse panic" }
           - { key: confboot,        name: "FF-M IPC conformance (85/4)" }
           - { key: devstorage,      name: "dev_apis Storage (s001-s017)" }

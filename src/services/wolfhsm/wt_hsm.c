@@ -464,6 +464,9 @@ static void wt_hsm_tasklet_main(void *arg)
 {
     wt_guest_id_t   gid = (wt_guest_id_t)(uintptr_t)arg;
     wt_hsm_guest_t *g   = &g_guests[gid];
+#if defined(WT_HSM_FAULT_PROBE) && (WT_HSM_FAULT_PROBE == 1)
+    static int fault_probe_fired;
+#endif
 
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
     /* Key provisioning touches the shared persistent store and therefore
@@ -476,6 +479,13 @@ static void wt_hsm_tasklet_main(void *arg)
                 wt_tasklet_block();
             }
         }
+    }
+#endif
+
+#if defined(WT_HSM_FAULT_PROBE) && (WT_HSM_FAULT_PROBE == 1)
+    if (gid == 0U && fault_probe_fired == 0) {
+        fault_probe_fired = 1;
+        __asm volatile("udf #0");
     }
 #endif
 
@@ -946,8 +956,12 @@ int wt_hsm_signal_fault(wt_guest_id_t guest_id)
                       sizeof(g_relay_bufs[guest_id]));
     wt_hsm_force_zero(&g->server, sizeof(g->server));
     wt_hsm_force_zero(&g->crypto, sizeof(g->crypto));
-    wt_hsm_force_zero(&g_co_stack_slots[guest_id],
-                      sizeof(g_co_stack_slots[guest_id]));
+    wt_hsm_force_zero(g_co_stack_slots[guest_id].guard,
+                      sizeof(g_co_stack_slots[guest_id].guard));
+    /* Keep the canary at stack[0] for do_switch's post-fault check. */
+    wt_hsm_force_zero(g_co_stack_slots[guest_id].stack + sizeof(uint32_t),
+                      sizeof(g_co_stack_slots[guest_id].stack) -
+                          sizeof(uint32_t));
     g->ready = false;
     return WH_ERROR_OK;
 }
