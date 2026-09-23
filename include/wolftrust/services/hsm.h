@@ -208,9 +208,18 @@ void wt_hsm_vault_make_label(uint8_t* label, int32_t owner, int32_t sub,
                              uint64_t uid, uint32_t flags);
 uint32_t wt_hsm_vault_flags_of(const uint8_t* label);
 
-/* Vault RNG (WT-FFM-0054): entropy for SERVICE_VAULT's RANDOM face, produced
- * by a wolfCrypt DRBG in the shared keystore trust band. Installed via
- * wt_vault_service_set_rng at boot. Only linked into wolfCrypt builds. */
+/* Reserve pool space for a shared-store object add of len bytes, holding back
+ * the counter-table headroom and compacting reclaimable entries first. A
+ * writer must call this before wh_Nvm_AddObject so a doomed add on a full pool
+ * cannot fail mid-write and poison later adds, and so key churn cannot starve
+ * the seal-counter table or the rollback floor. Returns INSUFFICIENT_STORAGE
+ * when even reclaim cannot make room. */
+psa_status_t wt_hsm_vault_reserve_object(whNvmSize len);
+
+/* Vault-domain RNG (WT-FFM-0054): entropy for SERVICE_VAULT's RANDOM face,
+ * produced by a wolfCrypt DRBG owned by the privileged vault domain. Installed
+ * via wt_vault_service_set_rng at boot. Only linked into builds that carry
+ * wolfCrypt. */
 psa_status_t wt_hsm_vault_random(uint8_t* out, size_t len);
 
 #endif /* WOLFTRUST_SERVICES_HSM_H */

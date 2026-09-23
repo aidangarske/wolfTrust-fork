@@ -156,6 +156,7 @@ static psa_status_t wt_hsm_relay_call_inner(wt_ffm_runtime_t* runtime,
     return PSA_SUCCESS;
 }
 
+/* Relay packets carry key material, so scrub them on every call path. */
 static psa_status_t wt_hsm_relay_call(wt_ffm_runtime_t* runtime,
                                       int32_t partition_id,
                                       const psa_msg_t* msg)
