@@ -61,6 +61,8 @@ typedef struct mock_backend {
     uint32_t armed_size;
     uint32_t armed_version;
     uint32_t header_version;
+    uint32_t write_calls;
+    uint32_t fail_write_call;
     int fail_write;
     int fail_arm;
     int fail_verify;
@@ -80,7 +82,8 @@ static int mock_write(void* ctx, uint32_t offset, const uint8_t* data,
 {
     mock_backend_t* b = (mock_backend_t*)ctx;
 
-    if (b->fail_write) {
+    b->write_calls++;
+    if (b->fail_write || b->write_calls == b->fail_write_call) {
         return -1;
     }
     if ((uint64_t)offset + size > sizeof(b->image)) {
@@ -303,6 +306,58 @@ static void test_state_machine(void)
     check(wt_fwu_install(&ctx) == PSA_ERROR_STORAGE_FAILURE &&
               ctx.state == PSA_FWU_CANDIDATE && mem.armed == 0u,
           "WT-FWU-0003 a failed arm leaves the candidate un-armed");
+}
+
+static void test_unaligned_write(void)
+{
+    wt_fwu_backend_t backend;
+    mock_backend_t mem;
+    wt_fwu_service_ctx_t ctx;
+    psa_fwu_component_info_t info;
+    uint8_t block[17];
+    size_t i;
+    int tail_erased = 1;
+
+    (void)memset(block, 0xA5, sizeof(block));
+    mock_backend_init(&backend, &mem);
+    ctx_init(&ctx, &backend, &mem, 0u);
+    check(wt_fwu_start(&ctx, WT_FWU_COMPONENT_PRIMARY, 1u) == PSA_SUCCESS,
+          "WT-FWU-0002 starts a padded candidate");
+    check(wt_fwu_write(&ctx, WT_FWU_COMPONENT_PRIMARY, 0u, block,
+                       sizeof(block)) == PSA_SUCCESS &&
+              mem.write_calls == 2u && ctx.write_high == sizeof(block) &&
+              memcmp(mem.image, block, sizeof(block)) == 0,
+          "WT-FWU-0002 padded write keeps the logical staged size");
+    for (i = sizeof(block); i < 2u * MOCK_ALIGN; i++) {
+        if (mem.image[i] != 0xFFu) {
+            tail_erased = 0;
+        }
+    }
+    check(tail_erased, "WT-FWU-0002 padded tail stays erased");
+    check(wt_fwu_finish(&ctx, WT_FWU_COMPONENT_PRIMARY) == PSA_SUCCESS &&
+              wt_fwu_query(&ctx, WT_FWU_COMPONENT_PRIMARY, &info) ==
+                  PSA_SUCCESS && info.impl.staged_size == sizeof(block),
+          "WT-FWU-0002 candidate excludes physical padding");
+
+    mock_backend_init(&backend, &mem);
+    ctx_init(&ctx, &backend, &mem, 0u);
+    (void)wt_fwu_start(&ctx, WT_FWU_COMPONENT_PRIMARY, 1u);
+    mem.fail_write_call = 2u;
+    check(wt_fwu_write(&ctx, WT_FWU_COMPONENT_PRIMARY, 0u, block,
+                       sizeof(block)) == PSA_ERROR_STORAGE_FAILURE &&
+              mem.write_calls == 2u && ctx.state == PSA_FWU_FAILED &&
+              ctx.write_high == 0u,
+          "WT-FWU-0003 failed padded tail invalidates the candidate");
+
+    mock_backend_init(&backend, &mem);
+    backend.capacity = MOCK_CAPACITY - 1u;
+    ctx_init(&ctx, &backend, &mem, 0u);
+    (void)wt_fwu_start(&ctx, WT_FWU_COMPONENT_PRIMARY, 1u);
+    check(wt_fwu_write(&ctx, WT_FWU_COMPONENT_PRIMARY,
+                       MOCK_CAPACITY - MOCK_ALIGN, block,
+                       MOCK_ALIGN - 1u) == PSA_ERROR_INVALID_ARGUMENT &&
+              mem.write_calls == 0u && ctx.state == PSA_FWU_WRITING,
+          "WT-FWU-0003 physical padding cannot exceed capacity");
 }
 
 /* --- Layer 2: the FF-M IPC round trip. --- */
@@ -664,6 +719,7 @@ static void test_owner_timeout(void)
 int main(void)
 {
     test_state_machine();
+    test_unaligned_write();
     test_ipc_round_trip();
     test_wolfboot_arm_trailer();
     test_staged_header_binding();
