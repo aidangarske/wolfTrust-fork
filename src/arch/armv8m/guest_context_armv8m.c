@@ -101,6 +101,8 @@ static volatile uint32_t g_arriving_systick_csr;
 static volatile uint32_t g_arriving_systick_rvr;
 static volatile uint32_t g_arriving_systick_inject;
 
+#define WT_SYST_LATCH_MAX_POLLS 100000U
+
 void wt_arch_init(void)
 {
     /* Route MemManage and UsageFault to their own handlers (otherwise
@@ -481,7 +483,7 @@ static void wt_virtual_systick_restore_arriving(wt_guest_id_t guest_id)
             first_reload = g_arriving_systick_rvr;
         }
         /* Load the accounted residual for the first resumed period. The
-         * normal reload is restored immediately after the counter is armed. */
+         * normal reload is restored once the counter has latched it. */
         WT_SYST_NS_RVR = first_reload;
         WT_SYST_NS_CVR = 0u;
         g_arriving_systick_csr = systick->csr & ~WT_SYST_CSR_COUNTFLAG;
@@ -510,13 +512,50 @@ static void wt_virtual_systick_arm_arriving(void)
 {
     uint32_t csr = g_arriving_systick_csr;
     uint32_t reload = g_arriving_systick_rvr;
+    uint32_t polls;
+    uint32_t expired = 0U;
 
     g_arriving_systick_csr = 0u;
     g_arriving_systick_rvr = 0u;
-    if (csr != 0u) {
-        WT_SYST_NS_CSR = csr;
-        __asm volatile("dsb\nisb" ::: "memory");
+    if (csr != 0u && reload != 0U) {
+        /* Keep TICKINT masked until the residual reload is observed. A
+         * barrier orders writes but does not advance the SysTick clock. */
+        WT_SYST_NS_CSR = csr & ~WT_SYST_CSR_TICKINT;
+        for (polls = 0U; polls < WT_SYST_LATCH_MAX_POLLS; polls++) {
+            if (WT_SYST_NS_CVR != 0U) {
+                break;
+            }
+            if ((csr & WT_SYST_CSR_TICKINT) != 0U &&
+                    (WT_SYST_NS_CSR & WT_SYST_CSR_COUNTFLAG) != 0U) {
+                expired = 1U;
+                break;
+            }
+        }
+        /* A guest can select a stopped reference clock. The bounded fallback
+         * keeps its normal reload without stalling or panicking the monitor. */
         WT_SYST_NS_RVR = reload;
+        WT_SYST_NS_CSR = csr;
+        if (polls != WT_SYST_LATCH_MAX_POLLS) {
+            if ((csr & WT_SYST_CSR_TICKINT) != 0U &&
+                    (WT_SYST_NS_CSR & WT_SYST_CSR_COUNTFLAG) != 0U) {
+                expired = 1U;
+            }
+            if (expired != 0U) {
+                /* The short first period elapsed during setup. Restart from
+                 * the normal period and deliver its tick on NS entry. */
+                WT_SYST_NS_CSR = 0U;
+                WT_SYST_NS_CVR = 0U;
+                WT_SYST_NS_CSR = csr;
+                g_arriving_systick_inject = 1U;
+            }
+        }
+    }
+    else if (csr != 0u) {
+        WT_SYST_NS_CSR = csr;
+    }
+    if (csr != 0U) {
+        wt_dsb();
+        wt_isb();
     }
     if (g_arriving_systick_inject != 0u) {
         g_arriving_systick_inject = 0u;
@@ -530,6 +569,13 @@ static void wt_virtual_systick_reset(wt_guest_id_t guest_id)
 
     if (guest_id >= WT_MAX_GUESTS) {
         return;
+    }
+    if (g_active_guest == guest_id) {
+        /* The faulted guest's hardware timer is still live. Do not let the
+         * next dispatch save it back over the cleared virtual state. */
+        WT_SYST_NS_CSR = 0U;
+        WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR;
+        g_active_guest = UINT32_MAX;
     }
     systick = &g_guest_systick[guest_id];
     systick->csr = 0u;

@@ -334,6 +334,10 @@ static void wt_dispatch_guest(wt_guest_id_t guest_id)
         }
     }
 
+    /* Stop the departing guest's SysTick before replacing its memory
+     * protection; a short residual period can otherwise fault in the
+     * departing guest's handler under the arriving guest's MPU. */
+    wt_arch_guest_context_prepare(guest_id, runtime->context);
     wt_apply_partition(guest_id);
     runtime->state = WT_GUEST_RUNNING;
     g_scheduler.current_guest = guest_id;
@@ -342,7 +346,6 @@ static void wt_dispatch_guest(wt_guest_id_t guest_id)
     wt_vnet_service_refresh_irq(guest_id);
 #endif
     wt_arch_start_secure_timer(config->timeslice_ms);
-    wt_arch_guest_context_prepare(guest_id, runtime->context);
     wt_arch_guest_context_restore(runtime->context);
 }
 
