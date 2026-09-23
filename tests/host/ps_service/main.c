@@ -746,6 +746,39 @@ static void test_replacement_stage_cleanup(void)
           "next operation destroys an orphan recovery stage");
 }
 
+static void test_sealed_delete_recovery(void)
+{
+    static const uint8_t secret[] = "delete recovery";
+    uint8_t buffer[sizeof(secret)];
+    size_t got = 0U;
+    psa_status_t status;
+
+    check(test_nvm_up(0) == 0, "initialized sealed delete recovery test");
+    status = wt_hsm_vault_backend.set(TEST_PS_PARTITION, TEST_NS_GUEST0,
+        0xC001ULL, WT_VAULT_FLAG_SEALED, secret, sizeof(secret));
+    check(status == PSA_SUCCESS, "created sealed delete recovery source");
+    if (status != PSA_SUCCESS) {
+        return;
+    }
+
+    /* Let the delete marker commit, then fail the table update after the
+     * object is destroyed. Reboot must finish the pending deletion. */
+    g_fail_add_id = WT_HSM_VAULT_TABLE_ID;
+    g_fail_add_skips = 1U;
+    status = wt_hsm_vault_backend.remove(TEST_PS_PARTITION, TEST_NS_GUEST0,
+                                          0xC001ULL);
+    check(status == PSA_ERROR_STORAGE_FAILURE,
+          "interrupted sealed delete reports storage failure");
+    check(test_nvm_up(1) == 0, "rebooted after interrupted sealed delete");
+    status = wt_hsm_vault_backend.get(TEST_PS_PARTITION, TEST_NS_GUEST0,
+        0xC001ULL, 0U, buffer, sizeof(buffer), &got);
+    check(status == PSA_ERROR_DOES_NOT_EXIST,
+          "recovery finishes sealed delete before serving reads");
+    status = wt_hsm_vault_backend.set(TEST_PS_PARTITION, TEST_NS_GUEST0,
+        0xC001ULL, WT_VAULT_FLAG_SEALED, secret, sizeof(secret));
+    check(status == PSA_SUCCESS, "deleted sealed UID can be reused");
+}
+
 int main(void)
 {
     static const uint8_t secret_v1[] = "ps-secret-version-one";
@@ -968,6 +1001,7 @@ int main(void)
     test_recovery_counter_binding();
     test_invalid_sealed_length();
     test_replacement_stage_cleanup();
+    test_sealed_delete_recovery();
 
     if (g_failures != 0) {
         return 1;

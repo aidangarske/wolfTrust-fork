@@ -30,7 +30,8 @@
  * never a caller-supplied field (WT-FFM-0044). Non-secure clients are
  * refused by the manifest (nonsecure_clients = false). */
 
-/* psa_call request types. REMOVE also destroys keys (psa_destroy_key). */
+/* psa_call request types. REMOVE applies to storage objects; the current
+ * vault backend does not support key deletion. */
 #define WT_VAULT_OP_SET               1
 #define WT_VAULT_OP_GET               2
 #define WT_VAULT_OP_GET_INFO          3
