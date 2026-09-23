@@ -723,7 +723,7 @@ static uint32_t wt_spm_sched_diag_word(const wt_ffm_runtime_t* runtime,
     size_t i;
 
     if (which == 0) {
-        /* nibbles: per-slot wait_kind (0..2) then co state (3..5) */
+        /* nibbles: per-slot wait_kind (0..3) then coroutine state */
         for (i = 0u; i < g_spm_sp_count && i < 3u; i++) {
             value |= ((uint32_t)g_spm_sp[i].wait_kind & 0xFu) << (4u * i);
             value |= ((uint32_t)wt_co_state(g_spm_sp[i].co) & 0xFu) <<
