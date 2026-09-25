@@ -58,7 +58,7 @@ test-target` also reads. The table below is a representative slice:
 | `mimxrt700_bothpsa_bothiso_<engine>` | `bothpsa bothiso` | the portable PSA guest in both windows: crypto, storage, keys, attestation, and the FF-M negatives from each |
 | `mimxrt700_attestneg_<engine>` | `attestneg` | invalid attestation requests refused, tampered tokens fail the guest verify |
 | `mimxrt700_hsmattackneg_hsm` | `hsmattackneg` | a forged client id cannot reach the IAK, an NVM-group packet never reaches the server |
-| `mimxrt700_rollbackneg_manifestneg_spbudgetneg_<engine>` | `rollbackneg manifestneg spbudgetneg` | shared Secure-verdict table: rollback refusal, corrupted manifest, restart budget |
+| `mimxrt700_rollbackneg_remeasureneg_manifestneg_spbudgetneg_<engine>` | `rollbackneg remeasureneg manifestneg spbudgetneg` | shared Secure-verdict table: rollback refusal, re-measure tamper, corrupted manifest, restart budget |
 
 An unlabeled PR runs only each port's smoke tier; the full matrix needs a
 `ci:` label. To run a single scenario locally, use `tests/target/run_m33mu_scenario.sh <key>` (the

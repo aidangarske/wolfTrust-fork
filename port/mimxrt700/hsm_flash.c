@@ -403,8 +403,10 @@ const wt_fwu_backend_t wt_fwu_flash_backend = {
 #if defined(WT_REMEASURE_PROBE)
 int wt_hsm_flash_remeasure_tamper(uintptr_t secure_base)
 {
-    (void)secure_base;
-    return -1;
+    uint32_t device = (uint32_t)(secure_base - WT_FLASH_S_ALIAS_BASE +
+                                 WT_FLASH_NS_BASE);
+
+    return (wt_xspi_nor_probe_tamper(device) == WT_XSPI_NOR_OK) ? 0 : -1;
 }
 #endif
 

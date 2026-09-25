@@ -464,17 +464,21 @@ void wt_platform_remeasure_probe(void)
         }
     }
     if (window != NULL) {
+        int tamper;
+
         r1 = wt_runtime_verify_guest(0u);
         mpu_ctrl = WT_MPU_S_CTRL;
         WT_MPU_S_CTRL = 0u;
         wt_dsb();
         wt_isb();
-        (void)wt_hsm_flash_remeasure_tamper(WT_FLASH_TO_S_ALIAS(window->base));
+        tamper = wt_hsm_flash_remeasure_tamper(WT_FLASH_TO_S_ALIAS(window->base));
         WT_MPU_S_CTRL = mpu_ctrl;
         wt_dsb();
         wt_isb();
         r2 = wt_runtime_verify_guest(0u);
-        if (r1 == 0 && r2 != 0) {
+        /* The verdict needs the tamper to have landed: a driver error must
+         * not pass as a detected tamper. */
+        if (r1 == 0 && tamper == 0 && r2 != 0) {
             __asm volatile("bkpt #0x6C");
         }
     }

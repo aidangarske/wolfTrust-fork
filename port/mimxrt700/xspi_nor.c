@@ -643,3 +643,29 @@ int wt_xspi_nor_program(uint32_t address, const uint8_t* data, uint32_t size)
     }
     return rc;
 }
+
+#if defined(WT_REMEASURE_PROBE)
+/* Probe-only tamper for the re-measure negative: it writes inside a guest
+ * window, which the production API's writable range rightly refuses. */
+int wt_xspi_nor_probe_tamper(uint32_t address)
+{
+    uint32_t primask;
+    uint32_t i;
+    int rc;
+
+    if ((address & (WT_XSPI_NOR_SECTOR - 1u)) != 0u) {
+        return WT_XSPI_NOR_ARGUMENT;
+    }
+    for (i = 0u; i < WT_XSPI_NOR_UNIT / sizeof(uint32_t); i++) {
+        g_wt_xspi_page[i] = 0u;
+    }
+    primask = wt_xspi_irq_mask();
+    rc = wt_xspi_nor_erase_sector_ram(address);
+    if (rc == WT_XSPI_NOR_OK) {
+        rc = wt_xspi_nor_program_ram(address, g_wt_xspi_page,
+                                     WT_XSPI_NOR_UNIT);
+    }
+    wt_xspi_irq_restore(primask);
+    return rc;
+}
+#endif

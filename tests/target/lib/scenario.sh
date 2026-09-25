@@ -69,7 +69,7 @@ scenario_assert_verdict() {
         remeasureneg)
             refute_re "no fault markers in the boot log" \
                 '\[MEMFAULT\]|\[HARDFLT\]|HardFault'
-            expect "clean re-measure passed, then the post-launch tamper quarantined" \
+            expect "clean re-measure passed, then the in-flash tamper was caught before dispatch" \
                 "[BKPT] imm=0x6c"
             ;;
         manifestneg)

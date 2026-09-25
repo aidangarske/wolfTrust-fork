@@ -38,4 +38,8 @@
 int wt_xspi_nor_erase(uint32_t address, uint32_t size);
 int wt_xspi_nor_program(uint32_t address, const uint8_t* data, uint32_t size);
 
+#if defined(WT_REMEASURE_PROBE)
+int wt_xspi_nor_probe_tamper(uint32_t address);
+#endif
+
 #endif /* WOLFTRUST_MIMXRT700_XSPI_NOR_H */
