@@ -91,7 +91,7 @@ PORTS = {
             ("positive", "RT700 positive lifecycle (SAU guest windows)"),
             ("ahbscneg", "RT700 cross-guest store faults and is contained"),
             ("restart authneg", "RT700 guest restart budget and launch refusal"),
-            ("rollbackneg manifestneg spbudgetneg",
+            ("rollbackneg remeasureneg manifestneg spbudgetneg",
              "RT700 secure verdict negatives"),
             ("crossdomain keystoreneg", "RT700 SP domain isolation negatives"),
             ("spfaultneg panicneg", "RT700 SP fault and panic recovery"),

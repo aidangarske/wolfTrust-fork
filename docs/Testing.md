@@ -186,24 +186,25 @@ The runner also carries the shared Secure-verdict negatives from
 MIMXRT700 runners draw their Secure-image probe flags from. Each one ends on
 the verdict breakpoint its probe emits, asserted port-independently:
 `rollbackneg` (a downgraded boot is refused fail-closed and no guest enters a
-domain), `manifestneg` (a corrupted manifest halts boot before anything is
-scheduled), and `spbudgetneg` (restart-budget exhaustion escalates to the
-fail-closed platform recovery). `remeasureneg` joins this list once the port
-implements the post-launch flash tamper hook the probe needs. `crossdomain`
-and `keystoreneg` prove the Secure Partition MPU domains: an unprivileged
-storage-SP read of SPM-private RAM, or of the shared keystore band,
-MemManage-faults at the port's band address (shown by a second traced boot),
-the SP's wake never serves the guests' storage connect, and the guests' own
-lifecycle rides it out. `spfaultneg` and `panicneg` prove Secure Partition
-recovery: the crypto relay runs an undefined instruction on its first entry,
-or the storage SP closes an error-status handle, which the SPM must panic it
-for. Either way the SP UsageFaults exactly once, the SPM restarts it in place,
-the restarted SP serves the guests that follow, and both guests finish with no
-escalation. `restart` makes guest 0 read Secure RAM on every launch: the SAU
-refuses it, the monitor relaunches guest 0 through its restart budget and
-quarantines it, and guest 1 runs on. `authneg` flips one byte of guest 0's
-image after its digest was pinned, so launch verification refuses guest 0
-while guest 1 boots and runs normally.
+domain), `remeasureneg` (guest 0 measures clean at launch verification, its
+image is then tampered in flash, and the on-demand re-measure before dispatch
+must catch it and quarantine the domain), `manifestneg` (a corrupted manifest
+halts boot before anything is scheduled), and `spbudgetneg` (restart-budget
+exhaustion escalates to the fail-closed platform recovery). `crossdomain` and `keystoreneg` prove the
+Secure Partition MPU domains: an unprivileged storage-SP read of SPM-private
+RAM, or of the shared keystore band, MemManage-faults at the port's band
+address (shown by a second traced boot), the SP's wake never serves the
+guests' storage connect, and the guests' own lifecycle rides it out.
+`spfaultneg` and `panicneg` prove Secure Partition recovery: the crypto relay
+runs an undefined instruction on its first entry, or the storage SP closes an
+error-status handle, which the SPM must panic it for. Either way the SP
+UsageFaults exactly once, the SPM restarts it in place, the restarted SP
+serves the guests that follow, and both guests finish with no escalation.
+`restart` makes guest 0 read Secure RAM on every launch: the SAU refuses it,
+the monitor relaunches guest 0 through its restart budget and quarantines it,
+and guest 1 runs on. `authneg` flips one byte of guest 0's image after its
+digest was pinned, so launch verification refuses guest 0 while guest 1 boots
+and runs normally.
 
 The remaining scenarios run the portable PSA test guest
 (`tests/firmware/psa-guest/`) in both Non-secure windows. It is the STM32H563

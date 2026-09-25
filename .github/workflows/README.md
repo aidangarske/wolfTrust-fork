@@ -57,7 +57,7 @@ test-target` also reads. The table below is a representative slice:
 | `RT700 both-guest PSA lifecycle and isolation` | `bothpsa bothiso` | the portable PSA guest in both windows: crypto, storage, keys, attestation, and the FF-M negatives from each |
 | `RT700 attestation negatives` | `attestneg` | invalid attestation requests refused, tampered tokens fail the guest verify |
 | `RT700 wolfHSM cross-namespace + NVM relay negatives (hsm)` | `hsmattackneg` | a forged client id cannot reach the IAK, an NVM-group packet never reaches the server |
-| `RT700 secure verdict negatives` | `rollbackneg manifestneg spbudgetneg` | shared Secure-verdict table: rollback refusal, corrupted manifest, restart budget |
+| `RT700 secure verdict negatives` | `rollbackneg remeasureneg manifestneg spbudgetneg` | shared Secure-verdict table: rollback refusal, re-measure tamper, corrupted manifest, restart budget |
 
 An unlabeled PR runs only each port's smoke tier; the full matrix needs a
 `ci:` label. To run a single scenario locally, use `tests/target/run_m33mu_scenario.sh <key>` (the

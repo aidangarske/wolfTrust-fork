@@ -12,10 +12,9 @@
 #             guest0 through its restart budget, quarantines it, and guest1
 #             keeps running.
 #
-# rollbackneg, manifestneg, and spbudgetneg are the shared Secure-verdict
-# scenarios from lib/scenario.sh: each ends on the verdict breakpoint its
-# probe emits, asserted by the port-independent table. remeasureneg joins
-# once this port implements the flash tamper hook.
+# rollbackneg, remeasureneg, manifestneg, and spbudgetneg are the shared
+# Secure-verdict scenarios from lib/scenario.sh: each ends on the verdict
+# breakpoint its probe emits, asserted by the port-independent table.
 # crossdomain and keystoreneg fault the storage SP on an out-of-domain read;
 # spfaultneg and panicneg fault an SP on its first entry and prove the SPM
 # restarts it in place while both guests finish. restart spends guest0's
@@ -47,8 +46,8 @@ unset TARGET MAKEFLAGS MFLAGS
 
 scenario="${1:-}"
 case "$scenario" in
-  positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg) ;;
-  *) echo "usage: $0 positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg" >&2
+  positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg) ;;
+  *) echo "usage: $0 positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg" >&2
      exit 2 ;;
 esac
 if [ "$scenario" = "hsmattackneg" ] && [ "${WT_ENGINE:-native}" != "hsm" ]; then
