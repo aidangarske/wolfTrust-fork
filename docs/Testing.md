@@ -220,7 +220,9 @@ the IAK public key and wolfBoot's measurement of the signed Secure image.
 vector inside the peer guest's window, and an unknown SID from both guests.
 `attestneg` adds the attestation negatives (invalid requests refused with
 the statuses Arm's tests expect; tampered and misattributed tokens fail the
-guest verify). `hsmattackneg` (hsm engine only, it drives the raw wolfHSM client
+guest verify). `fwustage` stages a candidate into the wolfBoot update
+partition through SERVICE_FWU, arms it, and proves reject/clean restore
+READY. `hsmattackneg` (hsm engine only, it drives the raw wolfHSM client
 wire) proves a forged client id cannot reach the IAK and an NVM-group packet
 never reaches the server.
 

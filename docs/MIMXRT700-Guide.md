@@ -28,13 +28,15 @@ Read the current state first and keep a development board recoverable.
   RAM with a per-dispatch SAU window, because the AHB secure controller's SRAM
   rules do not gate CPU0 on this silicon (an earlier fabric-filter attempt let
   a guest with its Non-secure MPU disabled write the other guest's RAM).
-- **Not yet ported:** firmware update, conformance, and `SERVICE_VNET`.
-  `SERVICE_FWU` is in the manifest, but its begin, write, arm, disarm, and
-  verify operations return `WH_ERROR_NOTIMPL` until arming the wolfBoot update
-  trailer is ported. The target has no conformance or VNET manifest, so
-  `WT_CONFORMANCE=1` and `CONFIG_VNET=y` stop the build with an error. The
-  NOR guest-window write-protect check is not ported either, so a
-  `WT_GUEST_FLASH_WRP=1` build refuses to launch any guest.
+- **Not yet ported:** `SERVICE_VNET` and the NOR guest-window write-protect
+  check. The target has no VNET manifest, so `CONFIG_VNET=y` stops the build
+  with an error, and a `WT_GUEST_FLASH_WRP=1` build refuses to launch any
+  guest. `SERVICE_FWU` stages a candidate into the wolfBoot update partition
+  (`0x38180000`, the `imx-rt700-tz.config` update address) and arms the swap
+  trigger in its trailer, as the STM32H563 port does; staging must be
+  contiguous from offset 0, so a finished candidate has no unwritten gap. `WT_CONFORMANCE=1`
+  selects `port/mimxrt700/manifest-conformance.json`, which hosts Arm's
+  server, driver, and client partitions for the conformance suites.
 
 Record emulator, cross-build, and physical-board evidence separately: M33MU's
 RT700 model gives emulator evidence, the EVK gives silicon evidence, and
@@ -201,7 +203,10 @@ assembly and flashing so the addresses stay paired; its emulator sibling
 (`tests/target/run_rt700_m33mu.sh`) runs the same chain and scenario names
 under M33MU. The `romsmoke` scenario proves the BootROM XIP path; the
 `positive` scenario is the wolfTrust chain; `ahbscneg` adds the guest
-isolation negative.
+isolation negative. The emulator runner then carries the STM32H563 scenario
+matrix (restart and launch refusal, SP fault recovery, the Secure-verdict
+negatives, the PSA guest's lifecycle and negatives, and Arm's conformance
+suites), listed in [Testing](Testing.md).
 
 The full chain build and flash performs:
 

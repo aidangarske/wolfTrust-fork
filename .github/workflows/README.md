@@ -55,7 +55,7 @@ test-target` also reads. The table below is a representative slice:
 | `RT700 SP domain isolation negatives` | `crossdomain keystoreneg` | unprivileged SP reads of SPM RAM and the keystore band MemManage-fault, guests ride it out |
 | `RT700 SP fault and panic recovery` | `spfaultneg panicneg` | the relay's undefined instruction and the storage SP's programmer-error close UsageFault once, the SPM restarts the SP in place, both guests finish |
 | `RT700 both-guest PSA lifecycle and isolation` | `bothpsa bothiso` | the portable PSA guest in both windows: crypto, storage, keys, attestation, and the FF-M negatives from each |
-| `RT700 attestation negatives` | `attestneg` | invalid attestation requests refused, tampered tokens fail the guest verify |
+| `RT700 attestation negatives and FWU staging` | `attestneg fwustage` | invalid attestation requests refused, tampered tokens fail the guest verify; a candidate stages into the update partition and reject/clean restore READY |
 | `RT700 wolfHSM cross-namespace + NVM relay negatives (hsm)` | `hsmattackneg` | a forged client id cannot reach the IAK, an NVM-group packet never reaches the server |
 | `RT700 FF-M IPC conformance (85/4)` | `confboot` | Arm's unmodified psa-arch-tests IPC suite against the RT700 SPM: 85 pass, 4 heap tests skip |
 | `RT700 dev_apis storage and attestation conformance` | `devstorage devattest devattestqcbor` | PSA ITS/PS and Initial Attestation conformance (the token parses under wolfCOSE's shim and reference QCBOR) |
