@@ -118,7 +118,7 @@ SECTIONS {
   .conf_data : {
     . = ALIGN(4);
     _sconfdata = .;
-    EXCLUDE_FILE(*conf_sec_test_supp_*.o *conf_sec_driver_partition.o) *conf_sec_*.o(.data .data.*)
+    EXCLUDE_FILE(*conf_sec_test_supp_*.o *conf_sec_driver_partition.o *conf_sec_pal_driver_intf.o) *conf_sec_*.o(.data .data.*)
     . = ALIGN(32);
     _s_conf_server_data = .;
     *conf_sec_test_supp_*.o(.data .data.* .bss .bss.* COMMON)
@@ -126,6 +126,7 @@ SECTIONS {
     _e_conf_server_data = .;
     _s_conf_driver_data = .;
     *conf_sec_driver_partition.o(.data .data.* .bss .bss.* COMMON)
+    *conf_sec_pal_driver_intf.o(.data .data.* .bss .bss.* COMMON)
     . = ALIGN(32);
     _e_conf_driver_data = .;
     _econfdata = .;
@@ -135,7 +136,7 @@ SECTIONS {
   .conf_bss (NOLOAD) : {
     . = ALIGN(4);
     _sconfbss = .;
-    EXCLUDE_FILE(*conf_sec_test_supp_*.o *conf_sec_driver_partition.o) *conf_sec_*.o(.bss .bss.* COMMON)
+    EXCLUDE_FILE(*conf_sec_test_supp_*.o *conf_sec_driver_partition.o *conf_sec_pal_driver_intf.o) *conf_sec_*.o(.bss .bss.* COMMON)
     . = ALIGN(4);
     _econfbss = .;
   } > CONFDATA

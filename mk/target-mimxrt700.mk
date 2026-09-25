@@ -4,14 +4,17 @@
 WT_CPU ?= cortex-m33
 PORT_DIR := $(ROOT)/port/mimxrt700
 PORT_HEADERS := $(wildcard $(PORT_DIR)/*.h)
+TARGET_CONF_DIR := $(PORT_DIR)/conformance
 
-ifeq ($(WT_CONFORMANCE),1)
-$(error TARGET=mimxrt700 has no conformance manifest; build with WT_CONFORMANCE=0)
-endif
+# WT_CONFORMANCE=1 swaps in the manifest that also hosts Arm's test partitions.
 ifeq ($(CONFIG_VNET),y)
 $(error TARGET=mimxrt700 has no SERVICE_VNET manifest; build with CONFIG_VNET=n)
 endif
+ifeq ($(WT_CONFORMANCE),1)
+MANIFEST_INPUT := $(PORT_DIR)/manifest-conformance.json
+else
 MANIFEST_INPUT := $(PORT_DIR)/manifest.json
+endif
 
 # Guests share LPUART0 (LP_FLEXCOMM0), the EVK MCU-Link VCOM console.
 WT_SHARED_UART ?= 0
@@ -19,6 +22,10 @@ WT_SHARED_UART ?= 0
 # before a guest derives a baud divider from these.
 WT_GUEST_CORE_CLOCK_HZ ?= 237500000
 WT_GUEST_UART_CLOCK_HZ ?= 24000000
+# The conformance PAL interrupt source: LP_FLEXCOMM1's NVIC line, raised by
+# software so no peripheral needs bringing up for it.
+WT_CONF_IRQ ?= 8
+WT_CONF_IRQ_HANDLER ?= LP_FLEXCOMM1_IRQHandler
 
 # XSPI0 NOR through its Secure alias. The default is the wolfBoot handoff
 # layout (wolfBoot at flash+0 owns the FCB and boot header).
@@ -35,6 +42,8 @@ TARGET_CFLAGS := \
     -DWT_SHARED_UART=$(WT_SHARED_UART) \
     -DWT_GUEST_CORE_CLOCK_HZ=$(WT_GUEST_CORE_CLOCK_HZ) \
     -DWT_GUEST_UART_CLOCK_HZ=$(WT_GUEST_UART_CLOCK_HZ) \
+    -DWT_CONF_IRQ=$(WT_CONF_IRQ)u \
+    -DWT_CONF_IRQ_HANDLER=$(WT_CONF_IRQ_HANDLER) \
     -DWT_SECURE_FLASH_BASE=$(WT_SECURE_FLASH_BASE) \
     -DWT_SECURE_FLASH_SIZE=$(WT_SECURE_FLASH_SIZE) \
     -DWT_SECURE_IMAGE_HEADER_SIZE=$(WT_SECURE_IMAGE_HEADER_SIZE) \
