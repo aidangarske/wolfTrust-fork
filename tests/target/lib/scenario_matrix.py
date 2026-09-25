@@ -86,7 +86,8 @@ PORTS = {
         "label": "ci:rt700",
         "arm": "rt700-m33mu",
         "image": "ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.25",
-        "smoke": ("positive", "ahbscneg", "crossdomain", "bothpsa"),
+        "smoke": ("positive", "ahbscneg", "crossdomain", "bothpsa", "confboot",
+                  "devcrypto"),
         "groups": (
             ("positive", "RT700 positive lifecycle (SAU guest windows)"),
             ("ahbscneg", "RT700 cross-guest store faults and is contained"),
@@ -99,6 +100,11 @@ PORTS = {
             ("attestneg", "RT700 attestation negatives"),
             ("hsmattackneg",
              "RT700 wolfHSM cross-namespace + NVM relay negatives"),
+            ("confboot", "RT700 FF-M IPC conformance (85/4)"),
+            ("devstorage devattest devattestqcbor",
+             "RT700 dev_apis storage and attestation conformance"),
+            ("devcrypto vaultrecover vaultrecoversec",
+             "RT700 dev_apis crypto conformance and vault recovery"),
         ),
     },
 }

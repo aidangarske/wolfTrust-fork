@@ -27,6 +27,12 @@
 # with no operating system. hsmattackneg drives the raw wolfHSM client wire,
 # so it exists only under WT_ENGINE=hsm.
 #
+# confboot, devstorage, devcrypto, devattest, devattestqcbor, vaultrecover, and
+# vaultrecoversec host Arm's unmodified psa-arch-tests val NSPE in the PSA guest
+# (guest0) against the conformance Secure image, the same drop-in proof the
+# H5 runs; guest1 is the small bare-metal guest so the ~90 boot cycles of the
+# IPC suite's panic tests stay cheap.
+#
 # Environment (all optional):
 #   M33MU               prebuilt emulator carrying tests/target/m33mu-imxrt700.patch;
 #                       otherwise M33MU_REF is built under /tmp
@@ -46,8 +52,8 @@ unset TARGET MAKEFLAGS MFLAGS
 
 scenario="${1:-}"
 case "$scenario" in
-  positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg) ;;
-  *) echo "usage: $0 positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg" >&2
+  positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec) ;;
+  *) echo "usage: $0 positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec" >&2
      exit 2 ;;
 esac
 if [ "$scenario" = "hsmattackneg" ] && [ "${WT_ENGINE:-native}" != "hsm" ]; then
@@ -60,12 +66,19 @@ repo="$(cd "$here/../.." && pwd)"
 case "$scenario" in
   bothpsa|bothiso|attestneg|hsmattackneg)
     guest_dir="tests/firmware/psa-guest"
+    guest1_dir="$guest_dir"
     timeout_s="${RT700_M33MU_TIMEOUT:-180}" ;;
+  confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec)
+    guest_dir="tests/firmware/psa-guest"
+    guest1_dir="tests/firmware/mimxrt700-baremetal"
+    timeout_s="${RT700_M33MU_TIMEOUT:-900}" ;;
   *)
     guest_dir="tests/firmware/mimxrt700-baremetal"
+    guest1_dir="$guest_dir"
     timeout_s="${RT700_M33MU_TIMEOUT:-60}" ;;
 esac
 guest_build="$repo/$guest_dir/build"
+guest1_build="$repo/$guest1_dir/build"
 wolfboot_dir="${RT700_WOLFBOOT_DIR:-/tmp/wolfboot_rt700}"
 log="$repo/build/rt700_m33mu_$scenario.log"
 
@@ -177,6 +190,14 @@ case "$scenario" in
   restart)      guest_flags="WT_GUEST_FAULT_PROBE=1" ;;
   attestneg)    guest_flags="WT_ATTEST_NEG_PROBE=1" ;;
   hsmattackneg) guest_flags="WT_HSM_ATTACK_PROBE=1" ;;
+  confboot)     guest_flags="WT_RUN_CONFORMANCE=1 WT_M33MU_EXPECT_BKPT=1" ;;
+  devstorage)   guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=storage WT_M33MU_EXPECT_BKPT=1" ;;
+  devcrypto|vaultrecover|vaultrecoversec)
+                guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=crypto WT_M33MU_EXPECT_BKPT=1" ;;
+  devattest)    guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=attestation WT_M33MU_EXPECT_BKPT=1" ;;
+  devattestqcbor)
+                tests/upstream/fetch_qcbor.sh >/dev/null
+                guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=attestation WT_ATTEST_CBOR=qcbor WT_M33MU_EXPECT_BKPT=1" ;;
 esac
 stage "build the Non-secure guests from $guest_dir ${guest_flags:-(no probes)}"
 make -s -C "$guest_dir" clean
@@ -184,10 +205,14 @@ make -s -C "$guest_dir" clean
 # reports; the guest's verify pins it.
 # shellcheck disable=SC2086
 make -s -C "$guest_dir" TARGET=mimxrt700 WT_EXPECTED_LIFECYCLE=0x1000u $guest_flags
+if [ "$guest1_dir" != "$guest_dir" ]; then
+  make -s -C "$guest1_dir" clean
+  make -s -C "$guest1_dir" TARGET=mimxrt700
+fi
 
 stage "pin both guest measurements, then wolfBoot-sign wolfTrust"
 python3 tools/measure/patch_guest_digests.py build/wolftrust.bin \
-    "0:1:$guest_build/guest0.bin" "1:1:$guest_build/guest1.bin"
+    "0:1:$guest_build/guest0.bin" "1:1:$guest1_build/guest1.bin"
 IMAGE_HEADER_SIZE=1024 WOLFBOOT_PARTITION_SIZE=0x40000 WOLFBOOT_SECTOR_SIZE=0x1000 \
     "$wolfboot_dir/tools/keytools/sign" --ecc256 build/wolftrust.bin \
     "$wolfboot_dir/wolfboot_signing_private_key.der" 1
@@ -221,7 +246,7 @@ boot_chain() {
     "$M33MU" --cpu imxrt700 "$wolfboot_dir/wolfboot.bin" \
         build/wolftrust_v1_signed.bin:0x40000 \
         "$guest_build/guest0.bin:0x80000" \
-        "$guest_build/guest1.bin:0x100000" \
+        "$guest1_build/guest1.bin:0x100000" \
         --timeout "$timeout_s" "$@" > "$out" 2>&1
     status=$?
     set -e
@@ -230,6 +255,12 @@ boot_chain() {
 }
 
 end="$(scenario_end "$scenario")"
+case "$scenario" in
+  confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec)
+    # The val guest ends on its own breakpoint; the suite's panic tests reset
+    # the whole chain mid-run and val resumes off its flash boot flag.
+    end="bkpt:0x7f" ;;
+esac
 stage "boot the chain under M33MU (--cpu imxrt700, ${timeout_s}s budget)"
 case "$end" in
   bkpt:*) boot_chain 0 "$log" --uart-stdout --expect-bkpt "${end#bkpt:}" ;;
@@ -246,11 +277,24 @@ if [ "$end" = "idle" ]; then
   refute_re "no PSA guest lifecycle step failed" \
       'guest[01]: .*(FAILED|failed|NOT re|SUCCEEDED|accepted|unavailable|wrong data|not refused|not rejected)'
   expect "the run ended on the wall-clock budget, not a trap" "wall-clock limit"
+elif [ "${end}" = "bkpt:0x7f" ]; then
+  expect "the val guest ran to its clean exit breakpoint" "[EXPECT BKPT] Success"
 else
   expect "the emulator stopped on the expected verdict breakpoint" \
       "[EXPECT BKPT] Success"
   scenario_assert_verdict "$scenario"
 fi
+
+# The Arm suite prints its report once at the end; guest1's lines can splice
+# it, so the totals are read from the log with guest1 stripped and unwrapped.
+conf_totals() {
+    local flat
+    flat="$(sed 's/guest1:.*$//' "$log" | tr -d '\r\n')"
+    conf_passed=$(printf '%s' "$flat" | grep -oE 'TOTAL PASSED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
+    conf_skipped=$(printf '%s' "$flat" | grep -oE 'TOTAL SKIPPED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
+    conf_failed=$(printf '%s' "$flat" | grep -oE 'TOTAL FAILED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
+    : "${conf_passed:=-1}"; : "${conf_skipped:=-1}"; : "${conf_failed:=-1}"
+}
 
 # A guest fault relaunches that guest, so exact launch counts also prove that
 # nothing faulted where nothing should have.
@@ -407,6 +451,36 @@ case "$scenario" in
             "guest0: hsmattackneg own-namespace crypto still works"
         ;;
     esac
+    ;;
+  confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover)
+    expect "guest0 booted the PSA client" "guest0: wolfTrust FF-M psa_framework_version=0x0100"
+    expect "conformance val_entry start" "guest0: wolfTrust FF-M conformance: val_entry start"
+    conf_totals
+    case "$scenario" in
+      confboot)
+        # 89 scheduled: 85 pass, the 4 heap tests report SKIPPED on this
+        # zero-allocation image, as on the H5.
+        check "$([ "$conf_failed" -eq 0 ] && [ "$conf_passed" -eq 85 ] && [ "$conf_skipped" -eq 4 ]; echo $?)" \
+            "Arm FF-M IPC suite: ${conf_passed} passed, ${conf_skipped} skipped, ${conf_failed} failed (want 85/4/0)"
+        ;;
+      devstorage)
+        check "$([ "$conf_failed" -eq 0 ] && [ "$((conf_passed + conf_skipped))" -eq 17 ]; echo $?)" \
+            "dev_apis storage: ${conf_passed} passed, ${conf_skipped} skipped, ${conf_failed} failed (17 total)"
+        ;;
+      devcrypto|vaultrecover)
+        check "$([ "$conf_failed" -eq 0 ] && [ "$((conf_passed + conf_skipped))" -eq 77 ]; echo $?)" \
+            "dev_apis crypto: ${conf_passed} passed, ${conf_skipped} skipped, ${conf_failed} failed (77 scheduled)"
+        ;;
+      devattest|devattestqcbor)
+        check "$([ "$conf_failed" -eq 0 ] && [ "$conf_passed" -eq 1 ]; echo $?)" \
+            "dev_apis initial_attestation: ${conf_passed} passed, ${conf_failed} failed"
+        ;;
+    esac
+    ;;
+  vaultrecoversec)
+    refute_re "no fault (fail closed, not a brick)" '\[HARDFLT\]|HardFault|SecureFault'
+    expect "guest starts under fail-closed attestation" \
+        "guest0: wolfTrust FF-M conformance: val_entry start"
     ;;
   ahbscneg)
     faults=$((restart_limit + 1))

@@ -9,7 +9,7 @@ the full matrix on labels, integration pushes, and nightly.
 | Tier | Trigger | Purpose |
 |------|---------|---------|
 | **Fast (per-PR)** | every PR; push to master/main/dev/churn | host unit suites, ISO C99, house style, bare-scope scan, Arm PSA-FF conformance, cross-compile, compiler matrix, sanitizers, valgrind, integrations, core/port split guard |
-| **M33MU smoke** | every PR | per port, on both crypto engines: STM32H563 `positive gtzcneg crossdomain bothpsa confboot devcrypto`; MIMXRT700 `positive ahbscneg crossdomain bothpsa` |
+| **M33MU smoke** | every PR | per port, on both crypto engines: STM32H563 `positive gtzcneg crossdomain bothpsa confboot devcrypto`; MIMXRT700 `positive ahbscneg crossdomain bothpsa confboot devcrypto` |
 | **M33MU full** | PR labels `ci:all`, `ci:h5`, `ci:rt700`; push to master/main/wolfTrust-dev; `cron: 0 8 * * *`; `workflow_dispatch` (port input) | every scenario of that port on both engines (see below) |
 
 The M33MU workflow (`m33mu.yml`) is label-selected the way wolfProvider's
@@ -57,6 +57,9 @@ test-target` also reads. The table below is a representative slice:
 | `RT700 both-guest PSA lifecycle and isolation` | `bothpsa bothiso` | the portable PSA guest in both windows: crypto, storage, keys, attestation, and the FF-M negatives from each |
 | `RT700 attestation negatives` | `attestneg` | invalid attestation requests refused, tampered tokens fail the guest verify |
 | `RT700 wolfHSM cross-namespace + NVM relay negatives (hsm)` | `hsmattackneg` | a forged client id cannot reach the IAK, an NVM-group packet never reaches the server |
+| `RT700 FF-M IPC conformance (85/4)` | `confboot` | Arm's unmodified psa-arch-tests IPC suite against the RT700 SPM: 85 pass, 4 heap tests skip |
+| `RT700 dev_apis storage and attestation conformance` | `devstorage devattest devattestqcbor` | PSA ITS/PS and Initial Attestation conformance (the token parses under wolfCOSE's shim and reference QCBOR) |
+| `RT700 dev_apis crypto conformance and vault recovery` | `devcrypto vaultrecover vaultrecoversec` | PSA Crypto conformance on wolfPSA; a foreign vault pool self-heals in development and fails closed when SECURED |
 | `RT700 secure verdict negatives` | `rollbackneg remeasureneg manifestneg spbudgetneg` | shared Secure-verdict table: rollback refusal, re-measure tamper, corrupted manifest, restart budget |
 
 An unlabeled PR runs only each port's smoke tier; the full matrix needs a

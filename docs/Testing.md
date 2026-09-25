@@ -224,6 +224,23 @@ guest verify). `hsmattackneg` (hsm engine only, it drives the raw wolfHSM client
 wire) proves a forged client id cannot reach the IAK and an NVM-group packet
 never reaches the server.
 
+The conformance scenarios are the same drop-in proof the STM32H563 gives:
+`confboot` hosts Arm's unmodified psa-arch-tests FF-M IPC suite in the PSA
+guest against the conformance Secure image (`WT_CONFORMANCE=1`, the manifest
+that adds Arm's server, driver, and client partitions) and expects the same
+85 passed, 4 heap tests skipped, 0 failed; `devstorage`, `devcrypto`,
+`devattest`, and `devattestqcbor` run the dev_apis storage, crypto, and
+initial-attestation suites; `vaultrecover` proves a foreign vault pool
+self-heals on a development device (the crypto suite passes after the
+reformat), and `vaultrecoversec` forces the SECURED lifecycle and proves the
+refusal is graceful on the emulator: no fault, and the guest still starts
+(the vault-not-wiped and attestation-degraded counters are hardware-runner
+evidence, read over the debug port as on the STM32H563). The port supplies `port/mimxrt700/manifest-conformance.json`
+and `port/mimxrt700/conformance/` (the PAL bindings: console, watchdog,
+the flash-backed NVMEM boot flag, and the isolation MMIO windows); the val
+framework, its PAL, and the test lists are the upstream sources the Secure
+build fetches and generates.
+
 The runner builds its own pinned emulator and wolfBoot first stage. The
 emulator is `M33MU_REF` plus `tests/target/m33mu-imxrt700.patch`, the model
 correction the chain needs until it lands upstream: a Secure AHBSC SRAM rule
@@ -353,7 +370,8 @@ that picks each port's tier and one matrix job that runs exactly those scenario
 groups) is tiered. Every pull request runs
 each port's smoke tier on both crypto engines (STM32H563: `positive`,
 `gtzcneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`; MIMXRT700:
-`positive`, `ahbscneg`, `crossdomain`, `bothpsa`). The full matrix runs on a
+`positive`, `ahbscneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`).
+The full matrix runs on a
 push to `master`, `main`, or `wolfTrust-dev`, on the nightly schedule, on
 manual dispatch (with a `port` input), and on a pull request that carries the
 `ci:h5`, `ci:rt700`, or `ci:all` label. The scenario groups per port and tier
