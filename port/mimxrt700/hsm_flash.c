@@ -67,6 +67,13 @@ static const wt_hsm_flash_config_t g_conf_nvm_cfg = {
 };
 static wt_hsm_flash_context_t g_conf_nvm_ctx;
 #endif
+static const wt_hsm_flash_config_t g_fwu_flash_cfg = {
+    .base = WT_FWU_UPDATE_FLASH_BASE_S,
+    .size = WT_FWU_UPDATE_FLASH_SIZE,
+    .sector_size = WT_FLASH_SECTOR_SIZE,
+    .program_unit = 16u,
+};
+static wt_hsm_flash_context_t g_fwu_flash_ctx;
 volatile uint32_t g_wt_flash_gate_aborts __attribute__((used));
 /* Last NOR driver failure, read over the debug port by the hardware harness. */
 volatile int32_t g_wt_nor_last_error __attribute__((used));
@@ -83,6 +90,9 @@ static const wt_hsm_flash_config_t *wt_hsm_flash_cfg_of(const void *context)
         return &g_conf_nvm_cfg;
     }
 #endif
+    if (context == (const void *)&g_fwu_flash_ctx) {
+        return &g_fwu_flash_cfg;
+    }
     return NULL;
 }
 
@@ -363,47 +373,174 @@ int wt_hsm_flash_format(void)
     return wt_hsm_flash_erase(&g_hsm_flash_ctx, 0u, g_hsm_flash_cfg.size);
 }
 
-/* SERVICE_FWU staging into the wolfBoot update partition: the NOR driver can
- * write it, but arming the wolfBoot trailer is not ported yet, so every
- * write-side entry reports NOTIMPL rather than stage an image nothing boots. */
+/* SERVICE_FWU staging into the wolfBoot update partition: the FWU partition
+ * erases each target sector lazily, programs the candidate through the NOR
+ * driver, and verifies every block against the Secure alias (the driver
+ * invalidates CACHE64 after each operation, so the read-back is fresh).
+ * Staging must be contiguous from offset 0, so a finished candidate has no
+ * unwritten gap behind its declared size. arm() programs wolfBoot's update
+ * trigger in the trailer so the next boot swaps; the swapped image is still
+ * gated by authenticated launch. */
+
+/* Erased high-water mark: every sector below it is blank or holds staged
+ * data and is never erased again, whatever the partition's sector count. */
+static uint32_t g_fwu_erased_end;
+static uint32_t g_fwu_written_end;
+
+static int wt_fwu_ensure_erased(uint32_t offset, uint32_t size)
+{
+    uint32_t sector_size = g_fwu_flash_cfg.sector_size;
+    uint32_t end = offset + size;
+    uint32_t s;
+
+    end = ((end + sector_size - 1u) / sector_size) * sector_size;
+    for (s = g_fwu_erased_end; s < end; s += sector_size) {
+        if (wt_hsm_flash_erase(&g_fwu_flash_ctx, s, sector_size) !=
+                WH_ERROR_OK) {
+            return -1;
+        }
+        g_fwu_erased_end = s + sector_size;
+    }
+    return 0;
+}
+
 static int wt_fwu_backend_begin(void *ctx)
 {
     (void)ctx;
-    return WH_ERROR_NOTIMPL;
+    if (wt_hsm_flash_init(&g_fwu_flash_ctx, &g_fwu_flash_cfg) != WH_ERROR_OK) {
+        return -1;
+    }
+    g_fwu_erased_end = 0u;
+    g_fwu_written_end = 0u;
+    return 0;
 }
 
 static int wt_fwu_backend_write(void *ctx, uint32_t offset,
                                 const uint8_t *data, uint32_t size)
 {
+    const uint8_t *mapped = (const uint8_t *)(g_fwu_flash_cfg.base + offset);
+    uint32_t reserved = g_fwu_flash_cfg.size - g_fwu_flash_cfg.sector_size;
+
     (void)ctx;
-    (void)offset;
-    (void)data;
-    (void)size;
-    return WH_ERROR_NOTIMPL;
+    /* The trailer sector holds wolfBoot's swap trigger and is owned by
+     * arm/disarm alone; staging data must never pre-program it. */
+    if (offset >= reserved || size > reserved - offset ||
+            offset != g_fwu_written_end) {
+        return -1;
+    }
+    if (wt_fwu_ensure_erased(offset, size) != 0) {
+        return -1;
+    }
+    if (wt_hsm_flash_program(&g_fwu_flash_ctx, offset, size, data) !=
+            WH_ERROR_OK) {
+        return -1;
+    }
+    if (memcmp(mapped, data, size) != 0) {
+        return -1;
+    }
+    g_fwu_written_end = offset + size;
+    return 0;
 }
+
+static int wt_fwu_backend_disarm(void *ctx);
 
 static int wt_fwu_backend_arm(void *ctx, uint32_t image_size,
                               uint32_t version)
 {
+    uint32_t block_off = g_fwu_flash_cfg.size - g_fwu_flash_cfg.program_unit;
+    const uint8_t *mapped = (const uint8_t *)(g_fwu_flash_cfg.base + block_off);
+    uint8_t block[16];
+
     (void)ctx;
     (void)image_size;
     (void)version;
-    return WH_ERROR_NOTIMPL;
+    /* The wolfBoot trigger lives in the topmost program unit of the partition
+     * (state + magic); the block below it stays erased. The trailer sector
+     * never holds staged data, so it is erased outright. */
+    if (wt_fwu_wolfboot_arm_trailer(block, (uint32_t)sizeof(block)) != 0) {
+        return -1;
+    }
+    if (wt_fwu_backend_disarm(NULL) != 0) {
+        return -1;
+    }
+    if (wt_hsm_flash_program(&g_fwu_flash_ctx, block_off,
+                             (uint32_t)sizeof(block), block) != WH_ERROR_OK ||
+            memcmp(mapped, block, sizeof(block)) != 0) {
+        /* A partially programmed trigger must not survive a failed arm. */
+        (void)wt_fwu_backend_disarm(NULL);
+        return -1;
+    }
+    return 0;
 }
 
 static int wt_fwu_backend_disarm(void *ctx)
 {
+    uint32_t trailer = g_fwu_flash_cfg.size - g_fwu_flash_cfg.sector_size;
+
     (void)ctx;
-    return WH_ERROR_NOTIMPL;
+    if (wt_hsm_flash_erase(&g_fwu_flash_ctx, trailer,
+                           g_fwu_flash_cfg.sector_size) != WH_ERROR_OK) {
+        return -1;
+    }
+    return 0;
 }
+
+/* wolfBoot image header size for this port (staged images carry it). */
+#define WT_FWU_IMAGE_HEADER_SIZE 0x400u
+#define WT_FWU_IMAGE_MAGIC 0x464C4F57u
+#define WT_FWU_HDR_TAG_VERSION 0x0001u
 
 static int wt_fwu_backend_verify(void *ctx, uint32_t staged_size,
                                  uint32_t *header_version)
 {
+    const uint8_t *hdr = (const uint8_t *)g_fwu_flash_cfg.base;
+    uint32_t magic;
+    uint32_t fw_size;
+    uint32_t version = 0u;
+    uint32_t offset = 8u;
+    uint32_t tag;
+    uint32_t len;
+    int found = 0;
+
     (void)ctx;
-    (void)staged_size;
-    (void)header_version;
-    return WH_ERROR_NOTIMPL;
+    if (header_version == NULL ||
+            staged_size < WT_FWU_IMAGE_HEADER_SIZE ||
+            staged_size != g_fwu_written_end) {
+        return -1;
+    }
+    memcpy(&magic, hdr, sizeof(magic));
+    memcpy(&fw_size, hdr + 4u, sizeof(fw_size));
+    if (magic != WT_FWU_IMAGE_MAGIC) {
+        return -1;
+    }
+    /* The staged extent must cover the header plus the declared payload. */
+    if (fw_size > staged_size - WT_FWU_IMAGE_HEADER_SIZE) {
+        return -1;
+    }
+    while (offset + 4u <= WT_FWU_IMAGE_HEADER_SIZE) {
+        if (hdr[offset] == 0xFFu) {
+            offset++;
+            continue;
+        }
+        tag = (uint32_t)hdr[offset] | ((uint32_t)hdr[offset + 1u] << 8);
+        len = (uint32_t)hdr[offset + 2u] | ((uint32_t)hdr[offset + 3u] << 8);
+        if (tag == 0u) {
+            break;
+        }
+        if (offset + 4u + len > WT_FWU_IMAGE_HEADER_SIZE) {
+            return -1;
+        }
+        if (tag == WT_FWU_HDR_TAG_VERSION && len == sizeof(version)) {
+            memcpy(&version, hdr + offset + 4u, sizeof(version));
+            found = 1;
+        }
+        offset += 4u + len;
+    }
+    if (found == 0) {
+        return -1;
+    }
+    *header_version = version;
+    return 0;
 }
 
 const wt_fwu_backend_t wt_fwu_flash_backend = {
@@ -411,6 +548,7 @@ const wt_fwu_backend_t wt_fwu_flash_backend = {
     .write = wt_fwu_backend_write,
     .arm = wt_fwu_backend_arm,
     .disarm = wt_fwu_backend_disarm,
+    /* The trailer sector is arm/disarm-owned, never staging capacity. */
     .capacity = WT_FWU_UPDATE_FLASH_SIZE - WT_FLASH_SECTOR_SIZE,
     .align = 16u,
     .verify = wt_fwu_backend_verify,

@@ -220,7 +220,9 @@ the IAK public key and wolfBoot's measurement of the signed Secure image.
 vector inside the peer guest's window, and an unknown SID from both guests.
 `attestneg` adds the attestation negatives (invalid requests refused with
 the statuses Arm's tests expect; tampered and misattributed tokens fail the
-guest verify). `hsmattackneg` (hsm engine only, it drives the raw wolfHSM client
+guest verify). `fwustage` stages a candidate into the wolfBoot update
+partition through SERVICE_FWU, arms it, and proves reject/clean restore
+READY. `hsmattackneg` (hsm engine only, it drives the raw wolfHSM client
 wire) proves a forged client id cannot reach the IAK and an NVM-group packet
 never reaches the server.
 
@@ -370,7 +372,8 @@ that picks each port's tier and one matrix job that runs exactly those scenario
 groups) is tiered. Every pull request runs
 each port's smoke tier on both crypto engines (STM32H563: `positive`,
 `gtzcneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`; MIMXRT700:
-`positive`, `ahbscneg`, `crossdomain`, `bothpsa`). The full matrix runs on a
+`positive`, `ahbscneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`).
+The full matrix runs on a
 push to `main`, on the nightly schedule, on
 manual dispatch (with a `port` input), and on a pull request that carries the
 `ci:h5`, `ci:rt700`, or `ci:all` label. The scenario groups per port and tier

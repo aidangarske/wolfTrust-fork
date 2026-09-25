@@ -9,7 +9,7 @@ the full matrix on labels, main pushes, and nightly.
 | Tier | Trigger | Purpose |
 |------|---------|---------|
 | **Fast (per-PR)** | every PR; push to main | host unit suites, ISO C99, house style, bare-scope scan, Arm PSA-FF conformance, cross-compile, compiler matrix, sanitizers, valgrind, integrations, core/port split guard |
-| **M33MU smoke** | every PR | per port, on both crypto engines: STM32H563 `positive gtzcneg crossdomain bothpsa confboot devcrypto`; MIMXRT700 `positive ahbscneg crossdomain bothpsa` |
+| **M33MU smoke** | every PR | per port, on both crypto engines: STM32H563 `positive gtzcneg crossdomain bothpsa confboot devcrypto`; MIMXRT700 `positive ahbscneg crossdomain bothpsa confboot devcrypto` |
 | **M33MU full** | PR labels `ci:all`, `ci:h5`, `ci:rt700`; push to main; `cron: 0 8 * * *`; `workflow_dispatch` (port input) | every scenario of that port on both engines (see below) |
 
 The M33MU workflow (`m33mu.yml`) is label-selected the way wolfProvider's
@@ -56,7 +56,7 @@ test-target` also reads. The table below is a representative slice:
 | `mimxrt700_crossdomain_keystoreneg_<engine>` | `crossdomain keystoreneg` | unprivileged SP reads of SPM RAM and the keystore band MemManage-fault, guests ride it out |
 | `mimxrt700_spfaultneg_panicneg_<engine>` | `spfaultneg panicneg` | the relay's undefined instruction and the storage SP's programmer-error close UsageFault once, the SPM restarts the SP in place, both guests finish |
 | `mimxrt700_bothpsa_bothiso_<engine>` | `bothpsa bothiso` | the portable PSA guest in both windows: crypto, storage, keys, attestation, and the FF-M negatives from each |
-| `mimxrt700_attestneg_<engine>` | `attestneg` | invalid attestation requests refused, tampered tokens fail the guest verify |
+| `mimxrt700_attestneg_fwustage_<engine>` | `attestneg fwustage` | invalid attestation requests refused, tampered tokens fail the guest verify; a candidate stages into the update partition and reject/clean restore READY |
 | `mimxrt700_hsmattackneg_hsm` | `hsmattackneg` | a forged client id cannot reach the IAK, an NVM-group packet never reaches the server |
 | `mimxrt700_confboot_<engine>` | `confboot` | Arm's unmodified psa-arch-tests IPC suite against the RT700 SPM: 85 pass, 4 heap tests skip |
 | `mimxrt700_devstorage_devattest_devattestqcbor_<engine>` | `devstorage devattest devattestqcbor` | PSA ITS/PS and Initial Attestation conformance (the token parses under wolfCOSE's shim and reference QCBOR) |

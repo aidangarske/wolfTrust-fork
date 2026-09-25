@@ -21,7 +21,7 @@
 # restart budget on a launch-time fault; authneg refuses a tampered guest0 at
 # launch. guest1 runs on through all of them.
 #
-# bothpsa, bothiso, attestneg, and hsmattackneg run the portable
+# bothpsa, bothiso, attestneg, hsmattackneg, and fwustage run the portable
 # PSA test guest (tests/firmware/psa-guest) in both windows: the H5 guest's
 # crypto, storage, key, attestation, and FF-M negative lifecycle from a guest
 # with no operating system. hsmattackneg drives the raw wolfHSM client wire,
@@ -52,8 +52,8 @@ unset TARGET MAKEFLAGS MFLAGS
 
 scenario="${1:-}"
 case "$scenario" in
-  positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec) ;;
-  *) echo "usage: $0 positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec" >&2
+  positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec) ;;
+  *) echo "usage: $0 positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec" >&2
      exit 2 ;;
 esac
 if [ "$scenario" = "hsmattackneg" ] && [ "${WT_ENGINE:-native}" != "hsm" ]; then
@@ -64,7 +64,7 @@ fi
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 case "$scenario" in
-  bothpsa|bothiso|attestneg|hsmattackneg)
+  bothpsa|bothiso|attestneg|hsmattackneg|fwustage)
     guest_dir="tests/firmware/psa-guest"
     guest1_dir="$guest_dir"
     timeout_s="${RT700_M33MU_TIMEOUT:-180}" ;;
@@ -190,6 +190,8 @@ case "$scenario" in
   restart)      guest_flags="WT_GUEST_FAULT_PROBE=1" ;;
   attestneg)    guest_flags="WT_ATTEST_NEG_PROBE=1" ;;
   hsmattackneg) guest_flags="WT_HSM_ATTACK_PROBE=1" ;;
+  # 0x21000 bytes of body reach sector 33 of the 64-sector update partition.
+  fwustage)     guest_flags="WT_FWU_PROBE=1 WT_FWU_PROBE_STREAM_BYTES=0x21000u WT_FWU_PROBE_SEQUENTIAL=1" ;;
   confboot)     guest_flags="WT_RUN_CONFORMANCE=1 WT_M33MU_EXPECT_BKPT=1" ;;
   devstorage)   guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=storage WT_M33MU_EXPECT_BKPT=1" ;;
   devcrypto|vaultrecover|vaultrecoversec)
@@ -377,7 +379,7 @@ case "$scenario" in
     expect_n "guest1 reached the storage service" 1 \
         "wolfTrust RT700 guest1: storage connect ok"
     ;;
-  bothpsa|bothiso|attestneg|hsmattackneg)
+  bothpsa|bothiso|attestneg|hsmattackneg|fwustage)
     for guest in guest0 guest1; do
         expect_n "$guest launched exactly once (no fault, no relaunch)" 1 \
             "$guest: alive"
@@ -449,6 +451,20 @@ case "$scenario" in
             "guest0: hsmattackneg rollback NVM group refused"
         expect "own-namespace crypto still works" \
             "guest0: hsmattackneg own-namespace crypto still works"
+        ;;
+      fwustage)
+        expect "write before start refused on target" \
+            "guest0: wolfTrust FWU write-before-start refused"
+        expect "candidate body streamed across the update partition's data sectors" \
+            "guest0: wolfTrust FWU streamed candidate body across the update partition"
+        expect "candidate staged to the update partition and armed" \
+            "guest0: wolfTrust FWU staged signed-header candidate to update partition, armed, verified"
+        expect "reject disarms and clean restores READY" \
+            "guest0: wolfTrust FWU reject disarmed and clean restored READY"
+        expect "a write that skips ahead is refused and the session cleans" \
+            "guest0: wolfTrust FWU out-of-order write refused and cleaned"
+        expect "unrelated storage partitions unaffected" \
+            "guest0: wolfTrust ITS set/get verified"
         ;;
     esac
     ;;
