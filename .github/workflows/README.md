@@ -58,6 +58,9 @@ test-target` also reads. The table below is a representative slice:
 | `mimxrt700_bothpsa_bothiso_<engine>` | `bothpsa bothiso` | the portable PSA guest in both windows: crypto, storage, keys, attestation, and the FF-M negatives from each |
 | `mimxrt700_attestneg_<engine>` | `attestneg` | invalid attestation requests refused, tampered tokens fail the guest verify |
 | `mimxrt700_hsmattackneg_hsm` | `hsmattackneg` | a forged client id cannot reach the IAK, an NVM-group packet never reaches the server |
+| `mimxrt700_confboot_<engine>` | `confboot` | Arm's unmodified psa-arch-tests IPC suite against the RT700 SPM: 85 pass, 4 heap tests skip |
+| `mimxrt700_devstorage_devattest_devattestqcbor_<engine>` | `devstorage devattest devattestqcbor` | PSA ITS/PS and Initial Attestation conformance (the token parses under wolfCOSE's shim and reference QCBOR) |
+| `mimxrt700_devcrypto_vaultrecover_vaultrecoversec_<engine>` | `devcrypto vaultrecover vaultrecoversec` | PSA Crypto conformance on wolfPSA; a foreign vault pool self-heals in development and fails closed when SECURED |
 | `mimxrt700_rollbackneg_remeasureneg_manifestneg_spbudgetneg_<engine>` | `rollbackneg remeasureneg manifestneg spbudgetneg` | shared Secure-verdict table: rollback refusal, re-measure tamper, corrupted manifest, restart budget |
 
 An unlabeled PR runs only each port's smoke tier; the full matrix needs a
