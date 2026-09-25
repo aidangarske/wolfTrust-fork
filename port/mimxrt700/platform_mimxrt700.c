@@ -339,6 +339,23 @@ size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max)
 }
 
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+/* PAL interrupt source: the unprivileged DRIVER partition asks for its line
+ * to fire, so the privileged side pends it in the NVIC. */
+void wt_conf_uart_irq_set(int on)
+{
+    if (on != 0) {
+        WT_NVIC_ISPR0 = (1u << WT_CONF_IRQ);
+    }
+    else {
+        wt_arch_secure_irq_disable(WT_CONF_IRQ);
+    }
+}
+
+void WT_CONF_IRQ_HANDLER(void)
+{
+    wt_spm_conf_irq(WT_CONF_IRQ);
+}
+
 extern char _s_conf_server_data[];
 extern char _e_conf_server_data[];
 extern char _s_conf_driver_data[];

@@ -56,6 +56,17 @@ static const wt_hsm_flash_config_t g_hsm_flash_cfg = {
 };
 
 static wt_hsm_flash_context_t g_hsm_flash_ctx;
+#if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+/* The conformance DRIVER partition's NVMEM boot flag lives in its own flash
+ * sector so it survives the suite's panic-test resets. */
+static const wt_hsm_flash_config_t g_conf_nvm_cfg = {
+    .base = WT_CONF_NVM_FLASH_BASE_S,
+    .size = WT_CONF_NVM_FLASH_SIZE,
+    .sector_size = WT_FLASH_SECTOR_SIZE,
+    .program_unit = 16u,
+};
+static wt_hsm_flash_context_t g_conf_nvm_ctx;
+#endif
 volatile uint32_t g_wt_flash_gate_aborts __attribute__((used));
 /* Last NOR driver failure, read over the debug port by the hardware harness. */
 volatile int32_t g_wt_nor_last_error __attribute__((used));
@@ -67,6 +78,11 @@ static const wt_hsm_flash_config_t *wt_hsm_flash_cfg_of(const void *context)
     if (context == (const void *)&g_hsm_flash_ctx) {
         return &g_hsm_flash_cfg;
     }
+#if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+    if (context == (const void *)&g_conf_nvm_ctx) {
+        return &g_conf_nvm_cfg;
+    }
+#endif
     return NULL;
 }
 
@@ -411,15 +427,32 @@ int wt_hsm_flash_remeasure_tamper(uintptr_t secure_base)
 #endif
 
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+static bool g_conf_nvm_ready;
+
 int wt_conf_nvm_flash_sync(uint8_t *buf, uint32_t len, int store)
 {
-    if (buf == NULL || len == 0u || len > WT_CONF_NVM_FLASH_SIZE) {
+    int ret;
+
+    if (buf == NULL || len == 0u || len > g_conf_nvm_cfg.size ||
+            (len % g_conf_nvm_cfg.program_unit) != 0u) {
         return -1;
     }
-    if (store == 0) {
-        (void)memcpy(buf, (const uint8_t *)WT_CONF_NVM_FLASH_BASE_S, len);
-        return 0;
+    if (!g_conf_nvm_ready) {
+        if (wt_hsm_flash_init(&g_conf_nvm_ctx, &g_conf_nvm_cfg) != WH_ERROR_OK) {
+            return -1;
+        }
+        g_conf_nvm_ready = true;
     }
-    return -1;
+    if (store == 0) {
+        ret = wt_hsm_flash_read(&g_conf_nvm_ctx, 0u, len, buf);
+    }
+    else {
+        ret = wt_hsm_flash_erase(&g_conf_nvm_ctx, 0u,
+                                 g_conf_nvm_cfg.sector_size);
+        if (ret == WH_ERROR_OK) {
+            ret = wt_hsm_flash_program(&g_conf_nvm_ctx, 0u, len, buf);
+        }
+    }
+    return (ret == WH_ERROR_OK) ? 0 : -1;
 }
 #endif
