@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in wolfTrust behaves wrongly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What goes wrong, in one or two sentences.
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or release
+      placeholder: "e.g. 5b10254f or v1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target
+      multiple: true
+      options:
+        - STM32H563 (silicon)
+        - MIMXRT700 (silicon)
+        - M33MU emulator
+        - QEMU virt (AArch64)
+        - QEMU xlnx-versal-virt (AArch64)
+        - Host build / unit tests
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Crypto engine
+      options:
+        - hsm
+        - native
+        - Both
+        - Not applicable
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Build command, scenario name, and what you ran.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Console output or runner log excerpt.
+      render: text
