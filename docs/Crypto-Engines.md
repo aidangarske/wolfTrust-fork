@@ -225,10 +225,10 @@ The Secure image and both guest images must use the same engine. See
 
 ## Measured Secure-image cost
 
-These Secure-image measurements were reproduced on 2026-09-18 from the source
-tree containing this page. The pinned dependency revisions and versions are
-listed in
-[TF-M Compatibility](TF-M-Compatibility.md). The builds ran on
+These Secure-image measurements were reproduced on 2026-09-18. They are a
+dated snapshot, and later commits may produce different sizes. The dependency
+revisions and versions used for the measurements are listed in
+[Footprint Comparison](Footprint-Comparison.md). The builds ran on
 `wolf-prec5560` with `arm-none-eabi-gcc` 13.2.1, `-Os`, and the repository
 defaults other than the engine and output directory:
 
@@ -275,7 +275,7 @@ of allocation headroom over the tested peak. It is not a precise high-water
 measurement or a guarantee for different workloads. This is a fixed
 allocation, not a heap or a claim that every run consumes all 10 KiB.
 
-See [TF-M Compatibility](TF-M-Compatibility.md) for the complete local
+See [Footprint Comparison](Footprint-Comparison.md) for the complete local
 footprint comparison and methodology.
 
 ## Build invariants
