@@ -54,8 +54,8 @@ set -o pipefail
 
 scenario="${1:-}"
 case "$scenario" in
-  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg) ;;
-  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
+  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg) ;;
+  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
 esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -347,7 +347,23 @@ refute_re()  { if grep -Eq "$2" "$log"; then check_fail "$1" "unexpected: $2"; \
                else check_pass "$1"; fi; }
 
 case "$scenario" in
-  positive)
+  positive|deputyneg)
+    if [ "$scenario" = "deputyneg" ]; then
+      # The probe is called unconditionally at vault entry and faults the
+      # partition on any leak, so a clean positive lifecycle only proves the
+      # fix if the probe was actually linked in. Guard against a vacuous pass
+      # from the probe being compiled out (WT_DEPUTY_NEG_PROBE not threaded).
+      # Dump symbols to a file and grep the file: piping nm into `grep -q`
+      # would trip pipefail when grep closes the pipe early and nm gets SIGPIPE.
+      deputy_syms="$repo/build/deputy-syms.txt"
+      "${CROSS_COMPILE}nm" "$repo/build/wolftrust-signed.elf" > "$deputy_syms"
+      if grep -q ' wt_platform_deputy_flash_probe$' "$deputy_syms"; then
+        check_pass "deputy probe linked into the secure image"
+      else
+        check_fail "deputy probe presence" \
+          "wt_platform_deputy_flash_probe not in the secure image"
+      fi
+    fi
     refute_re "no fault markers in boot log" \
       '^(\[MEMFAULT\]|\[HARDFLT\]|HardFault|SecureFault)'
     expect "TEE client initialized" "wolfTrust TEE client initialized"
@@ -387,7 +403,7 @@ case "$scenario" in
     expect "guest1 psa_hash_compute KAT (PSA API parity)" \
       "freertos_guest1: psa hash ok"
     expect "[EXPECT BKPT] Success clean exit" "[EXPECT BKPT] Success"
-    echo "PASS: target/positive"
+    echo "PASS: target/$scenario"
     ;;
   bothpsa)
     # Both-OS PSA parity gate: the SAME PSA client behavior from BOTH the

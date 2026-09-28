@@ -961,3 +961,141 @@ int wt_conf_nvm_flash_sync(uint8_t *buf, uint32_t len, int store)
     return (ret == WH_ERROR_OK) ? 0 : -1;
 }
 #endif /* WT_CONFORMANCE */
+
+#if defined(WT_DEPUTY_NEG_PROBE) && (WT_DEPUTY_NEG_PROBE == 1)
+/* A primitive fed a forged out-of-range offset must reject it with exactly
+ * WH_ERROR_BADARGS through a delivered gate call, not a gate-level failure or
+ * any other backend error. Returns 1 only on that exact outcome. */
+static int wt_deputy_expect_badargs(int32_t sub_op, uint32_t offset,
+                                    uint32_t size, void *buf)
+{
+    wt_spm_call_t call;
+
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_KEYSTORE_FLASH;
+    call.call_type = sub_op;
+    call.vec_idx = offset;
+    call.num_bytes = size;
+    call.buffer = buf;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS) {
+        return 0;
+    }
+    return (call.ret_int == WH_ERROR_BADARGS) ? 1 : 0;
+}
+
+/* used + noinline so the link guard in the deputyneg runner can confirm the
+ * probe is present rather than inlined away under LTO. */
+__attribute__((used, noinline))
+int wt_platform_deputy_flash_probe(void)
+{
+    wt_spm_call_t call;
+    const wt_hsm_flash_config_t *geom;
+    uint8_t ref[16];
+    uint8_t leak[16];
+    uint32_t oor;
+    int ok = 1;
+
+    /* Offset whose base + offset lands in SPM-private RAM. */
+    oor = (uint32_t)((uintptr_t)WT_RAM_S_BASE - g_hsm_flash_cfg.base);
+
+    /* Reference: a legitimate in-range read of the real NVM region. */
+    g_hsm_flash_ctx.base = g_hsm_flash_cfg.base;
+    g_hsm_flash_ctx.size = g_hsm_flash_cfg.size;
+    (void)memset(ref, 0, sizeof(ref));
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_KEYSTORE_FLASH;
+    call.call_type = WT_SPM_KS_FLASH_READ;
+    call.vec_idx = 0u;
+    call.num_bytes = (uint32_t)sizeof(ref);
+    call.buffer = ref;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS || call.ret_int != WH_ERROR_OK) {
+        return 0;
+    }
+
+    /* Size vector: inflate the writable size so a bound check against it would
+     * pass, then confirm every primitive still refuses the SPM-targeting
+     * offset via the immutable geometry (exactly WH_ERROR_BADARGS). oor is
+     * sector-aligned, so the erase check rejects on range, not on alignment. */
+    g_hsm_flash_ctx.size = 0xFFFFFFFFu;
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_READ, oor, 16u, leak);
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_PROGRAM, oor, 16u, leak);
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_ERASE, oor,
+                                   g_hsm_flash_cfg.sector_size, NULL);
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_VERIFY, oor, 16u, leak);
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_BLANKCHECK, oor, 16u, NULL);
+
+    /* program_unit vector: forge a one-byte unit so a misaligned program would
+     * pass an alignment check against the context; the fixed primitive uses
+     * the immutable 16-byte unit and refuses. The offset stays in range, so
+     * the fixed path rejects on alignment without touching the store. */
+    g_hsm_flash_ctx.base = g_hsm_flash_cfg.base;
+    g_hsm_flash_ctx.size = g_hsm_flash_cfg.size;
+    g_hsm_flash_ctx.program_unit = 1u;
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_PROGRAM, 4u, 16u, leak);
+    g_hsm_flash_ctx.program_unit = g_hsm_flash_cfg.program_unit;
+
+    /* sector_size vector: forge a small sector so a sub-sector erase would pass
+     * an alignment check against the context; the fixed primitive uses the
+     * immutable sector size and refuses without erasing the store. */
+    g_hsm_flash_ctx.sector_size = 16u;
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_ERASE, 0u, 16u, NULL);
+    g_hsm_flash_ctx.sector_size = g_hsm_flash_cfg.sector_size;
+
+    /* Resolver seam: every primitive selects its geometry through
+     * wt_flash_geometry(). With all four context fields forged, the resolver
+     * must still return the immutable config, so the base, size, sector size
+     * and program unit that program, erase, verify and blank-check use are
+     * never taken from partition-writable memory. This is the non-destructive
+     * proof for the mutating primitives, whose base cannot be substituted
+     * on-target without erasing the live store. */
+    g_hsm_flash_ctx.base = (uintptr_t)WT_RAM_S_BASE;
+    g_hsm_flash_ctx.size = 0xFFFFFFFFu;
+    g_hsm_flash_ctx.sector_size = 16u;
+    g_hsm_flash_ctx.program_unit = 1u;
+    geom = wt_flash_geometry(&g_hsm_flash_ctx);
+    if (geom == NULL || geom->base != g_hsm_flash_cfg.base ||
+            geom->size != g_hsm_flash_cfg.size ||
+            geom->sector_size != g_hsm_flash_cfg.sector_size ||
+            geom->program_unit != g_hsm_flash_cfg.program_unit) {
+        ok = 0;
+    }
+
+    /* Base vector (read and verify are non-destructive): point the writable
+     * base at SPM RAM with an in-range offset. The fixed read and verify
+     * resolve the base from the immutable config, so the read returns the NVM
+     * reference and the verify matches it; taking the base from the context
+     * would return or compare SPM bytes instead. */
+    g_hsm_flash_ctx.base = (uintptr_t)WT_RAM_S_BASE;
+    g_hsm_flash_ctx.size = 0xFFFFFFFFu;
+    (void)memset(leak, 0, sizeof(leak));
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_KEYSTORE_FLASH;
+    call.call_type = WT_SPM_KS_FLASH_READ;
+    call.vec_idx = 0u;
+    call.num_bytes = (uint32_t)sizeof(leak);
+    call.buffer = leak;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS || call.ret_int != WH_ERROR_OK) {
+        ok = 0;
+    }
+    else if (memcmp(leak, ref, sizeof(ref)) != 0) {
+        ok = 0;
+    }
+
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_KEYSTORE_FLASH;
+    call.call_type = WT_SPM_KS_FLASH_VERIFY;
+    call.vec_idx = 0u;
+    call.num_bytes = (uint32_t)sizeof(ref);
+    call.buffer = ref;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS || call.ret_int != WH_ERROR_OK) {
+        ok = 0;
+    }
+
+    /* Restore the full context for the vault's real operations. */
+    g_hsm_flash_ctx.base = g_hsm_flash_cfg.base;
+    g_hsm_flash_ctx.size = g_hsm_flash_cfg.size;
+    g_hsm_flash_ctx.sector_size = g_hsm_flash_cfg.sector_size;
+    g_hsm_flash_ctx.program_unit = g_hsm_flash_cfg.program_unit;
+    return ok;
+}
+#endif

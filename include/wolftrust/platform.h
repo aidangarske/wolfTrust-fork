@@ -73,6 +73,18 @@ size_t wt_platform_conf_sp_grants(int32_t partition_id,
 uintptr_t wt_platform_probe_address(unsigned int target);
 #endif
 
+#if defined(WT_DEPUTY_NEG_PROBE) && (WT_DEPUTY_NEG_PROBE == 1)
+/* Privileged-deputy proof (WT-FFM-0011), test builds only: a keystore
+ * partition rewrites the partition-writable flash context to aim the shared
+ * NVM singleton at SPM-private RAM, both by inflating the size and by
+ * substituting the base, and drives every KEYSTORE_FLASH primitive through the
+ * gate. Returns 1 only when the fix holds: each out-of-range offset is refused
+ * with exactly WH_ERROR_BADARGS and the base-substituted read still returns the
+ * immutable-geometry NVM bytes. Returns 0 if any SPM byte could leak or a
+ * primitive failed to refuse (the fix is absent). */
+int wt_platform_deputy_flash_probe(void);
+#endif
+
 #if defined(WT_REMEASURE_PROBE)
 void wt_platform_remeasure_probe(void);
 #endif

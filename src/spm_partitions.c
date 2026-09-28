@@ -135,6 +135,17 @@ static void wt_spm_vault_entry(void* arg)
 {
     int32_t partition_id = (int32_t)(intptr_t)arg;
 
+#if defined(WT_DEPUTY_NEG_PROBE) && (WT_DEPUTY_NEG_PROBE == 1)
+    /* Privileged-deputy proof (WT-FFM-0011): the vault owns the writable flash
+     * context, so it forges the base and size to aim the privileged NVM path at
+     * SPM RAM across every primitive. A return of 0 means a byte could leak or
+     * a primitive failed to refuse (the fix is absent); fault so the scenario
+     * fails. Runs once before the dispatch loop; no SPM-private guard is
+     * touched, which the unprivileged partition could not read. */
+    if (wt_platform_deputy_flash_probe() == 0) {
+        wt_arch_sp_fault_probe(2u);
+    }
+#endif
     for (;;) {
         (void)wt_vault_service_dispatch(NULL, NULL, partition_id);
     }

@@ -57,6 +57,7 @@ PORTS = {
             ("restart", "Guest restart recovery"),
             ("crossdomain", "Cross-domain isolation (L3)"),
             ("keystoreneg", "Keystore-band isolation (L3)"),
+            ("deputyneg", "Keystore-flash privileged-deputy refused (L3)"),
             ("spfaultneg", "Graceful SP fault recovery"),
             ("panicneg", "Secure-caller misuse panic"),
             ("confboot", "FF-M IPC conformance (85/4)"),
