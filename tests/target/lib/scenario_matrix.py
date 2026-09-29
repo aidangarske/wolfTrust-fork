@@ -37,9 +37,10 @@ import sys
 
 ENGINES = ("native", "hsm")
 
-# Scenarios that drive the raw wolfHSM client wire: the native engine does not
-# link it, so the attack surface under test does not exist there.
-HSM_ONLY = frozenset(("hsmattackneg",))
+# Scenarios whose Secure-image probe or client wire lives only in the wolfHSM
+# engine: the native engine does not link it, so the behaviour under test does
+# not exist there.
+HSM_ONLY = frozenset(("hsmattackneg", "hsmpinneg"))
 
 # smoke: the per-PR set (one job per scenario and engine). groups: the full
 # tier, packed so each job builds the emulator and wolfBoot once.
@@ -58,6 +59,7 @@ PORTS = {
             ("crossdomain", "Cross-domain isolation (L3)"),
             ("keystoreneg", "Keystore-band isolation (L3)"),
             ("deputyneg", "Keystore-flash privileged-deputy refused (L3)"),
+            ("hsmpinneg", "wolfHSM server pointers pinned before the pump (L3)"),
             ("spfaultneg", "Graceful SP fault recovery"),
             ("panicneg", "Secure-caller misuse panic"),
             ("confboot", "FF-M IPC conformance (85/4)"),

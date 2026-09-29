@@ -54,8 +54,8 @@ set -o pipefail
 
 scenario="${1:-}"
 case "$scenario" in
-  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg) ;;
-  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
+  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|hsmpinneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg) ;;
+  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|hsmpinneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
 esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -347,7 +347,7 @@ refute_re()  { if grep -Eq "$2" "$log"; then check_fail "$1" "unexpected: $2"; \
                else check_pass "$1"; fi; }
 
 case "$scenario" in
-  positive|deputyneg)
+  positive|deputyneg|hsmpinneg)
     if [ "$scenario" = "deputyneg" ]; then
       # The probe is called unconditionally at vault entry and faults the
       # partition on any leak, so a clean positive lifecycle only proves the
@@ -362,6 +362,21 @@ case "$scenario" in
       else
         check_fail "deputy probe presence" \
           "wt_platform_deputy_flash_probe not in the secure image"
+      fi
+    fi
+    if [ "$scenario" = "hsmpinneg" ]; then
+      # The vault forges the server pointer fields once and leaves them; the
+      # unprivileged relay must re-pin them before its next pump or it faults on
+      # the SPM-private address, so the full positive lifecycle must still
+      # complete. Guard against a vacuous pass with the probe compiled out; grep
+      # a symbol file, not a pipe, to stay pipefail-safe.
+      tasklet_syms="$repo/build/hsmpinneg-syms.txt"
+      "${CROSS_COMPILE}nm" "$repo/build/wolftrust-signed.elf" > "$tasklet_syms"
+      if grep -q ' wt_platform_hsm_pin_probe$' "$tasklet_syms"; then
+        check_pass "HSM server pointer pin probe linked into the secure image"
+      else
+        check_fail "HSM server pointer pin probe presence" \
+          "wt_platform_hsm_pin_probe not in the secure image"
       fi
     fi
     refute_re "no fault markers in boot log" \

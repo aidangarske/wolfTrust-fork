@@ -134,10 +134,10 @@ authenticated wolfIP guests under M33MU.
 
 ### Engine matrix
 
-The full CI scenario list contains 28 scenarios and adds
-`engine: [native, hsm]` as a matrix dimension. There are 55 applicable
+The full CI scenario list contains 30 scenarios and adds
+`engine: [native, hsm]` as a matrix dimension. There are 58 applicable
 engine/scenario cells: every scenario runs with both engines except
-`hsmattackneg` under native.
+`hsmattackneg` and `hsmpinneg` under native.
 
 `hsmattackneg` drives the raw wolfHSM protocol from a compromised-guest probe.
 It checks that a forged wolfHSM client ID cannot select the attestation key and

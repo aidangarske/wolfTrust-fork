@@ -187,10 +187,15 @@ lifecycle job crosses `guest: [zephyr, freertos]` with
 dimension, and the label-selected pull-request workflow runs each requested
 scenario under both engines.
 
-The `hsmattackneg` scenario is intentionally hsm-only. It injects raw wolfHSM
-protocol packets and attacks a wolfHSM namespace and NVM relay surface that is
-not linked into the native engine. All other scenario rows run under both
-engines. See [Testing](Testing.md) for the commands and validation scope.
+The `hsmattackneg` and `hsmpinneg` scenarios are intentionally hsm-only.
+`hsmattackneg` injects raw wolfHSM protocol packets against a namespace and NVM
+relay surface not linked into the native engine; `hsmpinneg` forges the
+band-resident wolfHSM server pointers from a keystore partition and proves the
+relay re-pins them before its next pump, a server the native engine does not
+link. The privileged tasklet stacks and registry are covered by the host
+`tasklet_priv` suite and the `check_secure_layout.py` placement rule. All
+other scenario rows run under both engines. See [Testing](Testing.md) for the
+commands and validation scope.
 
 ## Authenticated image assembly
 
