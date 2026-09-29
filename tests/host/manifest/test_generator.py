@@ -298,6 +298,20 @@ class GeneratorTest(unittest.TestCase):
                               result.stderr)
                 self.assertFalse((root / "output").exists())
 
+    def test_privileged_secure_partition_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "privileged.json"
+            manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+            manifest["domains"][1]["privilege_state"] = 0
+            source.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = self.run_generator(source, root / "output")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Secure Partitions must be unprivileged",
+                          result.stderr)
+            self.assertFalse((root / "output").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

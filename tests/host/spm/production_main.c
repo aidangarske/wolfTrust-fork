@@ -230,6 +230,14 @@ int main(void)
         return 1;
     }
 
+    /* A guest declared unprivileged misstates how it launches: refused. */
+    invalid_domains[1].restart_policy.action = WT_RESTART_ACTION_DOMAIN;
+    invalid_domains[1].privilege_state = WT_PRIVILEGE_STATE_UNPRIVILEGED;
+    if (wt_partitions_bind_manifest(&invalid_manifest) == 0) {
+        (void)fprintf(stderr, "unprivileged guest declaration was accepted\n");
+        return 1;
+    }
+
     /* Restore the real, authoritative binding: the guest domains declare
      * READY, so the bound runtime state is runnable. */
     if (wt_partitions_bind_manifest(wt_spm_manifest(&spm)) != 0) {

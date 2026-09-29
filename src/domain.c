@@ -121,6 +121,8 @@ static int wt_domain_validate_identity(const wt_domain_descriptor_t* domain)
         }
         if (domain->security_state != WT_SECURITY_STATE_SECURE)
             return WT_DOMAIN_ERROR_SECURITY_STATE;
+        if (domain->privilege_state != WT_PRIVILEGE_STATE_UNPRIVILEGED)
+            return WT_DOMAIN_ERROR_PRIVILEGE_STATE;
     }
     else {
         if (domain->rot_role != WT_ROT_ROLE_NONE)

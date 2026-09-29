@@ -355,6 +355,8 @@ def validate_policy(manifest, supported_features, word_max,
         elif domain_class == 1:
             if domain["rot_role"] not in (2, 3) or domain["security_state"] != 0:
                 policy_error("Secure Partition identity is invalid")
+            if domain["privilege_state"] != 1:
+                policy_error("Secure Partitions must be unprivileged")
         elif domain["rot_role"] != 0 or domain["security_state"] != 1:
             policy_error("Non-secure identity is invalid")
 

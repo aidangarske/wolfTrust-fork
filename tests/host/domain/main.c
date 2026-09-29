@@ -177,6 +177,7 @@ static void wt_test_spm_count(void)
     wt_fixture_init(&fixture);
     fixture.domains[0].domain_class = WT_DOMAIN_CLASS_SECURE_PARTITION;
     fixture.domains[0].rot_role = WT_ROT_ROLE_PROT;
+    fixture.domains[0].privilege_state = WT_PRIVILEGE_STATE_UNPRIVILEGED;
     EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_SPM_COUNT);
 
     wt_fixture_init(&fixture);
@@ -205,6 +206,10 @@ static void wt_test_domain_metadata(void)
     wt_fixture_init(&fixture);
     fixture.domains[0].privilege_state =
         WT_PRIVILEGE_STATE_UNPRIVILEGED;
+    EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_PRIVILEGE_STATE);
+
+    wt_fixture_init(&fixture);
+    fixture.domains[1].privilege_state = WT_PRIVILEGE_STATE_PRIVILEGED;
     EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_PRIVILEGE_STATE);
 
     wt_fixture_init(&fixture);
