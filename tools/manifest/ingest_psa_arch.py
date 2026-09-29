@@ -130,11 +130,11 @@ def ingest(paths, pid_base):
 
 def partition_rot_role(source):
     partition_type = source.get("type")
-    role = ROT_ROLE.get(partition_type) if isinstance(partition_type, str) \
-        else None
+    role = None
+    if isinstance(partition_type, str):
+        role = ROT_ROLE.get(partition_type)
     if role is None:
-        raise IngestError("unknown partition type: {}".format(
-            source.get("type")))
+        raise IngestError("unknown partition type: {!r}".format(partition_type))
     return role
 
 

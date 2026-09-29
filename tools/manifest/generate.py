@@ -313,7 +313,7 @@ def validate_policy(manifest, supported_features, word_max,
     }
     profile = manifest["isolation_profile"]
     if profile in (1, 2):
-        policy_error("only isolation level 3 is implemented")
+        policy_error("isolation levels 1 and 2 are not implemented; use 0 or 3")
     if profile not in required_by_profile:
         policy_error("isolation profile is invalid")
     if capabilities["capabilities"] & required_by_profile[profile] != \

@@ -294,7 +294,7 @@ class GeneratorTest(unittest.TestCase):
 
                 result = self.run_generator(source, root / "output")
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("only isolation level 3 is implemented",
+                self.assertIn("isolation levels 1 and 2 are not implemented",
                               result.stderr)
                 self.assertFalse((root / "output").exists())
 
