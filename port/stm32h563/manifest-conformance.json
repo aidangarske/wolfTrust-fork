@@ -323,7 +323,7 @@
     {
       "id": 8,
       "domain_class": 1,
-      "rot_role": 2,
+      "rot_role": 3,
       "security_state": 0,
       "privilege_state": 1,
       "initial_lifecycle": 0,
@@ -399,7 +399,7 @@
     {
       "id": 10,
       "domain_class": 1,
-      "rot_role": 2,
+      "rot_role": 3,
       "security_state": 0,
       "privilege_state": 1,
       "initial_lifecycle": 0,
