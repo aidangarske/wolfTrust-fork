@@ -75,11 +75,10 @@ static void wt_spm_hsm_entry(void* arg)
     wt_arch_sp_fault_probe(0u);
 #endif
 #if defined(WT_SP_FAULT_PROBE) && (WT_SP_FAULT_PROBE == 1)
-    /* One-shot graceful-recovery probe (target/spfaultneg): the relay runs
-     * privileged, so an out-of-domain read cannot MemManage-fault; an
-     * undefined instruction raises the same recoverable Secure-Thread
-     * UsageFault instead. The recovery re-arms this partition with the
-     * restarted marker set, so the re-run skips the probe and serves. */
+    /* One-shot graceful-recovery probe (target/spfaultneg): an undefined
+     * instruction raises a recoverable Secure-Thread UsageFault. The
+     * recovery re-arms this partition with the restarted marker set, so the
+     * re-run skips the probe and serves. */
     if (((intptr_t)arg & WT_SP_FAULT_PROBE_RESTARTED) == 0) {
         wt_arch_sp_fault_probe(0u);
     }

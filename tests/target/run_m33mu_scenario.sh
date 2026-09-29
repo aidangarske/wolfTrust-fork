@@ -670,9 +670,8 @@ case "$scenario" in
     check_fail "keystore-band isolation" "expected MEMFAULT at 0x30075000, none seen"
     ;;
   spfaultneg)
-    # The SERVICE_HSM relay SP faults once on its first entry (udf #0 — the
-    # relay runs privileged, so an undefined instruction stands in for the
-    # MPU read the unprivileged probe used). wolfTrust must catch the
+    # The SERVICE_HSM relay SP faults once on its first entry (udf #0, an
+    # undefined-instruction UsageFault). wolfTrust must catch the
     # Secure-Thread UsageFault, restart the partition in place, and the
     # RESTARTED relay must then serve every mediated crypto request from both
     # OS clients with no platform reset. (The pinned-client defined-error
