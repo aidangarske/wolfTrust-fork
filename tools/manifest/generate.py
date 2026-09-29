@@ -309,11 +309,11 @@ def validate_policy(manifest, supported_features, word_max,
         policy_error("profile capability mask is invalid")
     required_by_profile = {
         0: 0,
-        1: 0x01 | 0x10,
-        2: 0x01 | 0x04 | 0x10,
         3: 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20,
     }
     profile = manifest["isolation_profile"]
+    if profile in (1, 2):
+        policy_error("only isolation level 3 is implemented")
     if profile not in required_by_profile:
         policy_error("isolation profile is invalid")
     if capabilities["capabilities"] & required_by_profile[profile] != \

@@ -59,17 +59,6 @@ static int wt_profile_required_capabilities(wt_isolation_profile_t profile,
             *required = 0U;
             break;
 
-        case WT_ISOLATION_PROFILE_LEVEL_1:
-            *required = WT_CAPABILITY_SECURITY_STATE |
-                        WT_CAPABILITY_MEMORY_PROTECTION;
-            break;
-
-        case WT_ISOLATION_PROFILE_LEVEL_2:
-            *required = WT_CAPABILITY_SECURITY_STATE |
-                        WT_CAPABILITY_ROT_ISOLATION |
-                        WT_CAPABILITY_MEMORY_PROTECTION;
-            break;
-
         case WT_ISOLATION_PROFILE_LEVEL_3:
             *required = WT_CAPABILITY_SECURITY_STATE |
                         WT_CAPABILITY_PRIVILEGE_STATE |
@@ -79,6 +68,8 @@ static int wt_profile_required_capabilities(wt_isolation_profile_t profile,
                         WT_CAPABILITY_INTERRUPT_ISOLATION;
             break;
 
+        /* Only isolation level 3 is implemented; a level 1 or 2
+         * declaration would silently receive level 3 enforcement. */
         default:
             return WT_DOMAIN_ERROR_PROFILE;
     }

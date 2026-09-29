@@ -283,6 +283,21 @@ class GeneratorTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("partition interrupt", result.stderr)
 
+    def test_isolation_levels_1_and_2_are_rejected(self):
+        for level in (1, 2):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / "level.json"
+                manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+                manifest["isolation_profile"] = level
+                source.write_text(json.dumps(manifest), encoding="utf-8")
+
+                result = self.run_generator(source, root / "output")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("only isolation level 3 is implemented",
+                              result.stderr)
+                self.assertFalse((root / "output").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

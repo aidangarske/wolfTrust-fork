@@ -448,16 +448,18 @@ static void wt_test_profile_capabilities(void)
     EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_CAPABILITY);
 
     wt_fixture_init(&fixture);
+    EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 2U,
+        WT_ISOLATION_PROFILE_LEVEL_1, &fixture.capabilities),
+        WT_DOMAIN_ERROR_PROFILE);
+    EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 2U,
+        WT_ISOLATION_PROFILE_LEVEL_2, &fixture.capabilities),
+        WT_DOMAIN_ERROR_PROFILE);
+
+    wt_fixture_init(&fixture);
     fixture.domains[0].interrupt_resource_count = 0U;
     fixture.domains[0].interrupt_resources = NULL;
     fixture.capabilities.capabilities = WT_CAPABILITY_SECURITY_STATE |
                                         WT_CAPABILITY_MEMORY_PROTECTION;
-    EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 1U,
-        WT_ISOLATION_PROFILE_LEVEL_1, &fixture.capabilities),
-        WT_DOMAIN_VALID);
-    EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 1U,
-        WT_ISOLATION_PROFILE_LEVEL_2, &fixture.capabilities),
-        WT_DOMAIN_ERROR_CAPABILITY);
     EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 1U,
         WT_ISOLATION_PROFILE_SERVICE_ONLY, &fixture.capabilities),
         WT_DOMAIN_VALID);
