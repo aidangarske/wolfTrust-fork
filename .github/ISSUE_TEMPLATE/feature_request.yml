@@ -1,0 +1,35 @@
+name: Feature request
+description: Propose new functionality for wolfTrust
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing or what need does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should wolfTrust do?
+    validations:
+      required: true
+  - type: textarea
+    id: spec
+    attributes:
+      label: Specification references
+      description: Clauses from FF-M, FF-A, PSA, PSCI, SMCCC, or other specs that apply.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How we will know it is done (tests, scenarios, hardware runs).
+    validations:
+      required: true
+  - type: input
+    id: scope
+    attributes:
+      label: Area
+      placeholder: "e.g. SPM core, AArch64 SPMC, STM32H563 port, CI"
