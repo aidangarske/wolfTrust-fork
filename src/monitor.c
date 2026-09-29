@@ -42,7 +42,7 @@ void wt_platform_launch_debug(int code, uint32_t guest);
 
 static wt_scheduler_state_t g_scheduler;
 static wt_spm_t g_spm;
-#if defined(WT_MANIFEST_NEG_PROBE) && (WT_MANIFEST_NEG_PROBE == 1)
+#if defined(WT_MANIFEST_NEG_PROBE) && (WT_MANIFEST_NEG_PROBE != 0)
 static wt_system_manifest_t g_wt_manifest_neg_probe;
 #endif
 /* Restart-engine event counters: non-static so the hardware harness can read
@@ -482,13 +482,18 @@ void wt_monitor_init(void)
 
     wt_platform_init();
 
-#if defined(WT_MANIFEST_NEG_PROBE) && (WT_MANIFEST_NEG_PROBE == 1)
+#if defined(WT_MANIFEST_NEG_PROBE) && (WT_MANIFEST_NEG_PROBE != 0)
     /* Corrupted-manifest activation negative: strip the required IPC feature
-     * bit so validation must refuse the manifest and the standing panic path
-     * below halts boot before any partition or guest is scheduled. Never
-     * built into production images. */
+     * bit (probe 1) or declare isolation level 2 (probe 2) so validation must
+     * refuse the manifest and the standing panic path below halts boot before
+     * any partition or guest is scheduled. Never built into production
+     * images. */
     g_wt_manifest_neg_probe = *wt_generated_manifest_get();
+#if WT_MANIFEST_NEG_PROBE == 2
+    g_wt_manifest_neg_probe.isolation_profile = WT_ISOLATION_PROFILE_LEVEL_2;
+#else
     g_wt_manifest_neg_probe.features = 0U;
+#endif
     spm_result = wt_spm_init(&g_spm, &g_wt_manifest_neg_probe,
                              WT_MANIFEST_FEATURE_IPC,
                              wt_partitions_profile_capabilities());

@@ -54,8 +54,8 @@ set -o pipefail
 
 scenario="${1:-}"
 case "$scenario" in
-  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg) ;;
-  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
+  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg) ;;
+  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
 esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -811,7 +811,7 @@ case "$scenario" in
     expect "[EXPECT BKPT] Success clean exit" "[EXPECT BKPT] Success"
     echo "PASS: target/vnetneg"
     ;;
-  manifestneg)
+  manifestneg|manifestneg2)
     # A corrupted manifest must fail activation closed BEFORE scheduling: the
     # boot halts on the production panic (BKPT 0x7E) and neither guest ever
     # starts. A guest banner in the log means the SPM scheduled work off an
@@ -820,7 +820,8 @@ case "$scenario" in
       "[BKPT] imm=0x7e"
     refute_re "no guest scheduled off the corrupted manifest" \
       '(guest0_psa alive|freertos_guest1:|vnet-guest)'
-    echo "PASS: target/manifestneg"
+    check_pass "refused variant built with $(scenario_secure_flags "$scenario")"
+    echo "PASS: target/$scenario"
     ;;
   revneg)
     # Engineering-sample silicon must halt in wt_platform_init with the
