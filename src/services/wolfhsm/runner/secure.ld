@@ -170,7 +170,9 @@ SECTIONS {
     *(.data.g_boot_lifecycle* .data.g_boot_seed* .data.g_boot_handoff*)
     *(.data.g_handoff_ready* .data.g_implementation_id*)
     *(.data.g_signer_id* .data.g_ueid*)
-    *(.data.g_guests* .data.g_co_stack_slots*)
+    /* The tasklet stacks (g_co_stack_slots) stay OUT of this band: the monitor
+     * resumes those frames privileged, so they live in SPM-private RAM. */
+    *(.data.g_guests*)
     *(.data.gCryptoDev* .data.sha256DrbgDisabled* .data.initRefCount*)
     *wt_hsm.o(.data .data.*)
     *nvm_store.o(.data .data.*)
@@ -205,7 +207,7 @@ SECTIONS {
     *(.bss.g_boot_lifecycle* .bss.g_boot_seed* .bss.g_boot_handoff*)
     *(.bss.g_handoff_ready* .bss.g_implementation_id*)
     *(.bss.g_signer_id* .bss.g_ueid*)
-    *(.bss.g_guests* .bss.g_co_stack_slots*)
+    *(.bss.g_guests*)
     *(.bss.gCryptoDev* .bss.sha256DrbgDisabled* .bss.initRefCount*)
     *wt_hsm.o(.bss .bss.* COMMON)
     *nvm_store.o(.bss .bss.* COMMON)

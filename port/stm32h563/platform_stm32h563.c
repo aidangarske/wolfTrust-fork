@@ -19,6 +19,7 @@
  */
 
 #include "wolftrust/platform.h"
+#include "wolftrust/priv_stack.h"
 #include "wolftrust/arch.h"
 #include "wolftrust/guest_verify.h"
 #include "wolftrust/monitor.h"
@@ -544,6 +545,35 @@ uintptr_t wt_platform_probe_address(unsigned int target)
     }
 }
 #endif
+
+int wt_platform_priv_stack_ok(const void *stack, size_t size)
+{
+    /* Every coroutine is privileged until wt_co_set_domain drops it, so the
+     * stack must lie in secure RAM (a frame in NS RAM, flash or MMIO would be
+     * beyond SPE control) and clear of the shared partition-writable bands. The
+     * secure-RAM window admits the per-partition SP stacks above the bands.
+     * The decision is the shared wt_priv_stack_ok so the host test judges the
+     * same logic (WT-FFM-0011). */
+    static const wt_priv_band_t bands[] = {
+        { WT_KEYSTORE_BASE, WT_KEYSTORE_SIZE },
+#if defined(CONFIG_VNET)
+        { WT_VNET_DATA_BASE, WT_VNET_DATA_SIZE },
+#endif
+#if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+        { WT_CONF_SP_DATA_BASE, WT_CONF_SP_DATA_SIZE },
+#endif
+    };
+
+    if (stack == NULL) {
+        return 0;
+    }
+    /* WT_RAM_S_SIZE is the attributed window, which runs past the end of
+     * physical SRAM; bound the stack by the physical end so an unmapped range
+     * is refused too. */
+    return wt_priv_stack_ok((uintptr_t)stack, size, WT_RAM_S_BASE,
+                            WT_SP_SECURE_RAM_END,
+                            bands, sizeof(bands) / sizeof(bands[0]));
+}
 
 void wt_platform_log_fault(wt_guest_id_t guest_id,
                            wt_fault_reason_t reason,

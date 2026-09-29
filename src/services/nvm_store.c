@@ -126,6 +126,50 @@ int wt_nvm_store_bind(void)
     return wh_Nvm_Init(&g_wt_nvm_ctx, &nvm_cfg);
 }
 
+void wt_nvm_store_pin(void)
+{
+    /* The NVM contexts live in the shared keystore band, so any keystore
+     * partition can rewrite the callback and context pointers a server pump
+     * follows. Re-assert every pointer in the chain from link-time constants
+     * before a pump so a forged value is never dereferenced (WT-FFM-0011);
+     * data fields (directory, state) stay partition-owned. */
+    g_wt_nvm_ctx.cb           = (whNvmCb *)g_nvm_flash_cb;
+    g_wt_nvm_ctx.context      = &g_nvm_flash_ctx;
+    g_wt_nvm_ctx.lock.cb      = &g_wt_hsm_lock_cb;
+    g_wt_nvm_ctx.lock.context = &g_wt_nvm_lock_mutex;
+    g_nvm_flash_ctx.cb    = &g_wt_hsm_flash_cb;
+    g_nvm_flash_ctx.flash = wt_hsm_flash_context();
+}
+
+#if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
+int wt_nvm_store_pin_probe(void)
+{
+    void *sentinel = (void *)0x30028001u;
+
+    /* Forge every pointer wt_nvm_store_pin repairs, heal them, and confirm not
+     * one still holds the sentinel. Synchronous: the store is left correct with
+     * no yield, so no other partition observes the transient (WT-FFM-0011). */
+    g_wt_nvm_ctx.cb           = (whNvmCb *)sentinel;
+    g_wt_nvm_ctx.context      = sentinel;
+    g_wt_nvm_ctx.lock.cb      = (const whLockCb *)sentinel;
+    g_wt_nvm_ctx.lock.context = sentinel;
+    g_nvm_flash_ctx.cb        = (const whFlashCb *)sentinel;
+    g_nvm_flash_ctx.flash     = sentinel;
+
+    wt_nvm_store_pin();
+
+    if ((void *)g_wt_nvm_ctx.cb == sentinel ||
+            g_wt_nvm_ctx.context == sentinel ||
+            (void *)g_wt_nvm_ctx.lock.cb == sentinel ||
+            g_wt_nvm_ctx.lock.context == sentinel ||
+            (void *)g_nvm_flash_ctx.cb == sentinel ||
+            g_nvm_flash_ctx.flash == sentinel) {
+        return 0;
+    }
+    return 1;
+}
+#endif
+
 void wt_hsm_release_locks(struct wt_co *co)
 {
     /* Drop every secure-side store lock the faulted coroutine still held, and

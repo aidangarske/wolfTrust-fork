@@ -237,6 +237,12 @@ static wt_co_t *wt_co_create_common(uint8_t *stack, size_t stack_size,
     if (g_co_count >= WT_CO_MAX) {
         return (wt_co_t *)0;
     }
+    /* Coroutines are created privileged until wt_co_set_domain drops them;
+     * refuse a stack the platform marks partition-writable so a partition can
+     * never own a privileged frame (WT-FFM-0011). */
+    if (wt_platform_priv_stack_ok(stack, stack_size) == 0) {
+        return (wt_co_t *)0;
+    }
 
     /* Assign a table slot (0 is taken by bootstrap). */
     id = g_co_count;

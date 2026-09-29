@@ -78,6 +78,8 @@ void wt_co_arch_request_preempt(void) {}
 
 static int g_panicked;
 void wt_platform_panic(void) { g_panicked = 1; }
+int wt_platform_priv_stack_ok(const void *stack, size_t size)
+{ (void)stack; (void)size; return 1; }
 
 /* ---- Part 1: the restart-vs-escalate decision --------------------------- */
 

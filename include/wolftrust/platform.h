@@ -58,6 +58,11 @@ volatile void* wt_platform_boot_handoff_region(size_t* size);
 
 /* Returns the number of regions written (<= max). */
 size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max);
+
+/* Nonzero when [stack, stack+size) may back a PRIVILEGED coroutine: it must
+ * not intersect any partition-writable band, or a partition could own a
+ * privileged frame (WT-FFM-0011). The scheduler refuses creation otherwise. */
+int wt_platform_priv_stack_ok(const void *stack, size_t size);
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
 size_t wt_platform_conf_sp_grants(int32_t partition_id,
                                   wt_memory_region_t* regions,
@@ -83,6 +88,12 @@ uintptr_t wt_platform_probe_address(unsigned int target);
  * immutable-geometry NVM bytes. Returns 0 if any SPM byte could leak or a
  * primitive failed to refuse (the fix is absent). */
 int wt_platform_deputy_flash_probe(void);
+#endif
+
+#if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
+/* Test builds only: forge the pointer fields the wolfHSM server pumps follow;
+ * the pin must heal them before the next pump. Returns 1. */
+int wt_platform_hsm_pin_probe(void);
 #endif
 
 #if defined(WT_REMEASURE_PROBE)
