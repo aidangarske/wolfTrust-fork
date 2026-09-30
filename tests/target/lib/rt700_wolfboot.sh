@@ -38,8 +38,10 @@ rt700_wolfboot_build() {
     git -C "$rt700_dir" submodule update --init --single-branch --depth 1 &&
     cp "$rt700_dir/config/examples/imx-rt700-tz.config" "$rt700_dir/.config" &&
     # keygen writes src/keystore.c, which the loader links, so the key and the
-    # tools that locate it from the working directory come first.
+    # tools that locate it from the working directory come first. wolfBoot's
+    # TARGET comes from its .config, never from a calling make.
     (
+        unset TARGET MAKEFLAGS MFLAGS
         cd "$rt700_dir" &&
         make keytools &&
         make -j1 wolfboot_signing_private_key.der &&
