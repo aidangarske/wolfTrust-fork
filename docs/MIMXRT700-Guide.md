@@ -475,11 +475,61 @@ burns the root key hash, the debug settings, and the life cycle with `lock`;
 
 ### Locking a production part
 
-> **IRREVERSIBLE.** Every `lock` burns OTP fuses, which cannot be undone. A part
-> never returns to an earlier life cycle state: Develop2 never returns to
-> Develop, In Field never returns to Develop2, and In Field Locked also closes
-> the field-return path. Never run `lock` on a development EVK: `LOCK_CFG3` is
-> open on it, so nothing in silicon would stop the burn.
+> **Production only. IRREVERSIBLE.** `lock` burns OTP fuses. A burned fuse can
+> never be cleared, so a locked part never returns to an earlier life cycle
+> state, and the software on it stays bound to the keys you locked it with.
+> Never run `lock` on a development EVK: `LOCK_CFG3` is open on it, so nothing
+> in silicon would stop the burn. For development and testing, use the
+> reversible `advance` and `regress` above.
+
+#### What locking does
+
+**To the device.** The life cycle only moves forward:
+
+- **Develop2 (`0x07`)** is the first production state. The part keeps
+  development behaviour and can still move on, but it never returns to
+  Develop.
+- **In Field (`0x0F`)** is the shipping state. From here on the BootROM
+  applies the boot and debug policy burned in the fuses: debug access follows
+  the fused debug configuration, and the root key table hash (RKTH) decides
+  which signed first-stage images the ROM accepts.
+- **In Field Locked (`0xCF`)** is final. No further life cycle step exists,
+  including the field-return path.
+- **In Field Return (`0x1F`)**, reached only from In Field, is also final. It is
+  for failure analysis, not a way back to Develop.
+
+**To the firmware.** From In Field on, wolfBoot hands wolfTrust a closed life
+cycle (`0x3000` SECURED once debug is closed, `0x4000` or `0x5000` while it is
+open), and wolfTrust stops treating the part as a development board:
+
+- It enforces each guest's rollback floor, so an older guest image is refused.
+  In Develop and Develop2 the floors are not enforced.
+- It never reformats the vault, even a corrupt one: the sealed device key and
+  write-once storage survive, and a damaged store stops boot provisioning
+  instead of being wiped.
+- The attestation token reports the new life cycle, so a relying party can
+  tell a production part from a development one.
+- The guest fence stays armed every boot, as it was in the rehearsal.
+
+**How it binds the software.** After the lock, the software on the part can
+only change through wolfBoot's signed update path (`SERVICE_FWU` staging into
+the wolfBoot update partition). Three keys hold it in place:
+
+- the root key table hash in the fuses, which decides which first-stage images
+  the ROM will boot;
+- the wolfBoot signing key, which decides which wolfTrust images wolfBoot will
+  boot;
+- the guest measurement records, which decide which guests wolfTrust will
+  launch.
+
+Keep those keys safe. If you lose them, the part can never be updated.
+
+> **Prerequisite not yet in the port.** The reference chain boots wolfBoot as a
+> plain XIP image that the BootROM does not authenticate. Until wolfBoot boots
+> as a ROM-signed image under a fused RKTH, locking the life cycle alone leaves
+> the first stage replaceable. Complete that before locking a part you ship.
+
+#### The lock commands
 
 `lock` is the real command for each state. It burns one step at a time, and
 only the next one:
@@ -487,62 +537,107 @@ only the next one:
 | Command | Runs only when the fuses read | Burns | Also needs |
 | --- | --- | --- | --- |
 | `lock 0x07` | Develop `0x03` | Develop2 | a rehearsal of `0x07` |
-| `lock 0x0F` | Develop2 `0x07` | In Field | a rehearsal of `0x0F` with the guest fence armed; the root key hash burned |
-| `lock 0xCF` | In Field `0x0F` | In Field Locked (final) | a rehearsal of `0xCF` with the guest fence armed; the root key hash burned |
+| `lock 0x0F` | Develop2 `0x07` | In Field | a rehearsal of `0x0F` with the guest fence armed; RKTH burned |
+| `lock 0xCF` | In Field `0x0F` | In Field Locked (final) | a rehearsal of `0xCF` with the guest fence armed; RKTH burned |
 | `lock 0x1F` | In Field `0x0F` | In Field Return (final) | a rehearsal of `0x1F` with the guest fence armed |
 
-The gates follow the same pattern as NXP's and ST's own provisioning tools:
-provision first, write the life cycle last, rehearse or preview before the
-write, and require an explicit acceptance. On top of that, `lock` adds three
-checks the silicon does not make:
+#### What `lock` checks before it burns
+
+NXP's and ST's provisioning tools share a pattern:
+- provision everything first and write the life cycle last;
+- rehearse or preview before the write;
+- require an explicit acceptance.
+
+`lock` follows it, and adds three checks the silicon does not make:
 
 - **One step at a time.** The fuses accept any value that only adds bits, so
   the silicon would take Develop straight to In Field Locked. `lock` reads the
   burned `LC_STATE` and `LC_STATE_RED` words over the ISP connection (the
   fuses, not the shadows), requires them to agree, and refuses anything but
   the next state.
-- **Rehearse, then lock.** A step is rehearsed by `advance <state>` followed by
-  `regress`. `advance` records the rehearsal only if wolfTrust received the
-  matching PSA life cycle and every guest launched verified. It also records
-  whether the guest fence was armed, the fused state, and a digest of
-  `build/wolftrust.elf`. `regress` completes the record. `lock` refuses without
-  a completed rehearsal of that exact state with the current image, and each
-  burn uses its rehearsal up.
-- **Provision first.** In Field and In Field Locked refuse unless the rehearsal
-  ran with the guest fence armed and the root key table hash fuses are
-  non-zero, either already burned or in the same fuse configuration. The life
-  cycle words always burn last.
+- **Rehearse, then lock.** `advance <state>` records a rehearsal only if
+  wolfTrust received the matching PSA life cycle and every guest launched
+  verified. The record also notes whether the guest fence was armed, the fused
+  state, and a digest of `build/wolftrust.elf`, and `regress` completes it.
+  `lock` refuses without a completed rehearsal of that exact state with the
+  current image. Each burn uses its rehearsal up, and a rebuild invalidates it.
+- **Provision first.** In Field and In Field Locked refuse unless the
+  rehearsal ran with the guest fence armed and the RKTH fuses are non-zero,
+  either already burned or in the same fuse configuration. The life cycle
+  words always burn last.
 
-A production part is locked on the production station, in this order:
+Then it previews the exact burn, and writes only with
+`WT_LOCK_CONFIRM=1`, `WT_PRODUCTION_LOCK=1`, an interactive terminal, and a
+typed `I ACCEPT <state>`.
 
-1. **Authenticate the first stage in ROM.** The reference chain boots wolfBoot
-   as a plain XIP image the BootROM does not authenticate. A locked part must
-   boot wolfBoot as a signed image whose root key hash is fused, so the ROM
-   refuses any other first stage. Locking the life cycle without this leaves
-   the whole chain replaceable. This is not yet part of the port.
-2. **Write the fuse configuration once**, from SPSDK's template, and keep it
-   with the production records:
+#### Step by step
+
+The example output comes from three places:
+- The rehearsal output was captured on the MIMXRT700-EVK on 2026-09-30.
+- The preview and prompt come from the same script run offline against a
+  stubbed `blhost`.
+- The burn itself has never been run on a wolfTrust board, so its output is
+  labelled as expected.
+
+1. **Write the fuse configuration once**, from SPSDK's template, and keep it
+   with the production records. It carries the RKTH, the debug settings, and
+   the life cycle:
 
    ```sh
    shadowregs get-template -f mimxrt798s -o production-fuses.yaml
    ```
 
-3. **Rehearse the step** with the production images:
+   > **Warning:** every value in this file becomes permanent in every part it
+   > is burned into. Review it like a release.
+
+2. **Flash the production chain and preflight it** (reversible):
 
    ```sh
    export TARGET=mimxrt700
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh restore
    tests/target/provisioning_ctrl.sh discover
+   ```
+
+   ```text
+   PASS: hardware/wrpfence
+     [check] PASS  SPSDK shadowregs supports mimxrt798s
+     [check] PASS  fused life cycle is Develop and its redundant copy agrees
+     [check] PASS  life cycle shadow over-ride is open (LOCK_CFG3 0x00000000)
+     [check] PASS  the boot handoff life cycle is readable (0x00001000, ASSEMBLY_AND_TEST)
+   PASS: discovery stamped (~/.cache/wolftrust/rt700-discovery-ok)
+   ```
+
+3. **Rehearse the step** (reversible, shadow registers only):
+
+   ```sh
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x0F
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
    ```
 
-4. **Preview the burn.** With the part in ISP mode, `lock` without
-   `WT_LOCK_CONFIRM=1` runs every check, prints the exact blhost script, and
-   exits with status 2 without writing anything:
+   ```text
+   ADVANCING the life cycle shadow to 0x0F (In Field); regress or any reset undoes it
+   halted in wolfBoot at 0x2800592a; shadow LC_STATE=0x0f LC_STATE_RED=0x0f
+   wolfTrust saw 0x00005000 (RECOVERABLE_PSA_ROT_DEBUG)
+     [check] PASS  wolfTrust booted with the In Field life cycle
+     [check] PASS  guests launched (verified=0x00000003 refused=0x00000000)
+   rehearsal of 0x0F recorded; 'regress' completes it
+     [check] PASS  hardware reset reloaded the fused Develop life cycle
+     [check] PASS  wolfTrust booted ASSEMBLY_AND_TEST again
+     [check] PASS  rehearsal of 0x0F (In Field) complete
+   ```
+
+   Check the rehearsed state is the posture you want to ship: the guests you
+   expect, the fence armed, and the attestation you expect. What you see here
+   is what the part will do once the step is burned.
+
+4. **Preview the burn.** Put the part in ISP mode. Without `WT_LOCK_CONFIRM=1`,
+   `lock` runs every check, prints the exact blhost script, and writes nothing:
+
+   ```sh
+   RT700_ISP='-u 0x1fc9,0x014f' tests/target/provisioning_ctrl.sh lock 0x0F production-fuses.yaml
+   ```
 
    ```text
-   $ RT700_ISP='-u 0x1fc9,0x014f' tests/target/provisioning_ctrl.sh lock 0x0F production-fuses.yaml
    Lock step: fused Develop2 (0x07) -> In Field (0x0F)
      checked: order, rehearsal of 0x0F with image 6443b78e50315852, guest fence, root key hash
      will run: blhost -u 0x1fc9,0x014f batch ~/.cache/wolftrust/rt700-lock-0x0F-20260930T203840Z.bls
@@ -553,9 +648,10 @@ A production part is locked on the production station, in this order:
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    ```
 
-   The fuse configuration is optional. Without it, `lock` burns only the two
-   life cycle words. With it, `lock` builds the script with
-   `shadowregs fuses-script` and checks the result before printing it:
+   Read every line of the script: each one is a permanent fuse write. The fuse
+   configuration is optional. Without it, `lock` burns only the two life cycle
+   words. With it, `lock` builds the script with `shadowregs fuses-script` and
+   checks the result before printing it:
    - It rejoins the `--no-verify` flags that SPSDK 3.11 writes on their own
      lines. `blhost batch` would otherwise run each flag as a separate command
      after the fuse before it had burned.
@@ -564,7 +660,10 @@ A production part is locked on the production station, in this order:
    - It refuses a life cycle word locked before the final step.
    - It moves the two life cycle words to the end.
 
-5. **Burn it**, on the production station:
+5. **Burn it**, on the production station only:
+
+   > **Warning:** this step is permanent. After it, the part can never return
+   > to Develop2, and its software stays bound to the keys above.
 
    ```sh
    export WT_PRODUCTION_LOCK=1 RT700_ISP='-u 0x1fc9,0x014f'
@@ -577,30 +676,72 @@ A production part is locked on the production station, in this order:
    ```text
    !!! Burning life cycle In Field (0x0F) into this MIMXRT700's fuses
    !!! This is IRREVERSIBLE: fuses cannot be unburned, and the part never returns to Develop2.
-   !!! Are you sure? Type "I ACCEPT 0x0F" to continue:
+   !!! Are you sure? Type "I ACCEPT 0x0F" to continue: I ACCEPT 0x0F
    ```
 
-   Anything else, a pipe, or a missing `WT_PRODUCTION_LOCK=1` refuses with
-   nothing burned. After the burn, `lock` reads both life cycle fuses back and
-   fails unless they carry the new state. The two copies are separate fuse
-   words, so a burn interrupted between them leaves them disagreeing, which
-   wolfBoot reports as UNKNOWN; keep the station powered and the ISP link
-   stable.
-6. **Verify.** After a reset, `status` must show both life cycle copies at the
-   burned value, debug closed, the guest fence armed, and
-   `wolfTrust saw 0x00003000 (SECURED)`. Then run the production image's
-   hardware scenarios.
-7. **Repeat for the next step**, for example a rehearsal of `0xCF` and then
-   `lock 0xCF`. A rehearsal may run on the part before any burn: an In Field
-   Locked rehearsal from a Develop part still counts once the part is fused
-   In Field, because the rehearsal's fused state is a subset of it.
+   Expected output (blhost prints one status per fuse, then `lock` reads both
+   life cycle fuses back and fails unless they carry the new state):
 
-Every gate and refusal was exercised offline against stubbed `blhost` and
-`STM32_Programmer_CLI` (48 checks), and the rehearsal on the EVK. The burn
-itself has never been run on a wolfTrust board. Field returns go to In Field
-Return through NXP's debug credential flow, which needs the debug credential
-root fused and a validated credential chain; wolfTrust attests that state as
-DECOMMISSIONED.
+   ```text
+   Response status = 0 (0x0) Success.
+   ...
+   Response status = 0 (0x0) Success.
+     [check] PASS  life cycle fuses are In Field (0x0F); reset the part, then run: tests/target/provisioning_ctrl.sh status
+   ```
+
+   Anything but the exact acceptance, a pipe, or a missing
+   `WT_PRODUCTION_LOCK=1` refuses with nothing burned. The two life cycle
+   copies are separate fuse words, so a burn interrupted between them leaves
+   them disagreeing, which wolfBoot reports as UNKNOWN. Keep the station
+   powered and the ISP link stable.
+
+6. **Verify.** Reset the part and read it back:
+
+   ```sh
+   tests/target/provisioning_ctrl.sh status
+   ```
+
+   Expected: both life cycle copies at the burned value, the guest fence
+   armed, both guests verified, and, with debug closed by the fuse
+   configuration, `wolfTrust saw 0x00003000 (SECURED)`:
+
+   ```text
+   OTP life cycle   LC_STATE=0x0f (In Field)  LC_STATE_RED=0x0f
+   guest fence      armed FRAD2 acp=0x00000000 word3=0xa0000000
+   wolfTrust saw    0x00003000 (SECURED)
+   guest launches   verified=0x00000003 refused=0x00000000
+   ```
+
+   Then run the production image's hardware scenarios.
+
+7. **Repeat for the next step** only if the product needs it: rehearse `0xCF`,
+   preview, then `lock 0xCF`. A rehearsal may run before any burn. An
+   In Field Locked rehearsal from a Develop part still counts once the part is
+   fused In Field, because the rehearsal's fused state is a subset of it.
+
+A refused `lock` exits with status 2 and burns nothing. The refusals seen on
+the EVK:
+
+```text
+$ tests/target/provisioning_ctrl.sh lock 0x07
+REFUSED: set RT700_ISP to the blhost ISP connection (for example '-u 0x1fc9,0x014f').
+$ RT700_ISP='-u 0x1fc9,0x014f' tests/target/provisioning_ctrl.sh lock 0x07
+REFUSED: cannot read the life cycle fuses over RT700_ISP (-u 0x1fc9,0x014f).
+```
+
+and, from the offline gate tests:
+
+```text
+REFUSED: the part is fused Develop (0x03); its next step is 0x07, not 0x0F.
+REFUSED: no rehearsal of 0x0F (In Field) with this image: run 'discover', 'advance 0x0F', and 'regress' first.
+REFUSED: the rehearsal of 0x0F ran without the guest fence: 'restore' the fenced chain and rehearse again.
+REFUSED: the root key table hash is not burned: provision it first (a fuse configuration with RKTH) so the ROM authenticates wolfBoot.
+REFUSED: confirmation did not match; nothing was changed.
+```
+
+Field returns go to In Field Return through NXP's debug credential flow, which
+needs the debug credential root fused and a validated credential chain.
+wolfTrust attests that state as DECOMMISSIONED.
 
 ### Verified on the EVK
 

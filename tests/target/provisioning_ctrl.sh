@@ -25,11 +25,11 @@
 #   discover               prove the DA credential authenticates (non-destructive)
 #   advance <hexstate>     set PRODUCT_STATE (GATED; Locked refused); rehearses it
 #   regress                DA-authenticate + full regression back to Open (GATED)
-#   lock <hexstate>        production step, one state at a time: 0x17 from Open,
-#                          0xC6 or 0x72 from Provisioning, 0x5C (PERMANENT) from
-#                          Closed. Needs a rehearsal of that state with these
-#                          images; previews without WT_LOCK_CONFIRM=1, writes only
-#                          with WT_PRODUCTION_LOCK=1 and a typed "I ACCEPT <state>"
+#   lock <hexstate>        production step: 0x17 from Open; 0xC6, 0x72, or 0x5C
+#                          (PERMANENT) from Provisioning. Needs a rehearsal of that
+#                          state with these images; previews without
+#                          WT_LOCK_CONFIRM=1, writes only with WT_PRODUCTION_LOCK=1
+#                          and a typed "I ACCEPT <state>"
 #
 # TARGET=mimxrt700 runs the MIMXRT700 backend (provisioning_ctrl_rt700.sh).
 set -euo pipefail
@@ -104,6 +104,21 @@ ps_name() {
   esac
 }
 refuse() { echo "REFUSED: $1" >&2; exit 2; }
+st_lifecycle() {
+  case "$1" in
+    0x17) echo "ST_LIFECYCLE_PROVISIONING" ;; 0xC6) echo "ST_LIFECYCLE_TZ_CLOSED" ;;
+    0x72) echo "ST_LIFECYCLE_CLOSED" ;; 0x5C) echo "ST_LIFECYCLE_LOCKED" ;;
+  esac
+}
+da_discovery() { "$CLI" $DA_CONN pwd="$DA_PWD" debugauth=2 2>&1 | strip; }
+# A closed part drops the debug link, so its state is read by DA discovery.
+da_lifecycle() { da_discovery | grep -oE "ST_LIFECYCLE_[A-Z_]+" | head -1; }
+# Capture the UART across a reset the caller triggers; booted() reads it.
+uart_capture() {
+  stty -F "$SERIAL" 115200 raw -echo 2>/dev/null || true
+  ( timeout "$1" cat "$SERIAL" > "$2" 2>/dev/null & )
+}
+booted() { strip < "$1" | grep -aqE "guest0_psa|heartbeat|TEE client"; }
 
 # Rehearsal records hold the digest of the images they proved, so a rebuild
 # needs a fresh rehearsal before any lock step.
@@ -122,12 +137,16 @@ record() {
   mkdir -p "$state_dir"
   echo "$d" > "$state_dir/h5-$1"
 }
-# rehearsed <state>: these images booted in <state> and DA regression from it worked.
+# rehearsed <state>: these images booted in <state> and DA regression from it
+# worked; a regression from a closed state also proves the Provisioning step.
 rehearsed() {
-  local d
+  local d s
   d="$(image_digest)" || return 1
-  [ "$(cat "$state_dir/h5-booted-$1" 2>/dev/null)" = "$d" ] &&
-    [ "$(cat "$state_dir/h5-regressed-$1" 2>/dev/null)" = "$d" ]
+  [ "$(cat "$state_dir/h5-booted-$1" 2>/dev/null)" = "$d" ] || return 1
+  for s in "$1" $([ "$1" = "$PS_PROVISIONING" ] && echo "$PS_TZCLOSED $PS_CLOSED"); do
+    [ "$(cat "$state_dir/h5-regressed-$s" 2>/dev/null)" = "$d" ] && return 0
+  done
+  return 1
 }
 
 cmd="${1:-status}"
@@ -180,11 +199,10 @@ case "$cmd" in
     ;;
 
   verify)
-    stty -F "$SERIAL" 115200 raw -echo 2>/dev/null || true
-    ( timeout 8 cat "$SERIAL" > /tmp/wt-verify.log 2>/dev/null & )
+    uart_capture 8 /tmp/wt-verify.log
     "$CLI" -c port=SWD mode=UR -rst >/dev/null 2>&1 || true
     sleep 7
-    if strip < /tmp/wt-verify.log | grep -aqE "guest0_psa|heartbeat|TEE client"; then
+    if booted /tmp/wt-verify.log; then
       pass "wolfTrust chain boots on silicon"
       ps="$(product_state || true)"
       [ -n "$ps" ] || ps="$(cat "$state_dir/h5-advanced" 2>/dev/null || true)"
@@ -225,48 +243,71 @@ case "$cmd" in
     confirm
     state="${2:-}"
     case "$state" in
-      "$PS_LOCKED"|0x5c) echo "REFUSED: Locked (0x5C) is permanent — never on a dev board; production uses 'lock'." >&2; exit 2 ;;
+      "$PS_LOCKED"|0x5c) refuse "Locked (0x5C) is permanent, never on a dev board; production uses 'lock'." ;;
       "$PS_PROVISIONING"|"$PS_TZCLOSED"|"$PS_CLOSED"|0x17|0xc6|0x72) ;;
-      *) echo "REFUSED: advance needs a reversible state (0x17/0xC6/0x72), got '${state:-none}'." >&2; exit 2 ;;
+      *) refuse "advance needs a reversible state (0x17/0xC6/0x72), got '${state:-none}'." ;;
     esac
-    echo "ADVANCING product state $(product_state) -> $state (regress is the only way back)"
+    state="$(hexstate "$state")"
+    cur="$(product_state || true)"
+    # From TZ-Closed the link cannot write the next state (seen 2026-08-19).
+    if [ "$state" != "$PS_PROVISIONING" ] &&
+       { [ -z "$cur" ] || [ "$(hexstate "$cur")" != "$PS_PROVISIONING" ]; }; then
+      refuse "advance to $(ps_name "$state") runs only from Provisioning (0x17); state=${cur:-unreadable}."
+    fi
+    echo "ADVANCING product state ${cur:-?} -> $state (regress is the only way back)"
+    uart_capture 12 /tmp/wt-advance.log
     "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$state" 2>&1 | strip | tail -4
     mkdir -p "$state_dir"
-    hexstate "$state" > "$state_dir/h5-advanced"
-    echo "now: $(product_state)"
+    echo "$state" > "$state_dir/h5-advanced"
+    sleep 10
+    if booted /tmp/wt-advance.log; then
+      pass "wolfTrust chain boots in $(ps_name "$state")"
+      record "booted-$state"
+    else
+      echo "no wolfTrust boot markers on $SERIAL after the write; the rehearsal needs them"
+    fi
+    now="$(product_state || true)"
+    echo "now: ${now:-$(da_lifecycle || true)}"
     ;;
 
   lock)
-    # One production step at a time, only from the state before it, and only
-    # after 'advance', 'verify', and 'regress' rehearsed that state with these
-    # images. Without WT_LOCK_CONFIRM=1 this is a read-only preview.
+    # One production step at a time, and only after 'advance' and 'regress'
+    # rehearsed that state with these images. ST's rule: the closed states are
+    # written from Provisioning, while the debug link can still write them.
+    # Without WT_LOCK_CONFIRM=1 this is a read-only preview.
     [[ "${2:-}" =~ ^0[xX][0-9A-Fa-f]{2}$ ]] || \
       refuse "lock takes the next product state: 0x17, 0xC6, 0x72, or 0x5C."
     target="$(hexstate "$2")"
     case "$target" in
-      0x17) from="0xED"; rehearse=0x17 ;;
-      0xC6) from="0x17"; rehearse=0xC6 ;;
-      0x72) from="0x17 0xC6"; rehearse=0x72 ;;
-      0x5C) from="0x72"; rehearse=0x72 ;;
+      0x17) from="$PS_OPEN"; rehearse=0x17 ;;
+      0xC6) from="$PS_PROVISIONING"; rehearse=0xC6 ;;
+      0x72) from="$PS_PROVISIONING"; rehearse=0x72 ;;
+      0x5C) from="$PS_PROVISIONING"; rehearse=0x72 ;;
       *) refuse "lock takes the next product state: 0x17, 0xC6, 0x72, or 0x5C (got $target)." ;;
     esac
     cur="$(product_state || true)"
     [ -n "$cur" ] || refuse "cannot read the product state over SWD."
     cur="$(hexstate "$cur")"
-    case " $from " in
-      *" $cur "*) ;;
-      *) refuse "the part is $(ps_name "$cur") ($cur); lock $target runs only from $(for s in $from; do printf '%s (%s) ' "$(ps_name "$s")" "$s"; done)" ;;
-    esac
+    [ "$cur" = "$from" ] || \
+      refuse "the part is $(ps_name "$cur") ($cur); lock $target runs only from $(ps_name "$from") ($from)."
     rehearsed "$rehearse" || \
-      refuse "no rehearsal of $(ps_name "$rehearse") ($rehearse) with these images: run 'advance $rehearse', 'verify', and 'regress' first."
-    if [ "$target" = "0x72" ]; then
+      refuse "no rehearsal of $(ps_name "$rehearse") ($rehearse) with these images: run 'advance $rehearse' and 'regress' first."
+    checked="order, rehearsal of $(ps_name "$rehearse") with images $(image_digest)"
+    if [ "$target" != "0x17" ]; then
       wrp="$("$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
         | grep -iE "WRPSGn1" | grep -oE "0x[0-9A-Fa-f]+" | head -1 || true)"
       [ -n "$wrp" ] && [ $((wrp)) -eq $((WRP_GUEST)) ] || \
         refuse "guest flash is not write protected (WRPSGn1=${wrp:-unreadable}): run 'set-wrp' in Open first."
+      checked="$checked, guest WRP"
+    fi
+    if [ "$target" = "0xC6" ] || [ "$target" = "0x72" ]; then
+      disc="$(da_discovery)"
+      grep -q "0xeaeaeaea" <<<"$disc" && grep -q "Full Regression" <<<"$disc" || \
+        refuse "Debug Authentication is not provisioned (no intact OBK offering Full Regression): run 'provision-da' and 'discover'."
+      checked="$checked, DA provisioned"
     fi
     echo "Lock step: $(ps_name "$cur") ($cur) -> $(ps_name "$target") ($target)"
-    echo "  checked: order, rehearsal of $(ps_name "$rehearse") with images $(image_digest), DA regression from it"
+    echo "  checked: $checked"
     echo "  will run: $CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=$target"
     [ "${WT_LOCK_CONFIRM:-0}" = "1" ] || \
         refuse "preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1."
@@ -274,16 +315,30 @@ case "$cmd" in
     . "$(dirname "$0")/lib/lock_confirm.sh"
     if [ "$target" = "$PS_LOCKED" ]; then
       lock_confirm "I ACCEPT $target" \
-        "Locking this STM32H563: product state $cur -> $target (Locked)" || exit 2
+        "Locking this STM32H563: product state $cur -> $target (Locked)" \
+        "This is IRREVERSIBLE: debug closes for good, no regression or mass erase, and only a wolfBoot-signed update can change the firmware." || exit 2
     else
       lock_confirm "I ACCEPT $target" \
         "Moving this STM32H563 to $(ps_name "$target") ($target)" \
         "Only a DA regression, which mass-erases the part, returns it to Open." || exit 2
     fi
+    uart_capture 12 /tmp/wt-lock.log
     "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$target" 2>&1 | strip | tail -4
-    now="$(product_state || true)"
-    [ -n "$now" ] && [ "$(hexstate "$now")" = "$target" ] || \
-      fail "lock" "product state reads ${now:-unreadable} after the write, expected $target"
+    sleep 10
+    if booted /tmp/wt-lock.log; then
+      pass "wolfTrust chain boots in $(ps_name "$target")"
+    else
+      echo "no wolfTrust boot markers on $SERIAL after the write"
+    fi
+    if [ "$target" = "0x17" ]; then
+      now="$(product_state || true)"
+      [ -n "$now" ] && [ "$(hexstate "$now")" = "$target" ] || \
+        fail "lock" "product state reads ${now:-unreadable} after the write, expected $target"
+    else
+      now="$(da_lifecycle || true)"
+      [ "$now" = "$(st_lifecycle "$target")" ] || \
+        fail "lock" "DA discovery reports ${now:-nothing} after the write, expected $(st_lifecycle "$target"); the write may still have landed, so do not repeat it"
+    fi
     pass "product state is $(ps_name "$target") ($target)"
     ;;
 
@@ -301,8 +356,14 @@ case "$cmd" in
     "$CLI" -c port=SWD mode=HotPlug -rst 2>&1 | strip | tail -1 || true
     "$CLI" -c port=SWD per=a key="$DA_KEY" cert="$DA_CERT" pwd="$DA_PWD" \
       debugauth=1 </dev/null 2>&1 | strip | tail -14
-    after="$(product_state || true)"
-    echo "state after regression: $after"
+    # A Closed regression self-resets the part, so the first reconnect can race.
+    after=""
+    for _ in 1 2 3; do
+      after="$(product_state || true)"
+      [ -z "$after" ] || break
+      sleep 3
+    done
+    echo "state after regression: ${after:-unreadable}"
     if [ -n "$after" ] && [ "$(hexstate "$after")" = "$PS_OPEN" ] && [ -n "$advanced" ]; then
       record "regressed-$advanced"
       rm -f "$state_dir/h5-advanced"
