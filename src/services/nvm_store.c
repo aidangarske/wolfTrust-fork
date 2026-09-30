@@ -200,6 +200,9 @@ static int wt_nvm_rollback_load(wt_rollback_table_t* table)
     whNvmMetadata meta;
     int rc;
 
+    /* The privileged FWU-floor SVC and boot rollback reach this without a
+     * server pump, so re-assert the NVM callback chain here too (WT-FFM-0011). */
+    wt_nvm_store_pin();
     rc = wh_Nvm_GetMetadata(&g_wt_nvm_ctx, WT_HSM_ROLLBACK_TABLE_ID, &meta);
     if (rc == WH_ERROR_NOTFOUND) {
         wt_rollback_table_init(table);
