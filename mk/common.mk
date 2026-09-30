@@ -388,6 +388,7 @@ WT_LTO_WOLFCRYPT_EXCLUDED_OBJS := \
     $(BUILD_DIR)/wc_sec_thumb2-sha256-asm_c.o
 WT_LTO_SECURE_EXCLUDED_OBJS := \
     $(BUILD_DIR)/sec_ivt.o \
+    $(BUILD_DIR)/wt_sec_start_armv8m.o \
     $(BUILD_DIR)/sec_runtime.o \
     $(BUILD_DIR)/wt_sec_coroutine_armv8m.o \
     $(BUILD_DIR)/wt_sec_ffm_nsc.o \
