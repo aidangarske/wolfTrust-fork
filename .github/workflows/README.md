@@ -5,10 +5,10 @@ analysis. M33MU runs a per-port smoke set on every pull request and the full
 matrix on labels, main pushes, and nightly.
 
 `codeql.yml` runs C security queries on pull requests, pushes to `main` and
-release branches, and weekly. `coverity.yml` scans daily or on manual dispatch
-from `wolfSSL/wolfTrust` only. Both trace host suite builds and secure-image
-builds for STM32H563 and MIMXRT700 with both crypto engines via
-`tools/ci-static-analysis-build.sh`.
+release branches, and weekly. `coverity.yml` scans on pushes to `main`, daily,
+or on manual dispatch from `wolfSSL/wolfTrust` only. Both trace host suite
+builds and secure-image builds for STM32H563 and MIMXRT700 with both crypto
+engines via `tools/ci-static-analysis-build.sh`.
 
 Before enabling Coverity, register the case-sensitive `wolfTrust` project on
 Coverity Scan and set `COVERITY_SCAN_TOKEN` and `COVERITY_SCAN_EMAIL` as
