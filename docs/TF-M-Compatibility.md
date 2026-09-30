@@ -158,8 +158,9 @@ guest RAM, and unprivileged Secure threads use per-partition Secure MPU regions.
 The guest Non-secure MPU and interrupt masks are scheduling policy because a
 privileged guest can reprogram them.
 
-The current single-image layout still shares Secure executable text, and crypto,
-vault, and attestation share a keystore data band. Treat the profile field as a
+The current single-image layout still shares Secure executable text; every
+partition's writable state is its own, and the crypto, vault, and attestation
+partitions interact only through FF-M IPC. Treat the profile field as a
 requested and validated wolfTrust policy level, not by itself as proof of
 independent TF-M isolation certification. [Security Model](Security-Model.md) describes the
 actual boundary.
