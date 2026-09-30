@@ -66,6 +66,11 @@
 #error "GUEST_NAME must name the guest"
 #endif
 
+#if defined(WT_RUN_CONFORMANCE)
+/* Arm psa-arch-tests val NSPE entry. */
+extern int32_t val_entry(void);
+#endif
+
 #ifndef WT_EXPECTED_MEASUREMENT_HEX
 #define WT_EXPECTED_MEASUREMENT_HEX ""
 #endif
@@ -1166,6 +1171,9 @@ void Reset_Handler(void)
 #if defined(WT_FWU_PROBE)
     exercise_fwu();
 #endif
+#if !defined(WT_RUN_CONFORMANCE)
+    /* The COSE verify needs a deep stack the val framework then wants for
+     * itself; the PSA lifecycle scenarios cover attestation. */
     exercise_attestation();
 #if defined(WT_ATTEST_NEG_PROBE)
     exercise_attestation_negatives();
@@ -1173,6 +1181,10 @@ void Reset_Handler(void)
     exercise_psa_rng();
     exercise_psa_hash();
     exercise_psa_cipher();
+#else
+    guest_line("wolfTrust FF-M conformance: val_entry start");
+    (void)val_entry();
+#endif
 
     guest_line("done");
     g_guest_mailbox.lifecycle |= GUEST_LC_DONE;

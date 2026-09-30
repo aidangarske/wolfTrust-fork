@@ -339,6 +339,23 @@ size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max)
 }
 
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+/* PAL interrupt source: the unprivileged DRIVER partition asks for its line
+ * to fire, so the privileged side pends it in the NVIC. */
+void wt_conf_uart_irq_set(int on)
+{
+    if (on != 0) {
+        WT_NVIC_ISPR0 = (1u << WT_CONF_IRQ);
+    }
+    else {
+        wt_arch_secure_irq_disable(WT_CONF_IRQ);
+    }
+}
+
+void WT_CONF_IRQ_HANDLER(void)
+{
+    wt_spm_conf_irq(WT_CONF_IRQ);
+}
+
 extern char _s_conf_server_data[];
 extern char _e_conf_server_data[];
 extern char _s_conf_driver_data[];
@@ -464,17 +481,21 @@ void wt_platform_remeasure_probe(void)
         }
     }
     if (window != NULL) {
+        int tamper;
+
         r1 = wt_runtime_verify_guest(0u);
         mpu_ctrl = WT_MPU_S_CTRL;
         WT_MPU_S_CTRL = 0u;
         wt_dsb();
         wt_isb();
-        (void)wt_hsm_flash_remeasure_tamper(WT_FLASH_TO_S_ALIAS(window->base));
+        tamper = wt_hsm_flash_remeasure_tamper(WT_FLASH_TO_S_ALIAS(window->base));
         WT_MPU_S_CTRL = mpu_ctrl;
         wt_dsb();
         wt_isb();
         r2 = wt_runtime_verify_guest(0u);
-        if (r1 == 0 && r2 != 0) {
+        /* The verdict needs the tamper to have landed: a driver error must
+         * not pass as a detected tamper. */
+        if (r1 == 0 && tamper == 0 && r2 != 0) {
             __asm volatile("bkpt #0x6C");
         }
     }

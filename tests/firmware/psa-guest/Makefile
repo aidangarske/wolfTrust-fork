@@ -47,6 +47,13 @@ WT_FWU_PROBE_SEQUENTIAL ?= 0
 # of the signed Secure image and the lifecycle the Secure side reports.
 WT_EXPECTED_MEASUREMENT_HEX ?=
 WT_EXPECTED_LIFECYCLE ?= 0x3000u
+# WT_RUN_CONFORMANCE=1 hosts Arm's psa-arch-tests val NSPE in guest0 against
+# the conformance Secure image (built first: it fetches the pinned suite and
+# generates the test lists under build/manifest). WT_CONF_SUITE picks ipc
+# (FF-M), storage, crypto, or attestation; WT_ATTEST_CBOR=qcbor swaps the
+# attestation suite's CBOR backend for the reference QCBOR sources.
+WT_RUN_CONFORMANCE ?= 0
+WT_CONF_SUITE ?= ipc
 WT_ATTEST_CBOR ?= wolfcose
 # WT_M33MU_EXPECT_BKPT=1 ends the run on bkpt #0x7f once the lifecycle is done.
 WT_M33MU_EXPECT_BKPT ?= 0
@@ -126,13 +133,88 @@ ENGINE_DEFS := -DWOLFHSM_CFG -DWOLF_CRYPTO_CB -DWT_ENGINE_HSM=1
 GUEST_ENGINE_SRCS := $(WOLFHSM_MODULE_DIR)/src/wolfhsm_client_glue.c
 endif
 
+CONF_SRCS :=
+CONF_INCS :=
+CONF_DEFS :=
+ifeq ($(WT_RUN_CONFORMANCE),1)
+CONF_U := $(ROOT)/build/upstream/psa-arch-tests/api-tests
+CONF_GEN := $(ROOT)/build/manifest
+CONF_SRCS := conformance_pal.c \
+    $(CONF_U)/val/common/val_log.c \
+    $(CONF_U)/platform/targets/common/nspe/pal_weak.c \
+    $(CONF_U)/val/nspe/val_entry.c \
+    $(CONF_U)/val/nspe/val_dispatcher.c \
+    $(CONF_U)/val/nspe/val_framework.c \
+    $(CONF_U)/val/nspe/val_interfaces.c \
+    $(CONF_U)/val/nspe/val_peripherals.c \
+    $(CONF_U)/val/nspe/val_platform.c \
+    $(CONF_U)/val/nspe/val_crypto.c \
+    $(CONF_U)/val/nspe/val_storage.c \
+    $(CONF_U)/val/nspe/val_attestation.c
+CONF_SUITE_INCS :=
+CONF_DEFS := -DWT_RUN_CONFORMANCE -DVAL_NSPE_BUILD -DNONSECURE_TEST_BUILD \
+    -DVERBOSITY=3
+ifeq ($(WT_CONF_SUITE),ipc)
+IPC_TESTS := $(shell seq -f 'i%03g' 1 66) $(shell seq -f 'i%03g' 68 90)
+CONF_SRCS += $(foreach t,$(IPC_TESTS), \
+    $(CONF_U)/ff/ipc/test_$(t)/test_entry_$(t).c $(CONF_U)/ff/ipc/test_$(t)/test_$(t).c)
+CONF_SUITE_INCS += -I$(CONF_GEN)/ns $(foreach t,$(IPC_TESTS),-I$(CONF_U)/ff/ipc/test_$(t))
+CONF_DEFS += -DIPC
+else ifeq ($(WT_CONF_SUITE),storage)
+STORAGE_TESTS := $(shell seq -f 's%03g' 1 17)
+CONF_SRCS += $(CONF_U)/dev_apis/storage/common/test_storage_common.c \
+    $(foreach t,$(STORAGE_TESTS), \
+    $(CONF_U)/dev_apis/storage/test_$(t)/test_entry_$(t).c $(CONF_U)/dev_apis/storage/test_$(t)/test_$(t).c)
+CONF_SUITE_INCS += -I$(CONF_GEN)/storage/ns -I$(CONF_U)/dev_apis/storage/common \
+    $(foreach t,$(STORAGE_TESTS),-I$(CONF_U)/dev_apis/storage/test_$(t))
+CONF_DEFS += -DSTORAGE
+else ifeq ($(WT_CONF_SUITE),crypto)
+# c047 is schedule-skipped (CMAC compiled out) and c064/c065 never built.
+CRYPTO_TESTS := $(filter-out c047 c064 c065,$(shell seq -f 'c%03g' 1 80))
+CONF_SRCS += $(CONF_U)/platform/targets/common/nspe/crypto/pal_crypto_intf.c \
+    $(CONF_U)/dev_apis/crypto/common/test_crypto_common.c \
+    $(foreach t,$(CRYPTO_TESTS), \
+    $(CONF_U)/dev_apis/crypto/test_$(t)/test_entry_$(t).c $(CONF_U)/dev_apis/crypto/test_$(t)/test_$(t).c)
+CONF_SUITE_INCS += -I$(CONF_GEN)/crypto/ns -I$(CONF_U)/platform/targets/common/nspe/crypto \
+    -I$(CONF_U)/dev_apis/crypto/common \
+    $(foreach t,$(CRYPTO_TESTS),-I$(CONF_U)/dev_apis/crypto/test_$(t))
+CONF_DEFS += -DCRYPTO
+else ifeq ($(WT_CONF_SUITE),attestation)
+CONF_SRCS += \
+    $(CONF_U)/platform/targets/common/nspe/initial_attestation/pal_attestation_intf.c \
+    $(CONF_U)/platform/targets/common/nspe/initial_attestation/pal_attestation_crypto.c \
+    $(CONF_U)/dev_apis/initial_attestation/test_a001/test_entry_a001.c \
+    $(CONF_U)/dev_apis/initial_attestation/test_a001/test_a001.c
+CONF_SUITE_INCS += -I$(CONF_GEN)/initial_attestation/ns \
+    -I$(CONF_U)/platform/targets/common/nspe/initial_attestation \
+    -I$(CONF_U)/dev_apis/initial_attestation/test_a001
+CONF_DEFS += -DINITIAL_ATTESTATION -DPSA_ATTESTATION_PROFILE_2 \
+    -DPSA_INITIAL_ATTEST_MAX_TOKEN_SIZE=640
+ifeq ($(WT_ATTEST_CBOR),qcbor)
+QCBOR_DIR := $(ROOT)/build/upstream/qcbor
+CONF_SRCS += $(QCBOR_DIR)/src/UsefulBuf.c $(QCBOR_DIR)/src/qcbor_encode.c \
+    $(QCBOR_DIR)/src/qcbor_decode.c $(QCBOR_DIR)/src/ieee754.c
+CONF_SUITE_INCS += -I$(QCBOR_DIR)/inc -I$(QCBOR_DIR)/inc/qcbor
+else
+CONF_SRCS += $(ROOT)/tests/conformance/qcbor-shim/qcbor_shim.c
+CONF_SUITE_INCS += -I$(ROOT)/tests/conformance/qcbor-shim
+endif
+else
+$(error WT_CONF_SUITE must be ipc, storage, crypto, or attestation)
+endif
+CONF_INCS := $(CONF_SUITE_INCS) -I$(CONF_GEN) \
+    -I$(CONF_U)/val/common -I$(CONF_U)/val/nspe -I$(CONF_U)/val/spe \
+    -I$(CONF_U)/platform/targets/common/nspe \
+    -I$(ROOT)/port/$(TARGET)/conformance
+endif
 
 SHARED_SRCS := guest_libc.c $(WOLFCRYPT_SRCS) $(WOLFPSA_SRCS) $(WOLFCOSE_SRCS) \
     $(CLIENT_SRCS) $(ENGINE_SRCS)
 # Per-guest objects: the verifier pins the guest's own PSA client id, the
-# wolfHSM glue its client id.
+# wolfHSM glue its client id. The suite runs in guest0 only; guest1 stays the
+# peer that keeps running.
 GUEST_SRCS := main.c $(ZEPHYR_GUEST_DIR)/attestation_verify.c $(GUEST_ENGINE_SRCS)
-GUEST0_SRCS := $(GUEST_SRCS)
+GUEST0_SRCS := $(GUEST_SRCS) $(CONF_SRCS)
 
 WH_CFG_DIR := $(BUILD)/wh_include
 
@@ -141,6 +223,7 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mgeneral-regs-only \
     -Wall -Wextra -Wno-unused-function -Wno-unused-variable \
     -Wno-unused-parameter -Wno-type-limits \
     -ffunction-sections -fdata-sections -mno-unaligned-access \
+    $(CONF_INCS) \
     -I. -Imanifest -Iboards/$(TARGET) \
     -I$(ROOT)/include \
     -I$(WOLFSSL_DIR) \
@@ -200,7 +283,7 @@ endif
 
 # guest0 carries the probes; guest1 is the peer that must keep running.
 GUEST0_CFLAGS := -DGUEST_NAME=\"guest0\" -DWT_WOLFHSM_CLIENT_ID=1u \
-    -DGUEST_PEER_RAM=$(GUEST1_RAM_ORIGIN)u $(PROBE_CFLAGS)
+    -DGUEST_PEER_RAM=$(GUEST1_RAM_ORIGIN)u $(PROBE_CFLAGS) $(CONF_DEFS)
 GUEST1_CFLAGS := -DGUEST_NAME=\"guest1\" -DWT_WOLFHSM_CLIENT_ID=2u \
     -DGUEST_PEER_RAM=$(GUEST0_RAM_ORIGIN)u -DWT_ATTEST_EXPECTED_CLIENT_ID=-2
 
