@@ -309,6 +309,17 @@ SECTIONS {
          "crypto data band must sit directly above the attestation data band")
   ASSERT(ORIGIN(FWUSTACK) == (ORIGIN(HSMDATA) + LENGTH(HSMDATA)),
          "FWU stack must sit directly above the crypto data band")
+  /* Full band extents: Reset_Handler clears each band end to end before
+   * loading it, so no retained byte outlives a warm reset or a layout change. */
+  _wt_band_vault_base = ORIGIN(VAULTDATA);
+  _wt_band_vault_limit = ORIGIN(VAULTDATA) + LENGTH(VAULTDATA);
+  _wt_band_attest_base = ORIGIN(ATTESTDATA);
+  _wt_band_attest_limit = ORIGIN(ATTESTDATA) + LENGTH(ATTESTDATA);
+  _wt_band_hsm_base = ORIGIN(HSMDATA);
+  _wt_band_hsm_limit = ORIGIN(HSMDATA) + LENGTH(HSMDATA);
+  _wt_band_vnet_base = ORIGIN(VNETDATA);
+  _wt_band_vnet_limit = ORIGIN(VNETDATA) + LENGTH(VNETDATA);
+
   ASSERT(_e_vault <= (ORIGIN(VAULTDATA) + LENGTH(VAULTDATA)),
          "vault data band overflow")
   ASSERT(_e_attest <= (ORIGIN(ATTESTDATA) + LENGTH(ATTESTDATA)),

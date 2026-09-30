@@ -24,6 +24,30 @@
 
 #include "wolftrust/port_nvm.h"  /* g_wt_hsm_flash_cb + context/config contract */
 
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef struct wt_hsm_flash_config {
+    uintptr_t base;
+    uint32_t size;
+    uint32_t sector_size;
+    uint32_t program_unit;
+} wt_hsm_flash_config_t;
+
+typedef struct wt_hsm_flash_context {
+    uintptr_t base;
+    uint32_t size;
+    uint32_t sector_size;
+    uint32_t program_unit;
+    bool write_locked;
+} wt_hsm_flash_context_t;
+
+/* The vault's own flash bookkeeping (hsm_flash_ctx.c, in the vault's data
+ * band). The driver's privileged state stays in hsm_flash.c, in SPM RAM. */
+extern wt_hsm_flash_context_t g_hsm_flash_ctx;
+extern volatile uint32_t g_wt_flash_gate_aborts;
+extern volatile uint32_t g_wt_flash_gate_abort_info;
+
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
 /* Privileged survive-reset NVM sync for the conformance DRIVER partition
  * (P5 K2): store==0 loads the reserved flash sector into buf, store!=0 erases

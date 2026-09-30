@@ -153,11 +153,21 @@
 #define WT_SP_FWU_STACK_BASE     (WT_RAM_S_BASE + 0x00061000u)  /* 0x30089000 */
 #define WT_SP_FWU_STACK_SIZE     WT_SP_SECURE_STACK_SIZE
 
-/* wolfHSM keystore trust band: the shared server, NVM, and lock state the
- * confined keystore partitions (attest, relay, vault) are granted while
- * running unprivileged. Mirrors the KEYSTORE region in secure.ld. */
+/* Keystore data bands: the vault, attestation, and crypto (SERVICE_HSM)
+ * partitions each own one private writable band; no two partitions share a
+ * writable byte (isolation level 3). The envelope mirrors the KEYSTORE
+ * region in secure.ld; the sub-bands mirror its VAULTDATA, ATTESTDATA, and
+ * HSMDATA regions. */
 #define WT_KEYSTORE_BASE         (WT_RAM_S_BASE + 0x0004D000u)  /* 0x30075000 */
 #define WT_KEYSTORE_SIZE         0x00014000u                    /* 80 KiB */
+#define WT_SP_VAULT_DATA_BASE    WT_KEYSTORE_BASE               /* 0x30075000 */
+#define WT_SP_VAULT_DATA_SIZE    0x00002000u                    /* 8 KiB */
+#define WT_SP_ATTEST_DATA_BASE \
+    (WT_SP_VAULT_DATA_BASE + WT_SP_VAULT_DATA_SIZE)             /* 0x30077000 */
+#define WT_SP_ATTEST_DATA_SIZE   0x00000800u                    /* 2 KiB */
+#define WT_SP_HSM_DATA_BASE \
+    (WT_SP_ATTEST_DATA_BASE + WT_SP_ATTEST_DATA_SIZE)           /* 0x30077800 */
+#define WT_SP_HSM_DATA_SIZE      0x00011800u                    /* 70 KiB */
 
 /* VNET partition stack (CONFIG_VNET builds): SERVICE_VNET's scheduled
  * coroutine stack aliases the conformance data window - VNET and

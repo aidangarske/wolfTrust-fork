@@ -20,14 +20,110 @@
 
 
 /* Armv8-M reset entry: initialize the image's data and bss (including the
- * conformance, keystore, and vnet bands the secure linker script places in
+ * conformance, per-partition, and vnet bands the linker script places in
  * their own MPU-granted windows), then enter the neutral boot sequence. */
 
+#include "wolftrust/arch.h"
 #include "wolftrust/boot.h"
 #include "wolftrust/platform.h"
 #include "wolftrust/arch/armv8m/core_regs.h"
 
+#include <stddef.h>
 #include <stdint.h>
+
+extern uint32_t _sidata;
+extern uint32_t _sdata;
+extern uint32_t _edata;
+extern uint32_t _sbss;
+extern uint32_t _ebss;
+extern uint32_t _siconfdata;
+extern uint32_t _sconfdata;
+extern uint32_t _econfdata;
+extern uint32_t _sconfbss;
+extern uint32_t _econfbss;
+extern uint32_t _si_vault;
+extern uint32_t _s_vault;
+extern uint32_t _e_vault_data;
+extern uint32_t _s_vault_bss;
+extern uint32_t _e_vault;
+extern uint32_t _si_attest;
+extern uint32_t _s_attest;
+extern uint32_t _e_attest_data;
+extern uint32_t _s_attest_bss;
+extern uint32_t _e_attest;
+extern uint32_t _si_hsm;
+extern uint32_t _s_hsm;
+extern uint32_t _e_hsm_data;
+extern uint32_t _s_hsm_bss;
+extern uint32_t _e_hsm;
+#if defined(CONFIG_VNET)
+extern uint32_t _si_vnet;
+extern uint32_t _s_vnet;
+extern uint32_t _e_vnet_data;
+extern uint32_t _s_vnet_bss;
+extern uint32_t _e_vnet;
+#endif
+
+extern uint32_t _wt_band_vault_base;
+extern uint32_t _wt_band_vault_limit;
+extern uint32_t _wt_band_attest_base;
+extern uint32_t _wt_band_attest_limit;
+extern uint32_t _wt_band_hsm_base;
+extern uint32_t _wt_band_hsm_limit;
+#if defined(CONFIG_VNET)
+extern uint32_t _wt_band_vnet_base;
+extern uint32_t _wt_band_vnet_limit;
+#endif
+
+/* One partition data band: where its .data loads from, where its .data and
+ * .bss live, and the full MPU-granted extent around them. */
+typedef struct wt_band_image {
+    const uint32_t* load;
+    uint32_t* data;
+    uint32_t* data_end;
+    uint32_t* bss;
+    uint32_t* end;
+    uint32_t* base;
+    uint32_t* limit;
+} wt_band_image_t;
+
+static const wt_band_image_t g_wt_bands[] = {
+    { &_si_vault, &_s_vault, &_e_vault_data, &_s_vault_bss, &_e_vault,
+      &_wt_band_vault_base, &_wt_band_vault_limit },
+    { &_si_attest, &_s_attest, &_e_attest_data, &_s_attest_bss, &_e_attest,
+      &_wt_band_attest_base, &_wt_band_attest_limit },
+    { &_si_hsm, &_s_hsm, &_e_hsm_data, &_s_hsm_bss, &_e_hsm,
+      &_wt_band_hsm_base, &_wt_band_hsm_limit },
+#if defined(CONFIG_VNET)
+    { &_si_vnet, &_s_vnet, &_e_vnet_data, &_s_vnet_bss, &_e_vnet,
+      &_wt_band_vnet_base, &_wt_band_vnet_limit },
+#endif
+};
+
+static void wt_band_load(const wt_band_image_t* band)
+{
+    const uint32_t* src = band->load;
+    uint32_t* dst;
+
+    for (dst = band->data; dst < band->data_end; ++dst) {
+        *dst = *src++;
+    }
+    for (dst = band->bss; dst < band->end; ++dst) {
+        *dst = 0u;
+    }
+}
+
+void wt_arch_sp_band_reset(uintptr_t base, size_t size)
+{
+    size_t i;
+
+    wt_arch_zero_guest_memory(base, size);
+    for (i = 0u; i < sizeof(g_wt_bands) / sizeof(g_wt_bands[0]); i++) {
+        if ((uintptr_t)g_wt_bands[i].data == base) {
+            wt_band_load(&g_wt_bands[i]);
+        }
+    }
+}
 
 static void wt_reset_main(void) __attribute__((noreturn, used));
 
@@ -55,33 +151,12 @@ static void wt_reset_main(void)
 {
     extern uint32_t _estack;
     extern uint32_t _sstack;
-    extern uint32_t _sidata;
-    extern uint32_t _sdata;
-    extern uint32_t _edata;
-    extern uint32_t _sbss;
-    extern uint32_t _ebss;
-    extern uint32_t _siconfdata;
-    extern uint32_t _sconfdata;
-    extern uint32_t _econfdata;
-    extern uint32_t _sconfbss;
-    extern uint32_t _econfbss;
-    extern uint32_t _si_keystore;
-    extern uint32_t _s_keystore;
-    extern uint32_t _e_keystore_data;
-    extern uint32_t _s_keystore_bss;
-    extern uint32_t _e_keystore;
-#if defined(CONFIG_VNET)
-    extern uint32_t _si_vnet;
-    extern uint32_t _s_vnet;
-    extern uint32_t _e_vnet_data;
-    extern uint32_t _s_vnet_bss;
-    extern uint32_t _e_vnet;
-#endif
     const uint32_t* seal = (const uint32_t*)((uintptr_t)&_estack - 8u);
     uint32_t* src = &_sidata;
     uint32_t* dst = &_sdata;
     uint32_t msp;
     uint32_t msplim;
+    size_t i;
 
     while (dst < &_edata) {
         *dst++ = *src++;
@@ -101,26 +176,14 @@ static void wt_reset_main(void)
         *dst = 0u;
     }
 
-    /* wolfHSM keystore band lives outside the general .data/.bss window, so the
-     * loops above skip it; initialize its loaded .data and zero its .bss here. */
-    src = &_si_keystore;
-    for (dst = &_s_keystore; dst < &_e_keystore_data; ++dst) {
-        *dst = *src++;
+    /* The partition data bands live outside the general .data/.bss window, so
+     * the loops above skip them. */
+    for (i = 0u; i < sizeof(g_wt_bands) / sizeof(g_wt_bands[0]); i++) {
+        for (dst = g_wt_bands[i].base; dst < g_wt_bands[i].limit; ++dst) {
+            *dst = 0u;
+        }
+        wt_band_load(&g_wt_bands[i]);
     }
-    for (dst = &_s_keystore_bss; dst < &_e_keystore; ++dst) {
-        *dst = 0u;
-    }
-
-#if defined(CONFIG_VNET)
-    /* SERVICE_VNET data band: same treatment as the keystore band. */
-    src = &_si_vnet;
-    for (dst = &_s_vnet; dst < &_e_vnet_data; ++dst) {
-        *dst = *src++;
-    }
-    for (dst = &_s_vnet_bss; dst < &_e_vnet; ++dst) {
-        *dst = 0u;
-    }
-#endif
 
 #if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE == 3)
     /* sealbootneg: a damaged main-stack seal must stop the boot here. The

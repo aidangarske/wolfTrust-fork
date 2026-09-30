@@ -520,6 +520,23 @@ size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max)
     return 2u;
 }
 
+size_t wt_platform_spm_private_regions(wt_memory_region_t* regions,
+                                       size_t max)
+{
+    uintptr_t first_band = WT_SP_VAULT_DATA_BASE;
+
+    if (max < 1u) {
+        return 0u;
+    }
+#if defined(CONFIG_VNET)
+    first_band = WT_VNET_DATA_BASE;
+#endif
+    regions[0].base = WT_RAM_S_BASE;
+    regions[0].size = first_band - WT_RAM_S_BASE;
+    regions[0].attributes = WT_MEM_ATTR_READ | WT_MEM_ATTR_WRITE;
+    return 1u;
+}
+
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
 /* Per-partition private data bands (secure.ld), each denied to other SPs. */
 extern char _s_conf_server_data[];
@@ -557,6 +574,12 @@ size_t wt_platform_conf_sp_grants(int32_t partition_id,
 {
     uintptr_t conf_seg = WT_CONF_SP_DATA_BASE;
 
+    /* The wolfTrust partitions in the image hold none of the suite's data. */
+    if (partition_id != SERVER_PARTITION_ID &&
+            partition_id != CLIENT_PARTITION_ID &&
+            partition_id != DRIVER_PARTITION_ID) {
+        return count;
+    }
     if (partition_id != SERVER_PARTITION_ID) {
         count = wt_conf_grant(regions, count, max, conf_seg,
                               (uintptr_t)_s_conf_server_data);
@@ -581,17 +604,35 @@ size_t wt_platform_conf_sp_grants(int32_t partition_id,
                           WT_CONF_SP_DATA_BASE + WT_CONF_SP_DATA_SIZE);
     return count;
 }
+
+size_t wt_platform_conf_shared_regions(wt_memory_region_t* regions,
+                                       size_t max)
+{
+    if (max < 1u) {
+        return 0u;
+    }
+    regions[0].base = WT_CONF_SP_DATA_BASE;
+    regions[0].size = WT_CONF_SP_DATA_SIZE;
+    regions[0].attributes = WT_MEM_ATTR_READ | WT_MEM_ATTR_WRITE;
+    return 1u;
+}
 #endif
 
 #if (defined(WT_FFM_NEGATIVE_PROBE) && (WT_FFM_NEGATIVE_PROBE == 1)) || \
     (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1)) || \
     (defined(WT_KEYSTORE_NEG_PROBE) && (WT_KEYSTORE_NEG_PROBE == 1)) || \
-    (defined(WT_PERIPH_SP_NEG_PROBE) && (WT_PERIPH_SP_NEG_PROBE == 1))
+    (defined(WT_PERIPH_SP_NEG_PROBE) && (WT_PERIPH_SP_NEG_PROBE == 1)) || \
+    (defined(WT_BAND_NEG_PROBE) && (WT_BAND_NEG_PROBE != 0)) || \
+    (defined(WT_MANIFEST_NEG_PROBE) && (WT_MANIFEST_NEG_PROBE == 3))
 uintptr_t wt_platform_probe_address(unsigned int target)
 {
     switch (target) {
-    case WT_PROBE_KEYSTORE_BAND:
-        return (uintptr_t)WT_KEYSTORE_BASE;
+    case WT_PROBE_VAULT_DATA_BAND:
+        return (uintptr_t)WT_SP_VAULT_DATA_BASE;
+    case WT_PROBE_ATTEST_DATA_BAND:
+        return (uintptr_t)WT_SP_ATTEST_DATA_BASE;
+    case WT_PROBE_HSM_DATA_BAND:
+        return (uintptr_t)WT_SP_HSM_DATA_BASE;
     case WT_PROBE_SPM_PERIPHERAL:
         return (uintptr_t)WT_RNG_BASE_S;
 #if defined(CONFIG_VNET)
