@@ -3,6 +3,19 @@
 TOOLPREFIX ?= arm-none-eabi-
 CPU_FLAGS := -mcpu=$(WT_CPU) -mthumb -mgeneral-regs-only
 ARCH_CFLAGS := -mcmse -DWT_TARGET_BUILD=1
+
+# Architectural-context isolation negatives, test builds only. The FP-probe
+# build must carry exactly its one deliberate FP instruction and no other.
+WT_FP_NEG_PROBE ?= 0
+WT_SEAL_NEG_PROBE ?= 0
+ARCH_FP_SCAN_FLAGS :=
+ifeq ($(WT_FP_NEG_PROBE),1)
+ARCH_CFLAGS += -DWT_FP_NEG_PROBE=1
+ARCH_FP_SCAN_FLAGS := --allow-probe
+endif
+ifneq ($(filter 1 2 3 4,$(WT_SEAL_NEG_PROBE)),)
+ARCH_CFLAGS += -DWT_SEAL_NEG_PROBE=$(WT_SEAL_NEG_PROBE)
+endif
 WT_WOLFCRYPT_SP_ASM ?= 1
 WT_WOLFCRYPT_ARMASM ?= 1
 
@@ -43,6 +56,10 @@ SECURE_CMSE_IMPLIB := $(BUILD_DIR)/secure_cmse_implib.o
 ARCH_LINK_OUTPUTS := $(SECURE_CMSE_IMPLIB)
 ARCH_LDFLAGS := -Wl,--cmse-implib -Wl,--out-implib=$(SECURE_CMSE_IMPLIB)
 
+# A changed post-link checker must relink so the image is checked again.
+$(BUILD_DIR)/wolftrust.elf $(ARCH_LINK_OUTPUTS): \
+    $(ROOT)/tools/check_no_fp_insn.py
+
 # Whitelist of non-secure-callable veneers the linked secure image may
 # export: exactly the five mediated FF-M gateway entries, pinned by full
 # name so a renamed or added veneer fails the link in every build,
@@ -71,4 +88,9 @@ define arch_image_checks
 		echo "FAIL: heap allocator symbol in the zero-heap secure image" >&2; \
 		exit 1; \
 	fi
+	@$(TOOLPREFIX)objdump -d --no-show-raw-insn $(SECURE_ELF) \
+		> $(BUILD_DIR)/sec-disasm.txt || \
+		{ echo "FAIL: objdump on the secure image failed" >&2; exit 1; }
+	@python3 $(ROOT)/tools/check_no_fp_insn.py $(ARCH_FP_SCAN_FLAGS) \
+		$(BUILD_DIR)/sec-disasm.txt
 endef
