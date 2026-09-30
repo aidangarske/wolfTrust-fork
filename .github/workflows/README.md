@@ -10,11 +10,6 @@ or on manual dispatch from `wolfSSL/wolfTrust` only. Both trace host suite
 builds and secure-image builds for STM32H563 and MIMXRT700 with both crypto
 engines via `tools/ci-static-analysis-build.sh`.
 
-Before enabling Coverity, register the case-sensitive `wolfTrust` project on
-Coverity Scan and set `COVERITY_SCAN_TOKEN` and `COVERITY_SCAN_EMAIL` as
-repository secrets. The scheduled job reports a clear failure until these are
-configured.
-
 ## At a glance
 
 | Tier | Trigger | Purpose |
