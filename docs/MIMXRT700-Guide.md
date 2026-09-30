@@ -472,9 +472,12 @@ validated; `provision-da` and `burn` refuse, and describe that flow instead.
 
 ### Locking a production part
 
-Neither the script nor this guide's test flow burns fuses, and a development EVK
-must never be locked. A production part is locked once, on the production line,
-in this order:
+> **IRREVERSIBLE.** Burning OTP fuses cannot be undone. A part moved to In Field
+> or In Field Locked never returns to Develop, and In Field Locked also closes
+> the field-return path. Never run this on a development EVK: `LOCK_CFG3` is open
+> on it, so nothing in silicon would stop the burn.
+
+A production part is locked once, on the production station, in this order:
 
 1. **Authenticate the first stage in ROM.** The reference chain boots wolfBoot
    as a plain XIP image the BootROM does not authenticate. A locked part must
@@ -486,26 +489,54 @@ in this order:
    registers on a production sample, boot the production images, and confirm
    `status` shows the intended life cycle, a closed `DAUTHSTATUS`, and wolfTrust
    receiving `0x3000` SECURED. `advance` rehearses the life cycle half of this.
-3. **Generate the burn script from that same configuration.** SPSDK writes a
-   blhost script from a shadow-register configuration file, so what is burned is
-   what was rehearsed:
+3. **Write the fuse configuration once**, from SPSDK's template, and keep it
+   with the production records:
 
    ```sh
    shadowregs get-template -f mimxrt798s -o production-fuses.yaml
-   shadowregs fuses-script -c production-fuses.yaml
    ```
 
-   Review the generated script line by line before running it.
-4. **Burn the life cycle last**, then set the `LOCK_CFG3` life cycle write
-   lock. Once the part leaves Develop it may refuse further provisioning; check
-   the RT700 security reference manual for exactly what each state closes.
-5. **Verify.** `status` must show both life cycle copies at the burned value,
-   the `LOCK_CFG3` write lock set, debug closed, the guest fence armed, and
+4. **Burn it with `lock`**, on a station with the part in ISP mode:
+
+   ```sh
+   export WT_PRODUCTION_LOCK=1 RT700_ISP='-u 0x1fc9,0x014f'
+   WT_LOCK_CONFIRM=1 TARGET=mimxrt700 tests/target/provisioning_ctrl.sh lock production-fuses.yaml
+   ```
+
+   `lock` refuses unless the configuration sets `LC_STATE` and `LC_STATE_RED`
+   to the same In Field or In Field Locked value. It generates the blhost
+   script with `shadowregs fuses-script`, rejoins the `--no-verify` flags SPSDK
+   3.11 writes on separate lines (which `blhost batch` would run as separate
+   commands after the fuse before them burned), refuses anything other than
+   `efuse-program-once` lines, moves the two life cycle words to the end, and
+   prints the result. Only then does it ask, and only a person at a terminal
+   typing the phrase exactly continues:
+
+   ```text
+   Burn script (~/.cache/wolftrust/rt700-fuses-20260930T200604Z.bls):
+   efuse-program-once 0x58 2880154539 --no-verify
+   ...
+   efuse-program-once 0x25 15 --no-verify
+   efuse-program-once 0x8f 15 --no-verify
+
+   !!! Burning the fuses above, life cycle 0x0F (In Field), into this MIMXRT700
+   !!! This is IRREVERSIBLE: the part can never be unlocked or reflashed
+   !!! for development again. Are you sure? Type "BURN 0x0F" to continue:
+   ```
+
+   Anything else, a pipe, or a missing `WT_PRODUCTION_LOCK=1` refuses with
+   nothing burned. The two life cycle copies are separate fuse words, so a burn
+   interrupted between them leaves them disagreeing, which wolfBoot reports as
+   UNKNOWN; keep the station powered and the ISP link stable.
+5. **Verify.** After a reset, `status` must show both life cycle copies at the
+   burned value, debug closed, the guest fence armed, and
    `wolfTrust saw 0x00003000 (SECURED)`. Then run the production image's
    hardware scenarios.
 
+`lock`'s gates and its generated script were exercised on the EVK without the
+production opt-in; the burn itself has never been run on a wolfTrust board.
 Field returns go to In Field Return through NXP's debug credential flow, which
-needs the debug credential root fused in step 3 and a validated credential
+needs the debug credential root fused in step 4 and a validated credential
 chain; wolfTrust attests that state as DECOMMISSIONED.
 
 ### Verified on the EVK

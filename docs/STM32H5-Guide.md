@@ -200,14 +200,71 @@ recoverable test. Regression performs a full mass-erase back to Open.
 
 After regression, rerun `set-perimeter`, rebuild and flash the complete chain
 with the current hardware runner, reapply WRP, and rerun the positive checks.
-Do not use `provisioning_ctrl.sh flash` or `restore` until its Guest 1 address is
-changed from the stale `0x080C0000` value to the current `0x080E0000` layout.
 
 Every board-writing control command requires `WT_LOCK_CONFIRM=1`.
 The same script drives the MIMXRT700 with `TARGET=mimxrt700`; see the
 [MIMXRT700 Guide](MIMXRT700-Guide.md).
 Review the exact current command in
 `tests/target/provisioning_ctrl.sh` before execution.
+
+## Locking a production part
+
+> **IRREVERSIBLE.** Locked (`0x5C`) is permanent: no Debug Authentication
+> regression, no mass erase, no reflash. Closed (`0x72`) is only reversible
+> through a Debug Authentication chain you have already proven can regress
+> the part; without one, Closed is permanent too. Never lock a development
+> board.
+
+A production part moves through the whole life cycle once:
+
+1. **Build the production images** with production signing keys and
+   `WT_GUEST_FLASH_WRP=1`, then set the perimeter, flash, protect the guests,
+   and verify:
+
+   ```sh
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh set-perimeter
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh flash
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh set-wrp
+   tests/target/provisioning_ctrl.sh verify
+   ```
+
+2. **Provision Debug Authentication** with the production certificate chain
+   (`WT_DA_*`), not ST's sample, and prove it:
+
+   ```sh
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x17
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh provision-da
+   tests/target/provisioning_ctrl.sh discover
+   ```
+
+3. **Close** the part. It still regresses to Open with the provisioned chain:
+
+   ```sh
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x72
+   ```
+
+   Confirm the attestation token reports `0x3000` SECURED with debug closed.
+4. **Lock**, only when field regression is not wanted:
+
+   ```sh
+   export WT_PRODUCTION_LOCK=1
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock
+   ```
+
+   `lock` refuses unless the part is already Closed, then asks, and only a
+   person at a terminal typing the phrase exactly continues:
+
+   ```text
+   !!! Locking this STM32H563: product state 0x72 -> 0x5C (Locked)
+   !!! This is IRREVERSIBLE: the part can never be unlocked or reflashed
+   !!! for development again. Are you sure? Type "LOCK 0x5C" to continue:
+   ```
+
+   Anything else, a pipe, or a missing `WT_PRODUCTION_LOCK=1` refuses with
+   nothing changed. `advance 0x5C` stays refused. `lock` uses the same
+   `PRODUCT_STATE` option-byte write that `advance` uses; its gates were
+   exercised off the board, and the Locked write itself has never been run on a
+   wolfTrust board.
 
 ## Recovery rules
 
