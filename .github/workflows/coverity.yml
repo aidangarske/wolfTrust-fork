@@ -38,7 +38,7 @@ jobs:
             exit 1
           fi
       - name: Run Coverity Scan
-        uses: vapier/coverity-scan-action@v1
+        uses: vapier/coverity-scan-action@1b6fd4eaba6651aa354c9ea7f48caa1710b4e12e # v1
         with:
           project: wolfTrust
           token: ${{ secrets.COVERITY_SCAN_TOKEN }}
