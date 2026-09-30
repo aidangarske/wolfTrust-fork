@@ -327,10 +327,11 @@ int wt_partitions_bind_manifest(const wt_system_manifest_t* manifest)
         }
         domain = wt_partition_manifest_domain(manifest,
                                               (wt_domain_id_t)config->guest_id + 1U);
+        /* Guests launch privileged (CONTROL_NS = 0), so declare PRIVILEGED. */
         if (domain == NULL ||
                 domain->domain_class != WT_DOMAIN_CLASS_NONSECURE_APPLICATION ||
                 domain->security_state != WT_SECURITY_STATE_NONSECURE ||
-                domain->privilege_state != WT_PRIVILEGE_STATE_UNPRIVILEGED ||
+                domain->privilege_state != WT_PRIVILEGE_STATE_PRIVILEGED ||
                 domain->restart_policy.action != WT_RESTART_ACTION_DOMAIN) {
             return -1;
         }
