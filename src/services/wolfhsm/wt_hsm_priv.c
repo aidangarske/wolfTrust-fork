@@ -33,10 +33,9 @@
 
 static struct wt_co *g_wt_taskreg[WT_MAX_GUESTS];
 
-/* Per-guest server tasklet stacks. These back PRIVILEGED coroutines, so they
- * must stay in SPM-private RAM, out of the shared keystore band; this TU is
- * not claimed by any keystore-band linker rule (WT-FFM-0011). A guard below
- * each descending stack contains an underflow before it corrupts a neighbour. */
+/* Per-guest server tasklet stacks, in SPM-private RAM because they back
+ * privileged coroutines (WT-FFM-0011). The guard below each descending stack
+ * contains an underflow before it corrupts a neighbour. */
 #define WT_HSM_STACK_UNDERFLOW_GUARD_SIZE 256u
 
 typedef struct wt_hsm_stack_slot {

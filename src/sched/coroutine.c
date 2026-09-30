@@ -215,7 +215,8 @@ void wt_co_init(void)
 
 static wt_co_t *wt_co_create_common(uint8_t *stack, size_t stack_size,
                                     wt_co_entry_fn entry, void *arg,
-                                    uint8_t initial_state, size_t min_stack)
+                                    uint8_t initial_state, size_t min_stack,
+                                    int require_priv_stack)
 {
     struct wt_co *co;
     uint32_t      id;
@@ -237,10 +238,11 @@ static wt_co_t *wt_co_create_common(uint8_t *stack, size_t stack_size,
     if (g_co_count >= WT_CO_MAX) {
         return (wt_co_t *)0;
     }
-    /* Coroutines are created privileged until wt_co_set_domain drops them;
-     * refuse a stack the platform marks partition-writable so a partition can
-     * never own a privileged frame (WT-FFM-0011). */
-    if (wt_platform_priv_stack_ok(stack, stack_size) == 0) {
+    /* A coroutine that stays privileged must own an SPM-private stack, so a
+     * partition can never hold a privileged frame (WT-FFM-0011). SP coroutines
+     * are demoted after creation and keep their partition stacks, so exempt. */
+    if (require_priv_stack != 0 &&
+            wt_platform_priv_stack_ok(stack, stack_size) == 0) {
         return (wt_co_t *)0;
     }
 
@@ -277,21 +279,21 @@ wt_co_t *wt_co_create(uint8_t *stack, size_t stack_size,
                        wt_co_entry_fn entry, void *arg)
 {
     return wt_co_create_common(stack, stack_size, entry, arg, WT_CO_RUNNABLE,
-                               WT_CO_STACK_SIZE);
+                               WT_CO_STACK_SIZE, 1);
 }
 
 wt_co_t *wt_co_create_blocked(uint8_t *stack, size_t stack_size,
                               wt_co_entry_fn entry, void *arg)
 {
     return wt_co_create_common(stack, stack_size, entry, arg, WT_CO_BLOCKED,
-                               WT_CO_STACK_SIZE);
+                               WT_CO_STACK_SIZE, 1);
 }
 
 wt_co_t *wt_co_create_blocked_ex(uint8_t *stack, size_t stack_size,
                                  wt_co_entry_fn entry, void *arg)
 {
     return wt_co_create_common(stack, stack_size, entry, arg, WT_CO_BLOCKED,
-                               WT_CO_STACK_MIN);
+                               WT_CO_STACK_MIN, 0);
 }
 
 void wt_co_set_domain(wt_co_t *co, const struct wt_secure_domain *domain,

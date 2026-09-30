@@ -31,9 +31,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-static unsigned char g_band_stack[WT_CO_STACK_MIN]
+static unsigned char g_band_stack[WT_CO_STACK_SIZE]
     __attribute__((aligned(8)));
-static unsigned char g_priv_stack[WT_CO_STACK_MIN]
+static unsigned char g_priv_stack[WT_CO_STACK_SIZE]
     __attribute__((aligned(8)));
 
 /* ---- Host stubs for the coroutine arch backend -------------------------- */
@@ -50,30 +50,17 @@ void wt_platform_panic(void) {}
 struct wt_co *g_wt_co_pendsv_target;
 
 /* Call the SAME decision the port validator calls (wt_priv_stack_ok), not a
- * divergent mirror (WT-FFM-0011): a secure-RAM window spanning both marker
- * buffers, with g_band_stack declared a partition-writable band. g_priv_stack
- * is then in RAM and clear of the band (accepted); g_band_stack is in RAM but
- * inside the band (refused). */
+ * divergent mirror (WT-FFM-0011). The SPM-private window is g_priv_stack's own
+ * extent, so g_priv_stack is accepted and the disjoint g_band_stack (standing
+ * in for a partition stack) is refused. */
 int wt_platform_priv_stack_ok(const void *stack, size_t size)
 {
-    uintptr_t lo;
-    uintptr_t hi;
-    wt_priv_band_t bands[1];
-
     if (stack == NULL) {
         return 0;
     }
-    lo = (uintptr_t)g_priv_stack;
-    if ((uintptr_t)g_band_stack < lo) {
-        lo = (uintptr_t)g_band_stack;
-    }
-    hi = (uintptr_t)g_priv_stack + sizeof(g_priv_stack);
-    if ((uintptr_t)g_band_stack + sizeof(g_band_stack) > hi) {
-        hi = (uintptr_t)g_band_stack + sizeof(g_band_stack);
-    }
-    bands[0].base = (uintptr_t)g_band_stack;
-    bands[0].size = sizeof(g_band_stack);
-    return wt_priv_stack_ok((uintptr_t)stack, size, lo, hi, bands, 1u);
+    return wt_priv_stack_ok((uintptr_t)stack, size, (uintptr_t)g_priv_stack,
+                            (uintptr_t)g_priv_stack + sizeof(g_priv_stack),
+                            NULL, 0u);
 }
 
 static void entry(void *arg)
@@ -136,13 +123,15 @@ int main(void)
     check(wt_priv_stack_ok(0x0F00u, 0x100u, 0x1000u, 0x2000u, &band, 1u) == 0,
           "range outside secure RAM refused");
 
-    co = wt_co_create_blocked_ex(g_band_stack, sizeof(g_band_stack), entry, NULL);
+    /* The privileged path (wt_co_create_blocked) enforces the stack check; the
+     * demoted SP path (wt_co_create_blocked_ex) is exempt and accepts either. */
+    co = wt_co_create_blocked(g_band_stack, sizeof(g_band_stack), entry, NULL);
     check(co == NULL,
-          "WT-FFM-0011 partition-writable stack refused for a privileged "
-          "coroutine");
-
-    co = wt_co_create_blocked_ex(g_priv_stack, sizeof(g_priv_stack), entry, NULL);
+          "WT-FFM-0011 partition stack refused for a privileged coroutine");
+    co = wt_co_create_blocked(g_priv_stack, sizeof(g_priv_stack), entry, NULL);
     check(co != NULL, "WT-FFM-0011 SPM-private stack accepted");
+    co = wt_co_create_blocked_ex(g_band_stack, sizeof(g_band_stack), entry, NULL);
+    check(co != NULL, "WT-FFM-0011 SP coroutine keeps its partition stack");
 
     /* The SPM-private tasklet registry and stacks (WT-FFM-0011). */
     check(wt_hsm_priv_stack(0u) != NULL, "guest 0 has an SPM-private stack");
