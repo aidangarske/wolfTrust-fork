@@ -57,7 +57,7 @@ typedef struct wt_its_req {
 
 /* Per-loop dispatch context, built on the Secure Partition's own stack (the
  * unprivileged loop cannot read file-scope globals in SPM RAM). vault_handle
- * caches the SP-to-SP connection across messages; 0 means not yet connected.
+ * is the SP-to-SP connection of the request in progress; 0 between requests.
  * client_flags_mask is the set of PSA create flags this face accepts (others
  * are refused NOT_SUPPORTED); vault_flags is ORed into every forwarded
  * request (the PS face sets WT_VAULT_FLAG_SEALED) and stripped from get_info

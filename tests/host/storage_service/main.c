@@ -54,6 +54,7 @@
 static uint8_t g_flash_memory[RAMSIM_SIZE];
 
 static int g_failures;
+static int g_panics;
 
 static void check(int ok, const char* what)
 {
@@ -85,6 +86,7 @@ static void test_panic(void* context, int32_t partition_id)
 {
     (void)context;
     (void)partition_id;
+    g_panics++;
 }
 
 /* Fallback port dispatch: never used — both partitions register their own. */
@@ -375,6 +377,22 @@ int main(void)
     check(status == PSA_ERROR_INVALID_ARGUMENT, "its_get(uid 0) rejected");
     status = its_remove(&runtime, TEST_NS_GUEST0, handle_g0, 0ULL);
     check(status == PSA_ERROR_INVALID_ARGUMENT, "its_remove(uid 0) rejected");
+
+    /* A vault restart between requests must not strand the front end. */
+    status = its_set(&runtime, TEST_NS_GUEST0, handle_g0, 0x3333ULL, 0U,
+                     data_g0, sizeof(data_g0));
+    check(status == PSA_SUCCESS, "guest0 its_set before the vault restart");
+    check(wt_ffm_partition_restarted(&runtime, TEST_VAULT_PARTITION,
+                                     PSA_ERROR_COMMUNICATION_FAILURE) ==
+              WT_FFM_SUCCESS,
+          "vault partition restart recorded");
+    (void)memset(buffer, 0, sizeof(buffer));
+    status = its_get(&runtime, TEST_NS_GUEST0, handle_g0, 0x3333ULL, 0U,
+                     buffer, sizeof(buffer), &got);
+    check(status == PSA_SUCCESS && got == sizeof(data_g0) &&
+          memcmp(buffer, data_g0, sizeof(data_g0)) == 0,
+          "WT-FFM-0026 its_get served after the vault restarted");
+    check(g_panics == 0, "no partition panicked across the vault restart");
 
     if (wt_ffm_close(&runtime, TEST_NS_GUEST0, handle_g0) != WT_FFM_SUCCESS ||
             wt_ffm_close(&runtime, TEST_NS_GUEST1, handle_g1) !=

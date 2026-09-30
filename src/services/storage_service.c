@@ -37,7 +37,8 @@ static int wt_storage_xfer(wt_storage_service_ctx_t* ctx,
     return WT_FFM_SUCCESS;
 }
 
-/* Lazy SP-to-SP connection to the vault, cached across messages. */
+/* SP-to-SP connection to the vault, held for one request: the vault may
+ * restart between requests, and a handle kept across that is unusable. */
 static psa_status_t wt_storage_vault_handle(wt_storage_service_ctx_t* ctx,
                                             wt_ffm_runtime_t* runtime,
                                             int32_t partition_id)
@@ -58,6 +59,22 @@ static psa_status_t wt_storage_vault_handle(wt_storage_service_ctx_t* ctx,
     }
     ctx->vault_handle = call.ret_handle;
     return PSA_SUCCESS;
+}
+
+static void wt_storage_vault_close(wt_storage_service_ctx_t* ctx,
+                                   wt_ffm_runtime_t* runtime,
+                                   int32_t partition_id)
+{
+    wt_spm_call_t call;
+
+    if (ctx->vault_handle > 0) {
+        (void)memset(&call, 0, sizeof(call));
+        call.op = WT_SPM_OP_CLOSE;
+        call.partition_id = partition_id;
+        call.msg_handle = ctx->vault_handle;
+        (void)wt_storage_xfer(ctx, runtime, &call);
+    }
+    ctx->vault_handle = 0;
 }
 
 static psa_status_t wt_storage_vault_call(wt_storage_service_ctx_t* ctx,
@@ -267,6 +284,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
             break;
         }
     }
+    wt_storage_vault_close(ctx, runtime, partition_id);
     wt_forceZero(buffer, sizeof(buffer));
     return status;
 }

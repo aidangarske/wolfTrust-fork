@@ -45,16 +45,26 @@
 /* Read over the debug port by the hardware harness. */
 static volatile uint32_t g_wt_attest_degraded __attribute__((used));
 
-void wt_boot_run(void)
-{
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    wt_boot_handoff_t bootHandoff;
-    int handoffRet;
+static wt_boot_handoff_t g_wt_boot_handoff;
+static int g_wt_boot_handoff_ret = -1;
 #endif
 
+const struct wt_boot_handoff* wt_boot_handoff_retained(void)
+{
+#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
+    if (g_wt_boot_handoff_ret == 0) {
+        return &g_wt_boot_handoff;
+    }
+#endif
+    return NULL;
+}
+
+void wt_boot_run(void)
+{
     wt_monitor_init();
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    handoffRet = wt_boot_handoff_consume(&bootHandoff);
+    g_wt_boot_handoff_ret = wt_boot_handoff_consume(&g_wt_boot_handoff);
     wt_boot_handoff_clear();
 #endif
     /* Coroutine runtime first: the SP scheduler and (in the hsm engine) the
@@ -64,8 +74,8 @@ void wt_boot_run(void)
     /* Gate vault auto-reformat on the wolfBoot-reported lifecycle before the
      * store comes up: only unlocked development states permit a foreign-pool
      * wipe (see wt_hsm_set_boot_lifecycle). */
-    if (handoffRet == 0) {
-        wt_hsm_set_boot_lifecycle(bootHandoff.lifecycle);
+    if (g_wt_boot_handoff_ret == 0) {
+        wt_hsm_set_boot_lifecycle(g_wt_boot_handoff.lifecycle);
     }
 #endif
 #ifdef WT_ENGINE_HSM
@@ -77,8 +87,8 @@ void wt_boot_run(void)
      * monotonic version floors gate every domain now. A missing handoff
      * reports version zero, which fails closed once a floor is armed. */
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    (void)wt_hsm_rollback_enforce((handoffRet == 0) ?
-                                  bootHandoff.image_version : 0u);
+    (void)wt_hsm_rollback_enforce((g_wt_boot_handoff_ret == 0) ?
+                                  g_wt_boot_handoff.image_version : 0u);
 #else
     (void)wt_hsm_rollback_enforce(0u);
 #endif
@@ -106,8 +116,8 @@ void wt_boot_run(void)
     }
 #endif
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    if (handoffRet == 0) {
-        if (wt_initial_attest_init(&bootHandoff) != WT_ATTEST_SUCCESS) {
+    if (g_wt_boot_handoff_ret == 0) {
+        if (wt_initial_attest_init(&g_wt_boot_handoff) != WT_ATTEST_SUCCESS) {
             /* Attestation could not initialize (e.g. the IAK was unavailable on
              * a fail-closed vault). Degrade rather than dead-trap: the service
              * returns errors, the rest of the system boots. */
@@ -116,8 +126,9 @@ void wt_boot_run(void)
     }
 #endif
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    if (handoffRet == 0) {
-        wt_ffm_set_lifecycle(wt_ffm_boot_runtime_mut(), bootHandoff.lifecycle);
+    if (g_wt_boot_handoff_ret == 0) {
+        wt_ffm_set_lifecycle(wt_ffm_boot_runtime_mut(),
+                             g_wt_boot_handoff.lifecycle);
     }
 #endif
     /* P1t: the service partitions become scheduled unprivileged coroutines.
@@ -130,8 +141,8 @@ void wt_boot_run(void)
 #endif
 #if defined(WT_BOOTUPDATE_PROBE)
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    wt_platform_bootupdate_probe((handoffRet == 0) ?
-                                 bootHandoff.image_version : 0u);
+    wt_platform_bootupdate_probe((g_wt_boot_handoff_ret == 0) ?
+                                 g_wt_boot_handoff.image_version : 0u);
 #else
     wt_platform_bootupdate_probe(0u);
 #endif

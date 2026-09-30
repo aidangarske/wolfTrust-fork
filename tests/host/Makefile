@@ -41,7 +41,7 @@ UNIT_SUITES := domain manifest lifecycle guest_verify rollback sp_recovery \
     attestation_iak ffm_domain sp_layout tasklet_priv port_binding silicon_rev boot_handoff \
     spm_gate \
     flash_nvm ffm_veneer secure_layout \
-    vault_service storage_service ps_service negatives qcbor_shim \
+    vault_service storage_service ps_service keystore_ipc negatives qcbor_shim \
     fwu_service runtime_verify psa_ffm_client psa_storage_client vnet_relay \
     psa_headers
 

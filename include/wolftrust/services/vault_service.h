@@ -45,8 +45,56 @@
 #define WT_VAULT_OP_KEY_DECRYPT      11
 #define WT_VAULT_OP_RANDOM           12
 
+/* Keystore object door (isolation level 3): the crypto partition keeps its
+ * persistent key objects in the vault's NVM store but never touches that
+ * store's memory. These request types carry the wolfHSM NVM callback
+ * operations the crypto engine's keystore needs, accepted only from the one
+ * partition registered with wt_vault_service_set_keystore_client, and only
+ * for ids and labels the keystore owns (never the vault directory, the seal
+ * key, the rollback table, or a storage front end's objects). That partition
+ * is refused every other request type. */
+#define WT_VAULT_OP_NVM_GET_AVAILABLE 13
+#define WT_VAULT_OP_NVM_GET_METADATA  14
+#define WT_VAULT_OP_NVM_ADD_OBJECT    15
+#define WT_VAULT_OP_NVM_DESTROY       16
+#define WT_VAULT_OP_NVM_READ          17
+
 /* Copied-IOVEC randomness bound: RANDOM requests past this are refused. */
 #define WT_VAULT_RANDOM_MAX 256U
+
+/* Keystore door request (invec[0] of every WT_VAULT_OP_NVM_* call).
+ * GET_METADATA/READ/DESTROY name the object in id; DESTROY carries count ids
+ * in invec[1] (count 0 = reclaim only); ADD_OBJECT carries the object's
+ * metadata here and its data in invec[1]; READ carries offset and len. */
+#define WT_VAULT_NVM_LABEL_LEN 24U
+#define WT_VAULT_NVM_DESTROY_MAX 8U
+
+typedef struct wt_vault_nvm_req {
+    uint32_t offset;
+    uint32_t len;
+    uint16_t id;
+    uint16_t count;
+    uint16_t access;
+    uint16_t flags;
+    uint8_t  label[WT_VAULT_NVM_LABEL_LEN];
+} wt_vault_nvm_req_t;
+
+/* GET_METADATA reply (outvec[0]). */
+typedef struct wt_vault_nvm_meta {
+    uint16_t id;
+    uint16_t access;
+    uint16_t flags;
+    uint16_t len;
+    uint8_t  label[WT_VAULT_NVM_LABEL_LEN];
+} wt_vault_nvm_meta_t;
+
+/* GET_AVAILABLE reply (outvec[0]). */
+typedef struct wt_vault_nvm_avail {
+    uint32_t avail_size;
+    uint32_t reclaim_size;
+    uint16_t avail_objects;
+    uint16_t reclaim_objects;
+} wt_vault_nvm_avail_t;
 
 /* PSA storage create flags understood by the vault (SRC-PSA-STORAGE). The
  * NO_* bits are client hints recorded for get_info fidelity; the vault always
@@ -163,6 +211,19 @@ typedef struct wt_vault_key_backend {
  * does not disturb the RANDOM face. */
 typedef psa_status_t (*wt_vault_rng_fn)(uint8_t* out, size_t len);
 
+/* Keystore object door backend: the store-side policy and access behind the
+ * WT_VAULT_OP_NVM_* request types (wt_hsm_vault_nvm_backend). The fail-closed
+ * default answers every operation PSA_ERROR_NOT_SUPPORTED. */
+typedef struct wt_vault_nvm_backend {
+    psa_status_t (*get_available)(wt_vault_nvm_avail_t* avail);
+    psa_status_t (*get_metadata)(uint16_t id, wt_vault_nvm_meta_t* meta);
+    psa_status_t (*add_object)(const wt_vault_nvm_meta_t* meta,
+                               const uint8_t* data, size_t len);
+    psa_status_t (*destroy)(const uint16_t* ids, size_t count);
+    psa_status_t (*read)(uint16_t id, uint32_t offset, uint8_t* data,
+                         size_t len);
+} wt_vault_nvm_backend_t;
+
 /* Install the backing store. NULL restores the fail-closed default, which
  * refuses every request with PSA_ERROR_NOT_SUPPORTED. */
 void wt_vault_service_set_backend(const wt_vault_backend_t* backend);
@@ -178,6 +239,12 @@ void wt_vault_service_set_rng(wt_vault_rng_fn fn);
 /* Transport seam, mirroring crypto_service: direct gate calls on the host,
  * the SVC transport when scheduled on target. NULL restores the default. */
 void wt_vault_service_set_transport(wt_spm_transport_fn fn);
+
+/* Register the one partition allowed through the keystore object door
+ * (the crypto partition) and the store backend behind it. Zero (the
+ * default) closes the door; NULL restores the fail-closed backend. */
+void wt_vault_service_set_keystore_client(int32_t partition_id);
+void wt_vault_service_set_nvm_backend(const wt_vault_nvm_backend_t* backend);
 
 /* SERVICE_VAULT's dispatch loop: wait, get, service one message, reply.
  * Architecture-neutral so the same code is host-tested through a real

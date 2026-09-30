@@ -48,6 +48,38 @@
 static uint8_t g_seal_key[WT_HSM_SEAL_KEY_LEN];
 static int g_seal_ready;
 
+/* Vault-domain DRBG (WT-FFM-0054): seeded by the privileged bring-up of the
+ * vault's band, never in the partition thread, so wolfCrypt's initialisation
+ * state is read only in SPM context. */
+static WC_RNG g_vault_rng;
+static int g_vault_rng_ready;
+
+int wt_hsm_vault_rng_init(void)
+{
+    if (g_vault_rng_ready != 0) {
+        return 0;
+    }
+    if (wc_InitRng_ex(&g_vault_rng, NULL, INVALID_DEVID) != 0) {
+        return -1;
+    }
+    g_vault_rng_ready = 1;
+    return 0;
+}
+
+psa_status_t wt_hsm_vault_random(uint8_t* out, size_t len)
+{
+    if (out == NULL || len == 0U) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (g_vault_rng_ready == 0) {
+        return PSA_ERROR_BAD_STATE;
+    }
+    if (wc_RNG_GenerateBlock(&g_vault_rng, out, (word32)len) != 0) {
+        return PSA_ERROR_GENERIC_ERROR;
+    }
+    return PSA_SUCCESS;
+}
+
 static void wt_hsm_seal_zeroize(uint8_t* buf, size_t len)
 {
     volatile uint8_t* p = buf;

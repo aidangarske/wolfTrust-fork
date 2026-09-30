@@ -33,6 +33,7 @@
 
 #include "wolfhsm/wh_error.h"
 #include "wolfhsm/wh_common.h"
+#include "wolfhsm/wh_keyid.h"
 #include "wolfhsm/wh_nvm.h"
 #include "wolfhsm/wh_nvm_flash.h"
 #include "wolfhsm/wh_flash_unit.h"
@@ -137,8 +138,9 @@ static uint32_t wt_hsm_vault_storage_size(size_t len)
     return (uint32_t)(WHFU_BYTES2UNITS(len) * WHFU_BYTES_PER_UNIT);
 }
 
-static psa_status_t wt_hsm_vault_reserve(uint32_t need_size,
-                                         uint16_t need_objects)
+static psa_status_t wt_hsm_vault_reserve_in(whNvmContext* nvm,
+                                            uint32_t need_size,
+                                            uint16_t need_objects)
 {
     uint32_t avail_size;
     uint32_t reclaim_size;
@@ -146,7 +148,7 @@ static psa_status_t wt_hsm_vault_reserve(uint32_t need_size,
     uint16_t reclaim_objects;
     int rc;
 
-    rc = wh_Nvm_GetAvailable(g_vault_nvm, &avail_size, &avail_objects,
+    rc = wh_Nvm_GetAvailable(nvm, &avail_size, &avail_objects,
                              &reclaim_size, &reclaim_objects);
     if (rc != WH_ERROR_OK) {
         return wt_hsm_vault_map_err(rc);
@@ -155,7 +157,7 @@ static psa_status_t wt_hsm_vault_reserve(uint32_t need_size,
         if (avail_size + reclaim_size >= need_size &&
                 (uint32_t)avail_objects + (uint32_t)reclaim_objects >=
                     need_objects) {
-            rc = wh_Nvm_DestroyObjects(g_vault_nvm, 0U, NULL);
+            rc = wh_Nvm_DestroyObjects(nvm, 0U, NULL);
             if (rc != WH_ERROR_OK) {
                 return wt_hsm_vault_map_err(rc);
             }
@@ -167,15 +169,29 @@ static psa_status_t wt_hsm_vault_reserve(uint32_t need_size,
     return PSA_SUCCESS;
 }
 
+static psa_status_t wt_hsm_vault_reserve(uint32_t need_size,
+                                         uint16_t need_objects)
+{
+    return wt_hsm_vault_reserve_in(g_vault_nvm, need_size, need_objects);
+}
+
 /* Object-add reservation for the native key backend: reserve the object's
  * bytes plus the counter-table headroom, and two directory entries (the add
  * plus one kept free) so a later sealed write's counter-table create always
  * has a slot (WT-FFM-0048). Exported for keyvault.c. */
-psa_status_t wt_hsm_vault_reserve_object(whNvmSize len)
+psa_status_t wt_hsm_vault_reserve_object_in(whNvmContext* nvm, whNvmSize len)
 {
-    return wt_hsm_vault_reserve(
+    if (nvm == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    return wt_hsm_vault_reserve_in(nvm,
         wt_hsm_vault_storage_size(len) +
             wt_hsm_vault_storage_size(sizeof(wt_hsm_vault_table_t)), 2U);
+}
+
+psa_status_t wt_hsm_vault_reserve_object(whNvmSize len)
+{
+    return wt_hsm_vault_reserve_object_in(g_vault_nvm, len);
 }
 
 static psa_status_t wt_hsm_vault_table_store(const wt_hsm_vault_table_t* table)
@@ -419,9 +435,10 @@ static psa_status_t wt_hsm_vault_recover(wt_hsm_vault_table_t* table)
  * (owner, sub, uid) object in the vault id window. Returns PSA_SUCCESS
  * with the id + metadata, or PSA_ERROR_DOES_NOT_EXIST. out_free_id receives
  * the lowest unused id in the window (WH_NVM_ID_INVALID when full). */
-psa_status_t wt_hsm_vault_lookup(int32_t owner, int32_t sub, uint64_t uid,
-                                 whNvmId* out_id, whNvmMetadata* out_meta,
-                                 whNvmId* out_free_id)
+psa_status_t wt_hsm_vault_lookup_in(whNvmContext* nvm, int32_t owner,
+                                    int32_t sub, uint64_t uid,
+                                    whNvmId* out_id, whNvmMetadata* out_meta,
+                                    whNvmId* out_free_id)
 {
     whNvmMetadata meta;
     whNvmId id;
@@ -430,9 +447,12 @@ psa_status_t wt_hsm_vault_lookup(int32_t owner, int32_t sub, uint64_t uid,
     int rc;
     psa_status_t status = PSA_ERROR_DOES_NOT_EXIST;
 
+    if (nvm == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
     for (i = 0U; i < WT_HSM_VAULT_ID_COUNT; i++) {
         id = (whNvmId)(WT_HSM_VAULT_ID_BASE + i);
-        rc = wh_Nvm_GetMetadata(g_vault_nvm, id, &meta);
+        rc = wh_Nvm_GetMetadata(nvm, id, &meta);
         if (rc == WH_ERROR_NOTFOUND) {
             if (free_id == WH_NVM_ID_INVALID) {
                 free_id = id;
@@ -459,6 +479,14 @@ psa_status_t wt_hsm_vault_lookup(int32_t owner, int32_t sub, uint64_t uid,
         *out_free_id = free_id;
     }
     return status;
+}
+
+psa_status_t wt_hsm_vault_lookup(int32_t owner, int32_t sub, uint64_t uid,
+                                 whNvmId* out_id, whNvmMetadata* out_meta,
+                                 whNvmId* out_free_id)
+{
+    return wt_hsm_vault_lookup_in(g_vault_nvm, owner, sub, uid, out_id,
+                                  out_meta, out_free_id);
 }
 
 static psa_status_t wt_hsm_vault_map_err(int rc)
@@ -812,4 +840,196 @@ const wt_vault_backend_t wt_hsm_vault_backend = {
     wt_hsm_vault_get,
     wt_hsm_vault_get_info,
     wt_hsm_vault_remove
+};
+
+/* Keystore object door (isolation level 3). The crypto partition's wolfHSM
+ * keystore ids carry a non-zero type nibble and never collide with the
+ * vault window; its native key objects live in the window under the key
+ * flag. Everything else in the store (storage front-end objects, the
+ * directory table, the seal key, the rollback table, the stage object) is
+ * invisible through the door. */
+static int wt_hsm_vault_nvm_label_is_key(const uint8_t* label)
+{
+    uint32_t magic;
+
+    (void)memcpy(&magic, label, sizeof(magic));
+    return magic == WT_HSM_VAULT_LABEL_MAGIC &&
+           (wt_hsm_vault_flags_of(label) & WT_VAULT_FLAG_KEY) != 0U;
+}
+
+/* 2 = keystore namespace, 1 = vault window (key objects only), 0 = never. */
+static int wt_hsm_vault_nvm_id_class(whNvmId id)
+{
+    if ((id & (whNvmId)WH_KEYTYPE_MASK) != 0U) {
+        return 2;
+    }
+    if (id >= WT_HSM_VAULT_ID_BASE &&
+            id < (whNvmId)(WT_HSM_VAULT_ID_BASE + WT_HSM_VAULT_ID_COUNT)) {
+        return 1;
+    }
+    return 0;
+}
+
+static void wt_hsm_vault_nvm_meta_out(const whNvmMetadata* meta,
+                                      wt_vault_nvm_meta_t* out)
+{
+    (void)memset(out, 0, sizeof(*out));
+    out->id = meta->id;
+    out->access = meta->access;
+    out->flags = meta->flags;
+    out->len = meta->len;
+    (void)memcpy(out->label, meta->label, WT_VAULT_NVM_LABEL_LEN);
+}
+
+/* Fetch an existing object's metadata if the door may see it. */
+static psa_status_t wt_hsm_vault_nvm_visible(whNvmId id, whNvmMetadata* meta)
+{
+    int cls = wt_hsm_vault_nvm_id_class(id);
+    int rc;
+
+    if (g_vault_nvm == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (cls == 0) {
+        return PSA_ERROR_NOT_PERMITTED;
+    }
+    rc = wh_Nvm_GetMetadata(g_vault_nvm, id, meta);
+    if (rc != WH_ERROR_OK) {
+        return wt_hsm_vault_map_err(rc);
+    }
+    if (cls == 1 && !wt_hsm_vault_nvm_label_is_key(meta->label)) {
+        return PSA_ERROR_NOT_PERMITTED;
+    }
+    return PSA_SUCCESS;
+}
+
+static psa_status_t wt_hsm_vault_nvm_get_available(wt_vault_nvm_avail_t* avail)
+{
+    int rc;
+
+    if (g_vault_nvm == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    rc = wh_Nvm_GetAvailable(g_vault_nvm, &avail->avail_size,
+                             &avail->avail_objects, &avail->reclaim_size,
+                             &avail->reclaim_objects);
+    return wt_hsm_vault_map_err(rc);
+}
+
+static psa_status_t wt_hsm_vault_nvm_get_metadata(uint16_t id,
+                                                  wt_vault_nvm_meta_t* out)
+{
+    whNvmMetadata meta;
+    psa_status_t status;
+
+    status = wt_hsm_vault_nvm_visible((whNvmId)id, &meta);
+    if (status == PSA_ERROR_NOT_PERMITTED &&
+            wt_hsm_vault_nvm_id_class((whNvmId)id) == 1) {
+        /* A storage object occupies this window slot: report it taken
+         * without its label so a key lookup neither matches nor reuses it. */
+        (void)memset(out, 0, sizeof(*out));
+        out->id = id;
+        return PSA_SUCCESS;
+    }
+    if (status != PSA_SUCCESS) {
+        return status;
+    }
+    wt_hsm_vault_nvm_meta_out(&meta, out);
+    return PSA_SUCCESS;
+}
+
+static psa_status_t wt_hsm_vault_nvm_add_object(const wt_vault_nvm_meta_t* in,
+                                                const uint8_t* data,
+                                                size_t len)
+{
+    whNvmMetadata meta;
+    whNvmMetadata occupant;
+    psa_status_t status;
+    int cls = wt_hsm_vault_nvm_id_class((whNvmId)in->id);
+    int rc;
+
+    if (g_vault_nvm == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (cls == 0 || (cls == 1 && !wt_hsm_vault_nvm_label_is_key(in->label))) {
+        return PSA_ERROR_NOT_PERMITTED;
+    }
+    if (len > WT_VAULT_OBJECT_MAX || in->len != len) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    /* Replacing an object the door cannot see would overwrite a storage
+     * front end's data through the keystore namespace. */
+    status = wt_hsm_vault_nvm_visible((whNvmId)in->id, &occupant);
+    if (status != PSA_SUCCESS && status != PSA_ERROR_DOES_NOT_EXIST) {
+        return status;
+    }
+    status = wt_hsm_vault_reserve_object((whNvmSize)len);
+    if (status != PSA_SUCCESS) {
+        return status;
+    }
+    (void)memset(&meta, 0, sizeof(meta));
+    meta.id = in->id;
+    meta.access = in->access;
+    meta.flags = in->flags;
+    meta.len = (whNvmSize)len;
+    (void)memcpy(meta.label, in->label, WH_NVM_LABEL_LEN);
+    rc = wh_Nvm_AddObject(g_vault_nvm, &meta, (whNvmSize)len, data);
+    return wt_hsm_vault_map_err(rc);
+}
+
+static psa_status_t wt_hsm_vault_nvm_destroy(const uint16_t* ids,
+                                             size_t count)
+{
+    whNvmMetadata meta;
+    whNvmId list[WT_VAULT_NVM_DESTROY_MAX];
+    psa_status_t status;
+    size_t i;
+    int rc;
+
+    if (g_vault_nvm == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (count > WT_VAULT_NVM_DESTROY_MAX) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    for (i = 0U; i < count; i++) {
+        status = wt_hsm_vault_nvm_visible((whNvmId)ids[i], &meta);
+        if (status != PSA_SUCCESS && status != PSA_ERROR_DOES_NOT_EXIST) {
+            return status;
+        }
+        list[i] = (whNvmId)ids[i];
+    }
+    rc = wh_Nvm_DestroyObjectsChecked(g_vault_nvm, (whNvmId)count,
+                                      (count != 0U) ? list : NULL);
+    return wt_hsm_vault_map_err(rc);
+}
+
+static psa_status_t wt_hsm_vault_nvm_read(uint16_t id, uint32_t offset,
+                                          uint8_t* data, size_t len)
+{
+    whNvmMetadata meta;
+    psa_status_t status;
+    int rc;
+
+    status = wt_hsm_vault_nvm_visible((whNvmId)id, &meta);
+    if (status != PSA_SUCCESS) {
+        return status;
+    }
+    /* Same bounds as the flash backend: the offset must fall inside the
+     * object, even for a zero-length read. */
+    if (len > WT_VAULT_OBJECT_MAX || offset >= meta.len ||
+            len > (size_t)meta.len - offset) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    rc = wh_Nvm_Read(g_vault_nvm, (whNvmId)id, (whNvmSize)offset,
+                     (whNvmSize)len, data);
+    return wt_hsm_vault_map_err(rc);
+}
+
+const wt_vault_nvm_backend_t wt_hsm_vault_nvm_backend = {
+    wt_hsm_vault_nvm_get_available,
+    wt_hsm_vault_nvm_get_metadata,
+    wt_hsm_vault_nvm_add_object,
+    wt_hsm_vault_nvm_destroy,
+    wt_hsm_vault_nvm_read
 };

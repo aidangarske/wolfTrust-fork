@@ -34,11 +34,14 @@ MEMORY {
    * Mirrors WT_VNET_DATA_* in port/stm32h563/memory_map.h. */
   VNETDATA (rw): ORIGIN = 0x30028000 + 308K - WT_VNET_DATA_LENGTH,
                  LENGTH = WT_VNET_DATA_LENGTH
-  /* wolfHSM keystore trust band (WT-FFM-0011 Level 3): the shared wolfHSM
-   * server, NVM, lock, and per-guest tasklet state, relocated out of general
-   * SPM RAM into one MPU-alignable region so the keystore partitions can be
-   * granted exactly it while running unprivileged. Top of the general window. */
-  KEYSTORE (rw): ORIGIN = 0x30075000, LENGTH = 80K
+  /* Keystore data bands (WT-FFM-0011 Level 3): the vault, attestation, and
+   * crypto (SERVICE_HSM) partitions each own one MPU-alignable band holding
+   * exactly their writable state, so no two partitions share a writable
+   * byte. Adjacent, top of the general window; mirror WT_SP_*_DATA_* in
+   * port/stm32h563/memory_map.h. */
+  VAULTDATA (rw): ORIGIN = 0x30075000, LENGTH = 8K
+  ATTESTDATA (rw): ORIGIN = 0x30077000, LENGTH = 2K
+  HSMDATA (rw): ORIGIN = 0x30077800, LENGTH = 70K
   /* FWU partition stack: the PSA Firmware Update SP's execution stack
    * (WT_SP_FWU_STACK_* in memory_map.h). Unprivileged SP whose flash
    * programming traps to the SVC gate. Lowest SP band. */
@@ -103,9 +106,18 @@ SECTIONS {
   /* Constant data is readable, never executable (WT-FFM-0010): the SP thread
    * MPU tables grant [flash, _e_secure_text) RX and the rest of the image
    * window read-only XN, so no partition can execute from constant data. */
-  .rodata : {
+  /* READONLY keeps the output section read-only when the non-LTO objects
+   * still carry these globals as .data/.bss input sections. */
+  .rodata (READONLY) : {
     . = ALIGN(4);
     KEEP(*(.wt_guest_meas))
+    /* wolfCrypt globals that are only ever read (the AES prefetch anchor, the
+     * DRBG selection flag): read-only and shared, so every partition's crypto
+     * sees them without any partition owning them (isolation level 3).
+     * tools/check_secure_layout.py fails the link if a setter of them is
+     * referenced (wc_Sha256Drbg_Enable/Disable). */
+    *(.data.always_prefetch* .bss.always_prefetch*)
+    *(.data.sha256DrbgDisabled* .bss.sha256DrbgDisabled*)
     *(.rodata*)
     *(.ARM.extab* .gnu.linkonce.armextab.*)
     *(.ARM.exidx* .gnu.linkonce.armexidx.*)
@@ -151,86 +163,102 @@ SECTIONS {
     _econfbss = .;
   } > CONFDATA
 
-  /* wolfHSM keystore state (WT-FFM-0011): every RAM object the keystore
-   * partitions (attest, relay, vault) write in-thread — the wt_hsm core, its
-   * service faces, the wolfCOSE signer, and the wolfHSM/wolfCrypt library
-   * state — pulled out of shared SPM RAM into one contiguous MPU-grantable
-   * band. These claims precede .data/.bss, so first-claim ordering keeps the
-   * general sections clean. _s_keystore.._e_keystore span loaded data and
-   * zero-init bss so a single MPU region covers the whole trust unit. */
-  .keystore_data : {
+  /* Per-partition keystore state (WT-FFM-0011 Level 3). Every RAM object a
+   * keystore partition writes in-thread is claimed by its owning band before
+   * the general .data/.bss rules run: the vault's NVM store, flash context,
+   * directory, sealer, and RNG; the attestation partition's token state; the
+   * crypto partition's engine state and the wolfHSM/wolfCrypt library state
+   * it alone drives at runtime. Every object named here is built without LTO
+   * so its claim holds, and tools/check_secure_layout.py checks each claim
+   * against the owner map. Each band spans loaded data and zero-init bss so
+   * one MPU region covers the whole trust unit. */
+  .vault_data : {
     . = ALIGN(32);
+    _s_vault = .;
     _s_keystore = .;
-    /* LTO emits anonymous ltrans objects, so preserve the writable state by
-     * its -fdata-sections names before the non-LTO object selectors below. */
-    *(.data.g_attest_* .data.g_vault_* .data.g_relay_* .data.g_nvm_*)
-    *(.data.g_seal_* .data.g_flash_ecc_* .data.g_fwu_*)
-    *(.data.g_wt_flash_* .data.g_hsm_flash_ctx*)
-    *(.data.g_conf_nvm_*)
-    *(.data.g_hsm_fault_notify* .data.g_active_image_version*)
-    *(.data.g_foreign_probe_fired*)
-    *(.data.g_boot_lifecycle* .data.g_boot_seed* .data.g_boot_handoff*)
-    *(.data.g_handoff_ready* .data.g_implementation_id*)
-    *(.data.g_signer_id* .data.g_ueid*)
-    /* The tasklet stacks (g_co_stack_slots) stay OUT of this band: the monitor
-     * resumes those frames privileged, so they live in SPM-private RAM. */
-    *(.data.g_guests*)
-    *(.data.gCryptoDev* .data.sha256DrbgDisabled* .data.initRefCount*)
-    *wt_hsm.o(.data .data.*)
     *nvm_store.o(.data .data.*)
-    *crypto_native.o(.data .data.*)
-    *keyvault.o(.data .data.*)
-    *wt_hsm_lock.o(.data .data.*)
-    *wt_hsm_seal.o(.data .data.*)
     *wt_hsm_vault.o(.data .data.*)
-    *hsm_relay_service.o(.data .data.*)
+    *wt_hsm_seal.o(.data .data.*)
+    *wt_hsm_lock.o(.data .data.*)
     *vault_service.o(.data .data.*)
+    *hsm_flash_ctx.o(.data .data.*)
+    *wh_sec_wh_nvm.o(.data .data.*)
+    *wh_sec_wh_nvm_flash.o(.data .data.*)
+    *wh_sec_wh_flash_unit.o(.data .data.*)
+    *wh_sec_wh_lock.o(.data .data.*)
+    . = ALIGN(4);
+    _e_vault_data = .;
+  } > VAULTDATA AT > FLASH
+  _si_vault = LOADADDR(.vault_data);
+
+  .vault_bss (NOLOAD) : {
+    _s_vault_bss = .;
+    *nvm_store.o(.bss .bss.* COMMON)
+    *wt_hsm_vault.o(.bss .bss.* COMMON)
+    *wt_hsm_seal.o(.bss .bss.* COMMON)
+    *wt_hsm_lock.o(.bss .bss.* COMMON)
+    *vault_service.o(.bss .bss.* COMMON)
+    *hsm_flash_ctx.o(.bss .bss.* COMMON)
+    *wh_sec_wh_nvm.o(.bss .bss.* COMMON)
+    *wh_sec_wh_nvm_flash.o(.bss .bss.* COMMON)
+    *wh_sec_wh_flash_unit.o(.bss .bss.* COMMON)
+    *wh_sec_wh_lock.o(.bss .bss.* COMMON)
+    . = ALIGN(32);
+    _e_vault = .;
+  } > VAULTDATA
+
+  .attest_data : {
+    . = ALIGN(32);
+    _s_attest = .;
     *attestation_service.o(.data .data.*)
     *initial_attestation.o(.data .data.*)
     *attestation_cose.o(.data .data.*)
-    *hsm_flash.o(.data .data.*)
-    *wolfcose.o(.data .data.*)
-    *wolfcose_cbor.o(.data .data.*)
-    *wh_sec_*.o(.data .data.*)
-    *wc_sec_*.o(.data .data.*)
+    *wolfcose*.o(.data .data.*)
     . = ALIGN(4);
-    _e_keystore_data = .;
-  } > KEYSTORE AT > FLASH
-  _si_keystore = LOADADDR(.keystore_data);
+    _e_attest_data = .;
+  } > ATTESTDATA AT > FLASH
+  _si_attest = LOADADDR(.attest_data);
 
-  .keystore_bss (NOLOAD) : {
-    _s_keystore_bss = .;
-    *(.bss.g_attest_* .bss.g_vault_* .bss.g_relay_* .bss.g_nvm_*)
-    *(.bss.g_seal_* .bss.g_flash_ecc_* .bss.g_fwu_*)
-    *(.bss.g_wt_flash_* .bss.g_hsm_flash_ctx*)
-    *(.bss.g_conf_nvm_*)
-    *(.bss.g_hsm_fault_notify* .bss.g_active_image_version*)
-    *(.bss.g_foreign_probe_fired*)
-    *(.bss.g_boot_lifecycle* .bss.g_boot_seed* .bss.g_boot_handoff*)
-    *(.bss.g_handoff_ready* .bss.g_implementation_id*)
-    *(.bss.g_signer_id* .bss.g_ueid*)
-    *(.bss.g_guests*)
-    *(.bss.gCryptoDev* .bss.sha256DrbgDisabled* .bss.initRefCount*)
-    *wt_hsm.o(.bss .bss.* COMMON)
-    *nvm_store.o(.bss .bss.* COMMON)
-    *crypto_native.o(.bss .bss.* COMMON)
-    *keyvault.o(.bss .bss.* COMMON)
-    *wt_hsm_lock.o(.bss .bss.* COMMON)
-    *wt_hsm_seal.o(.bss .bss.* COMMON)
-    *wt_hsm_vault.o(.bss .bss.* COMMON)
-    *hsm_relay_service.o(.bss .bss.* COMMON)
-    *vault_service.o(.bss .bss.* COMMON)
+  .attest_bss (NOLOAD) : {
+    _s_attest_bss = .;
     *attestation_service.o(.bss .bss.* COMMON)
     *initial_attestation.o(.bss .bss.* COMMON)
     *attestation_cose.o(.bss .bss.* COMMON)
-    *hsm_flash.o(.bss .bss.* COMMON)
-    *wolfcose.o(.bss .bss.* COMMON)
-    *wolfcose_cbor.o(.bss .bss.* COMMON)
-    *wh_sec_*.o(.bss .bss.* COMMON)
-    *wc_sec_*.o(.bss .bss.* COMMON)
+    *wolfcose*.o(.bss .bss.* COMMON)
     . = ALIGN(32);
+    _e_attest = .;
+  } > ATTESTDATA
+
+  .hsm_data : {
+    . = ALIGN(32);
+    _s_hsm = .;
+    *wt_hsm.o(.data .data.*)
+    *hsm_relay_service.o(.data .data.*)
+    *nvm_client.o(.data .data.*)
+    *crypto_native.o(.data .data.*)
+    *keyvault.o(.data .data.*)
+    *native_wire.o(.data .data.*)
+    *wh_sec_*.o(.data .data.*)
+    *wc_sec_cryptocb.o(.data .data.*)
+    . = ALIGN(4);
+    _e_hsm_data = .;
+  } > HSMDATA AT > FLASH
+  _si_hsm = LOADADDR(.hsm_data);
+
+  .hsm_bss (NOLOAD) : {
+    _s_hsm_bss = .;
+    *wt_hsm.o(.bss .bss.* COMMON)
+    *hsm_relay_service.o(.bss .bss.* COMMON)
+    *nvm_client.o(.bss .bss.* COMMON)
+    *crypto_native.o(.bss .bss.* COMMON)
+    *keyvault.o(.bss .bss.* COMMON)
+    *native_wire.o(.bss .bss.* COMMON)
+    *wh_sec_*.o(.bss .bss.* COMMON)
+    *wc_sec_cryptocb.o(.bss .bss.* COMMON)
+    . = ALIGN(32);
+    _e_hsm = .;
     _e_keystore = .;
-  } > KEYSTORE
+  } > HSMDATA
 
   /* SERVICE_VNET data band: first-claim the vnet dataplane, service, and
    * relay objects' RAM out of shared SPM .data/.bss so the unprivileged
@@ -271,14 +299,22 @@ SECTIONS {
 
   ASSERT(ORIGIN(VNETDATA) == (ORIGIN(RAM) + LENGTH(RAM)),
          "vnet data band must sit directly above the secure RAM window")
-  ASSERT(ORIGIN(KEYSTORE) == (ORIGIN(VNETDATA) + LENGTH(VNETDATA)),
-         "keystore band must sit directly above the vnet data band")
+  ASSERT(ORIGIN(VAULTDATA) == (ORIGIN(VNETDATA) + LENGTH(VNETDATA)),
+         "vault data band must sit directly above the vnet data band")
   ASSERT(_e_vnet <= (ORIGIN(VNETDATA) + LENGTH(VNETDATA)),
          "vnet data band overflow")
-  ASSERT(ORIGIN(FWUSTACK) == (ORIGIN(KEYSTORE) + LENGTH(KEYSTORE)),
-         "FWU stack must sit directly above the keystore band")
-  ASSERT(_e_keystore <= (ORIGIN(KEYSTORE) + LENGTH(KEYSTORE)),
-         "keystore band overflow")
+  ASSERT(ORIGIN(ATTESTDATA) == (ORIGIN(VAULTDATA) + LENGTH(VAULTDATA)),
+         "attestation data band must sit directly above the vault data band")
+  ASSERT(ORIGIN(HSMDATA) == (ORIGIN(ATTESTDATA) + LENGTH(ATTESTDATA)),
+         "crypto data band must sit directly above the attestation data band")
+  ASSERT(ORIGIN(FWUSTACK) == (ORIGIN(HSMDATA) + LENGTH(HSMDATA)),
+         "FWU stack must sit directly above the crypto data band")
+  ASSERT(_e_vault <= (ORIGIN(VAULTDATA) + LENGTH(VAULTDATA)),
+         "vault data band overflow")
+  ASSERT(_e_attest <= (ORIGIN(ATTESTDATA) + LENGTH(ATTESTDATA)),
+         "attestation data band overflow")
+  ASSERT(_e_hsm <= (ORIGIN(HSMDATA) + LENGTH(HSMDATA)),
+         "crypto data band overflow")
   ASSERT(ORIGIN(PSSTACK) == (ORIGIN(FWUSTACK) + LENGTH(FWUSTACK)),
          "PS stack must sit directly above the FWU stack")
   ASSERT(ORIGIN(ITSSTACK) == (ORIGIN(PSSTACK) + LENGTH(PSSTACK)),
