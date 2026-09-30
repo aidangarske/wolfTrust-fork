@@ -204,6 +204,8 @@ Do not use `provisioning_ctrl.sh flash` or `restore` until its Guest 1 address i
 changed from the stale `0x080C0000` value to the current `0x080E0000` layout.
 
 Every board-writing control command requires `WT_LOCK_CONFIRM=1`.
+The same script drives the MIMXRT700 with `TARGET=mimxrt700`; see the
+[MIMXRT700 Guide](MIMXRT700-Guide.md).
 Review the exact current command in
 `tests/target/provisioning_ctrl.sh` before execution.
 

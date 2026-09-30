@@ -25,7 +25,15 @@
 #   discover               prove the DA credential authenticates (non-destructive)
 #   advance <hexstate>     set PRODUCT_STATE (GATED; Locked refused)
 #   regress                DA-authenticate + full regression back to Open (GATED)
+#
+# TARGET=mimxrt700 runs the MIMXRT700 backend (provisioning_ctrl_rt700.sh).
 set -euo pipefail
+
+case "${TARGET:-stm32h563}" in
+  stm32h563) ;;
+  mimxrt700) exec "$(dirname "$0")/provisioning_ctrl_rt700.sh" "$@" ;;
+  *) echo "no provisioning backend for TARGET=$TARGET (stm32h563|mimxrt700)" >&2; exit 2 ;;
+esac
 
 CP="${STM32_CP:-$HOME/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin}"
 CLI="${STM32_CLI:-$CP/STM32_Programmer_CLI}"

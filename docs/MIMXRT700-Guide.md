@@ -383,6 +383,11 @@ Closed state and returns Closed parts to Open by regression; the MIMXRT700 has
 no TrustZone Closed, and In Field Return is a one-way failure-analysis state,
 not a return to Develop.
 
+`tests/target/provisioning_ctrl.sh` is the single entry point for both ports:
+with `TARGET=mimxrt700` it runs this backend, so
+`TARGET=mimxrt700 tests/target/provisioning_ctrl.sh status` equals the
+`provisioning_ctrl_rt700.sh status` used below.
+
 The reversible development sequence:
 
 ```sh
