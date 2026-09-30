@@ -342,6 +342,16 @@ void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
 
 extern char _e_secure_text[];
 
+/* No peripheral is assignable to a Secure Partition yet: the SPM drives every
+ * Secure peripheral itself, so every partition DEVICE resource is refused. */
+const struct wt_periph* wt_platform_sp_peripherals(size_t* count)
+{
+    if (count != NULL) {
+        *count = 0U;
+    }
+    return NULL;
+}
+
 size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max)
 {
     if (max < 2u) {

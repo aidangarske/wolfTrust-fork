@@ -170,7 +170,40 @@ int wt_platform_guest_flash_wrp_ok(uintptr_t window_base, size_t window_size)
                                      WT_FLASH_WRP_SECTORS_PER_GROUP);
 }
 
-static void wt_gtzc_init(void)
+#define WT_GTZC_SECCFGR3_SPM (WT_GTZC_SECCFGR3_HASHSEC | \
+                              WT_GTZC_SECCFGR3_RNGSEC | \
+                              WT_GTZC_SECCFGR3_PKASEC)
+
+/* WT-FFM-0068: read the attribution back, so a register that did not take
+ * (or a later write that undid it) halts boot instead of leaving the SPM's
+ * peripherals or Secure SRAM reachable from Non-secure masters, DMA included. */
+static int wt_gtzc_attribution_ok(size_t nsWords)
+{
+    size_t i;
+
+    if ((WT_GTZC1_TZSC_SECCFGR3 & WT_GTZC_SECCFGR3_SPM) !=
+            WT_GTZC_SECCFGR3_SPM) {
+        return 0;
+    }
+    for (i = nsWords; i < 16u; ++i) {
+        if (WT_GTZC1_MPCBB1_SECCFGR[i] != 0xFFFFFFFFu) {
+            return 0;
+        }
+    }
+    for (i = 0; i < 4u; ++i) {
+        if (WT_GTZC1_MPCBB2_SECCFGR[i] != 0xFFFFFFFFu) {
+            return 0;
+        }
+    }
+    for (i = 0; i < 20u; ++i) {
+        if (WT_GTZC1_MPCBB3_SECCFGR[i] != 0xFFFFFFFFu) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int wt_gtzc_init(void)
 {
     size_t i;
     size_t nsWords = (WT_GUEST1_RAM_BASE + WT_GUEST_RAM_SIZE -
@@ -199,9 +232,7 @@ static void wt_gtzc_init(void)
      * APB/AHB SAU windows are exposed to guests for other devices. STM32H563
      * has HASH, RNG and PKA in this GTZC register; AES/SAES are not present on
      * this line and future H5 derivatives should add their bits here. */
-    WT_GTZC1_TZSC_SECCFGR3 |= (WT_GTZC_SECCFGR3_HASHSEC |
-                               WT_GTZC_SECCFGR3_RNGSEC |
-                               WT_GTZC_SECCFGR3_PKASEC);
+    WT_GTZC1_TZSC_SECCFGR3 |= WT_GTZC_SECCFGR3_SPM;
 
     for (i = 0; i < 4u; ++i) {
         WT_GTZC1_MPCBB2_SECCFGR[i] = 0xFFFFFFFFu;
@@ -225,6 +256,7 @@ static void wt_gtzc_init(void)
     for (i = 0; i < 20u; ++i) {
         WT_GTZC1_MPCBB3_PRIVCFGR[i] = 0x00000000u;
     }
+    return (wt_gtzc_attribution_ok(nsWords) == 1) ? 0 : -1;
 }
 
 volatile void* wt_platform_boot_handoff_region(size_t* size)
@@ -374,7 +406,9 @@ void wt_platform_init(void)
     /* The signed wolfBoot handoff reserves the manifest header at the slot
      * base; the Secure vector table begins at the image base after it. */
     WT_SCB_VTOR_S = WT_FLASH_IMAGE_BASE;
-    wt_gtzc_init();
+    if (wt_gtzc_init() != 0) {
+        wt_platform_panic();
+    }
     wt_armv8m_sau_init(g_sau_regions,
                        sizeof(g_sau_regions) / sizeof(g_sau_regions[0]));
     wt_armv8m_mpu_s_init(g_mpu_s_whitelist,
@@ -449,6 +483,16 @@ void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
  * the image window (constant data and the signed tail) read-only XN
  * (WT-FFM-0010). */
 extern char _e_secure_text[];
+
+/* No peripheral is assignable to a Secure Partition yet: the SPM drives every
+ * Secure peripheral itself, so every partition DEVICE resource is refused. */
+const struct wt_periph* wt_platform_sp_peripherals(size_t* count)
+{
+    if (count != NULL) {
+        *count = 0U;
+    }
+    return NULL;
+}
 
 size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max)
 {

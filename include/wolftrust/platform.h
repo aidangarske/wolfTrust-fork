@@ -63,6 +63,11 @@ size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max);
  * not intersect any partition-writable band, or a partition could own a
  * privileged frame (WT-FFM-0011). The scheduler refuses creation otherwise. */
 int wt_platform_priv_stack_ok(const void *stack, size_t size);
+
+/* Peripherals a Secure Partition may own through a DEVICE resource
+ * (WT-FFM-0068). NULL with *count 0 refuses every partition DEVICE region. */
+struct wt_periph;
+const struct wt_periph* wt_platform_sp_peripherals(size_t* count);
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
 size_t wt_platform_conf_sp_grants(int32_t partition_id,
                                   wt_memory_region_t* regions,

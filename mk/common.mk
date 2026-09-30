@@ -242,6 +242,8 @@ SECURE_SRCS := \
     $(ROOT)/src/manifest.c \
     $(ROOT)/src/monitor.c \
     $(ROOT)/src/fabric_windows.c \
+    $(ROOT)/src/periph.c \
+    $(ROOT)/src/irq_claim.c \
     $(ROOT)/src/spm.c \
     $(ROOT)/src/boot.c \
     $(ROOT)/src/spm_partitions.c \

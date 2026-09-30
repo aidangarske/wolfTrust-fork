@@ -29,6 +29,9 @@
 /* Armv8-M-private, shared by the arch layer and the Cortex-M ports. */
 
 /* PMSAv8: RBAR[2:1] = AP, RBAR[0] = XN, RLAR[3:1] = MAIR index. */
+/* External lines in g_secure_vectors (runner/ivt.c); no Secure IRQ may go past. */
+#define WT_ARMV8M_SECURE_IRQS 64u
+
 #define WT_MPU_RBAR_XN       (1u << 0)
 #define WT_MPU_RBAR_AP_RW    (0u << 1)   /* privileged RW, no access from unpriv */
 #define WT_MPU_RBAR_AP_RWRW  (1u << 1)   /* RW from any priv level */
