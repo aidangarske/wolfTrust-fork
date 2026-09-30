@@ -167,239 +167,264 @@ every required host tool. It reports a skip when the CLI or serial VCP is absent
 and, when `lsusb` is available, when no ST-Link is detected. Without `lsusb`, a
 missing probe appears later as a flash failure.
 
-## Reversible product-state flow
+## Provisioning and product state
 
-Product-state values used by the control script are:
+This section is the STM32H5 part of [Provisioning](Provisioning.md). That page
+covers the shared flow (rehearse, validate, then lock), the command table, the
+gates, and what a production lock does to the firmware. Here are the STM32H5
+product states, the mock lock on the NUCLEO-H563ZI, and the real lock, with
+output. Every output block below is from a NUCLEO-H563ZI run on 2026-09-30,
+unless it says otherwise.
 
-| State | Value |
-| --- | ---: |
-| Open | `0xED` |
-| Provisioning | `0x17` |
-| TrustZone Closed | `0xC6` |
-| Closed | `0x72` |
-| Locked | `0x5C` |
+| State | Value | Debug | Way back | PSA life cycle |
+| --- | ---: | --- | --- | --- |
+| Open | `0xED` | open | none needed | `0x1000` |
+| Provisioning | `0x17` | open; the wolfTrust chain does not run | DA regression | `0x2000` |
+| TrustZone Closed | `0xC6` | Secure side sealed | DA regression (mass erase) | `0x4000` |
+| Closed | `0x72` | closed; the SWD link drops | DA full regression (mass erase) | `0x3000` |
+| Locked | `0x5C` | closed forever | **none** | `0x3000` |
 
-`advance` refuses Locked, which is permanent; the real, gated command for
-each state is `lock` (see [Locking a production part](#locking-a-production-part)).
-The reversible development sequence is deliberately manual:
+Each state has two commands:
+
+- **`advance <state>`** is the mock lock: it writes the product state, and a
+  Debug Authentication (DA) regression takes the part back to Open. `advance`
+  refuses Locked.
+- **`lock <state>`** is the real, gated production step.
+
+The STM32H5 has three quirks, all seen on the board:
+
+- **The closed states are written only from Provisioning.** Once a part is
+  TrustZone Closed, the debug link cannot write the next state. So TrustZone
+  Closed, Closed, and Locked are each reached directly from Provisioning,
+  which is also how ST's own provisioning script works. `advance` and `lock`
+  both refuse anything else.
+- **A closed part drops the SWD link.** Its option bytes cannot be read, so the
+  script reads its state through DA discovery (`ST_LIFECYCLE_CLOSED`). The CLI
+  also reports `Unable to reconnect after setting the Option Bytes` after
+  every closing write. That is expected; the script judges the write by the
+  read-back, not by the CLI's exit status.
+- **Provisioning does not run the wolfTrust chain**, even after a reset. The
+  boot proof in a rehearsal therefore comes from the closed states.
+
+### Stage 1: prepare the production chain
+
+Build the production images with production signing keys and
+`WT_GUEST_FLASH_WRP=1`, then set the perimeter, flash, protect the guests, and
+verify. `restore` does all four:
 
 ```sh
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh restore
 tests/target/provisioning_ctrl.sh status
+```
+
+```text
+Setting wolfTrust OEM-iRoT perimeter: TZEN=0xB4 BOOT_UBE=0xB4 SWAP_BANK=0x0 SECWM1_STRT=0x0 SECWM1_END=0x4F SECWM2_STRT=0x0 SECWM2_END=0x7F
+Option Bytes successfully programmed
+Download verified successfully
+Write-protecting guest flash (bank1 sectors 0x50-0x7F): WRPSGn1=0x000FFFFF
+     WRPSGn1      : 0xFFFFF  (0x8000000)
+  [check] PASS  wolfTrust chain boots on silicon
+PASS: wolfTrust restored and booting
+     PRODUCT_STATE: 0xED (Open)
+     BOOT_UBE     : 0xB4 (OEM-iRoT (user flash) selected)
+     TZEN         : 0xB4 (Trust zone enabled)
+```
+
+### Stage 2: rehearse a state (mock lock)
+
+Enter Provisioning, provision the DA certificate, confirm discovery offers
+Full Regression, then close the part:
+
+```sh
 WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x17
 WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh provision-da
 tests/target/provisioning_ctrl.sh discover
 WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x72
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
 ```
 
-`advance` to TrustZone Closed or Closed runs only from Provisioning: once a
-part is TrustZone Closed, the debug link cannot write the next state, so each
-closed state is reached directly from Provisioning, as ST's own provisioning
-script does. `advance` also captures the UART across the reset its write
-causes, so it reports whether wolfTrust booted in the new state.
+```text
+ADVANCING product state 0xED -> 0x17 (regress is the only way back)
+Option Bytes successfully programmed
+Provisioning does not run the wolfTrust chain; a closed-state rehearsal proves the boot
+now: 0x17
+Provisioning DA OBK (ST obk_provisioning.sh order): .../ROT_Provisioning/DA/Binary/DA_Config.obk
+discovery: PSA lifecycle...................:ST_LIFECYCLE_PROVISIONING
+discovery: ST provisioning integrity status:0xeaeaeaea
+discovery: permission if authorized...........:(a/14) ==> Full Regression
+discovery: permission if authorized...........:(b/12) ==> To TZ Regression
+Debug Authentication: Discovery Success
+ADVANCING product state 0x17 -> 0x72 (regress is the only way back)
+Error: failed to reconnect after reset !
+Error: Unable to reconnect after setting the Option Bytes
+  [check] PASS  wolfTrust chain boots in Closed
+now: ST_LIFECYCLE_CLOSED
+```
 
-Provision the certificate-based Debug Authentication data in Provisioning.
-`discover` performs read-only device discovery; it supplies neither the key nor
-certificate and does not authenticate the certificate chain or validate the
-regression action. Do not close the device unless the exact certificate chain
-and permitted regression action have been validated in a controlled,
-recoverable test. Regression performs a full mass-erase back to Open.
+> **Warning:** only close the part when discovery shows integrity
+> `0xeaeaeaea` and Full Regression. Without them, Closed cannot be regressed
+> and the part is closed for good.
 
-After regression, rerun `set-perimeter`, rebuild and flash the complete chain
-with the current hardware runner, reapply WRP, and rerun the positive checks.
+`advance` captures the UART across the reset that the write causes. The
+`[check]` line proves the images booted in Closed, with debug closed. That is
+what records the Closed rehearsal.
 
-Every board-writing control command requires `WT_LOCK_CONFIRM=1`.
-The same script drives the MIMXRT700 with `TARGET=mimxrt700`; see the
-[MIMXRT700 Guide](MIMXRT700-Guide.md).
-Review the exact current command in
-`tests/target/provisioning_ctrl.sh` before execution.
+### Stage 3: validate, then regress
 
-## Locking a production part
+In Closed, check the part behaves like the product:
+- the boot check above passed;
+- discovery reports `ST_LIFECYCLE_CLOSED`;
+- the attestation token from the guests reports the life cycle you expect.
+
+`status` cannot read a closed part, and `lock` refuses one:
+
+```text
+$ tests/target/provisioning_ctrl.sh lock 0x5C
+REFUSED: cannot read the product state over SWD.
+```
+
+Then regress, which mass-erases the part back to Open and completes the
+rehearsal, and restore the chain:
+
+```sh
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh restore
+```
+
+```text
+DA certificate Full Regression -> Open (mass-erase):
+SDMAuthenticate               :  1634 : client     : Authentication successful
+Debug Authentication Success
+state after regression: 0xED
+  [check] PASS  wolfTrust chain boots on silicon
+PASS: wolfTrust restored and booting
+```
+
+The rehearsal records, each holding the digest of the four images:
+
+```text
+h5-booted-0x72: 78ec12f957707ed0
+h5-regressed-0x72: 78ec12f957707ed0
+```
+
+One Closed rehearsal covers `lock 0x17`, `lock 0x72`, and `lock 0x5C`. For
+`lock 0xC6`, rehearse with `advance 0xC6` in place of `advance 0x72`.
+
+Refused commands change nothing and exit with status 2:
+
+```text
+$ tests/target/provisioning_ctrl.sh lock 0x72
+REFUSED: the part is Open (0xED); lock 0x72 runs only from Provisioning (0x17).
+$ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x72
+REFUSED: advance to Closed runs only from Provisioning (0x17); state=0xED.
+```
+
+### Stage 4: production lock
 
 > **Production only.** `lock` moves a production part up the product-state
-> ladder for good. Locked (`0x5C`) is **IRREVERSIBLE**: debug closes forever,
-> with no Debug Authentication regression, no mass erase, and no reflash, and
-> the software on the part stays bound to the keys you locked it with.
-> Provisioning, TrustZone Closed, and Closed only come back through a Debug
-> Authentication chain you have proven can regress the part, and that
-> regression mass-erases it. Without such a chain they are permanent too.
-> Never lock a development board. For development, use `advance` and `regress`
-> above.
+> ladder for good.
+>
+> - Locked (`0x5C`) is **IRREVERSIBLE**. Debug closes forever, with no DA
+>   regression, no mass erase, and no reflash. wolfBoot and its signing key
+>   stay fixed for the life of the part.
+> - Provisioning, TrustZone Closed, and Closed only come back through a DA
+>   chain you have proven can regress the part, and that regression
+>   mass-erases it. Without such a chain they are permanent too.
+>
+> Never lock a development board.
 
-### What locking does
+**What each state does to the part.**
+- **Provisioning** is where the DA certificate is provisioned.
+- **TrustZone Closed** seals the Secure side.
+- **Closed** closes debug and drops the SWD link. Your certificate chain can
+  still regress it.
+- **Locked** closes debug for good.
 
-**To the device**:
+From TrustZone Closed on, wolfTrust enforces guest rollback floors, never
+reformats the vault, and attests the new life cycle. See
+[what a production lock does to the firmware](Provisioning.md#what-a-production-lock-does-to-the-firmware).
 
-| State | Debug | Way back |
-| --- | --- | --- |
-| Provisioning `0x17` | Secure debug closed, Non-secure open | DA regression (mass erase) |
-| TrustZone Closed `0xC6` | Secure side sealed | DA regression (mass erase) |
-| Closed `0x72` | fully closed; the SWD link drops | DA full regression (mass erase) |
-| Locked `0x5C` | closed forever | none |
+**How it binds the software.** With debug closed, nothing outside the firmware
+can change the TrustZone perimeter, the guest WRP, or the images. After that,
+the software only changes through wolfBoot's signed update path. It is held in
+place by:
+- the wolfBoot signing key;
+- the guest measurement records;
+- the DA certificate chain, until the part is Locked.
 
-A closed part no longer answers `-ob displ`, so the script reads its state
-through Debug Authentication discovery (`ST_LIFECYCLE_CLOSED`). With debug
-closed, nothing outside the firmware can change the TrustZone perimeter or
-the guest WRP, so set both before locking.
-
-**To the firmware.** wolfBoot hands wolfTrust the PSA life cycle for the
-state:
-- Provisioning is `0x2000`.
-- TrustZone Closed is `0x4000`.
-- Closed and Locked are `0x3000` SECURED.
-
-Past Provisioning, wolfTrust stops treating the part as a development board:
-
-- It enforces each guest's rollback floor, so an older guest image is refused.
-- It never reformats the vault, even a corrupt one: the sealed device key and
-  write-once storage survive, and a damaged store stops boot provisioning
-  instead of being wiped.
-- The attestation token reports the new life cycle.
-
-**How it binds the software.** Once debug is closed, the software on the part
-can only change through wolfBoot's signed update path (`SERVICE_FWU`). The
-keys that hold it in place are:
-
-- the wolfBoot signing key, which decides which wolfTrust images wolfBoot boots;
-- the guest measurement records, which decide which guests wolfTrust launches;
-- the Debug Authentication certificate chain, which is the only way to regress
-  a part that is not yet Locked.
-
-On a Locked part, only the signed update path remains, and wolfBoot itself can
-never be replaced. If you lose the signing key, the part can never be updated.
-
-### The lock commands
-
-`lock` is the real command for each state. ST's rule, confirmed on this board,
-is that the closed states are written **from Provisioning**: once a part is
-TrustZone Closed, the debug link can no longer write the next state. So
-`lock` goes Open → Provisioning, then to exactly one final state:
+See [how a production lock binds the software](Provisioning.md#how-a-production-lock-binds-the-software).
 
 | Command | Runs only from | Sets | Also needs |
 | --- | --- | --- | --- |
-| `lock 0x17` | Open `0xED` | Provisioning | a rehearsal of `0x17` |
+| `lock 0x17` | Open `0xED` | Provisioning | a DA regression rehearsed from Provisioning or a closed state |
 | `lock 0xC6` | Provisioning `0x17` | TrustZone Closed | a rehearsal of `0xC6`; guest WRP; DA provisioned |
 | `lock 0x72` | Provisioning `0x17` | Closed | a rehearsal of `0x72`; guest WRP; DA provisioned |
 | `lock 0x5C` | Provisioning `0x17` | Locked (final) | a rehearsal of `0x72`; guest WRP |
 
-### What `lock` checks before it writes
+On top of [the shared gates](Provisioning.md#gates-on-a-real-lock), `lock`
+checks two more things on this port:
+- `WRPSGn1=0x000FFFFF`, the guest WRP.
+- For TrustZone Closed and Closed, a live DA discovery showing an intact
+  OBK that offers Full Regression.
 
-ST's `ROT_Provisioning` script offers the states as a menu and pauses with
-"Press any key to continue". `lock` is stricter:
+After the write, it confirms the new state through DA discovery.
 
-- **One step at a time**, checked against the product state read from the
-  part.
-- **Rehearse, then lock.** A state is rehearsed by `advance <state>` and then
-  `regress`:
-  - `advance` captures the UART across the reset that the write causes, and
-    records that these exact images booted in that state.
-  - `regress` records that Debug Authentication brought the part back to Open
-    from it.
-  - Both records hold a digest of the four images, so a rebuild needs a new
-    rehearsal.
-  - Locked cannot be rehearsed, so `lock 0x5C` requires a rehearsal of Closed:
-    the same images with debug closed.
-- **Provision first.** Every closed state needs the guest WRP
-  (`WRPSGn1=0x000FFFFF`). TrustZone Closed and Closed also need Debug
-  Authentication provisioned and offering Full Regression, which `lock` checks
-  by live discovery. That is the brick ST warns about: a part closed without
-  working Debug Authentication cannot come back.
+1. **Flash the production part** as in stage 1. Keep the images you
+   rehearsed with: a rebuild invalidates the rehearsal.
 
-Then it previews the exact write, and writes only with `WT_LOCK_CONFIRM=1`,
-`WT_PRODUCTION_LOCK=1`, an interactive terminal, and a typed
-`I ACCEPT <state>`.
-
-### Step by step
-
-The `STM32_Programmer_CLI` lines below are from the lock-ladder run on a
-NUCLEO-H563ZI on 2026-08-19. The `[check]` lines, preview, and prompt are what
-the current script adds, run offline against a stubbed CLI. No `lock` write
-has been run on a wolfTrust board.
-
-1. **Build and flash the production images**, with production signing keys
-   and `WT_GUEST_FLASH_WRP=1`, then set the perimeter, protect the guests, and
-   verify:
-
-   ```sh
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh set-perimeter
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh flash
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh set-wrp
-   tests/target/provisioning_ctrl.sh verify
-   ```
-
-   ```text
-     [check] PASS  wolfTrust chain boots on silicon
-   ```
-
-2. **Rehearse Provisioning and Closed** on a production sample, with the
-   production Debug Authentication chain (`WT_DA_*`), not ST's sample:
-
-   > **Warning:** each regression mass-erases the sample. Repeat step 1 after
-   > it.
-
-   ```sh
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x17
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh provision-da
-   tests/target/provisioning_ctrl.sh discover
-   ```
-
-   ```text
-   ADVANCING product state 0xED -> 0x17 (regress is the only way back)
-   Option Bytes successfully programmed
-     [check] PASS  wolfTrust chain boots in Provisioning
-   now: 0x17
-   [====...====] 100% OBKey Provisioned successfully
-   discovery: PSA lifecycle...................:ST_LIFECYCLE_PROVISIONING
-   discovery: ST provisioning integrity status:0xeaeaeaea
-   discovery: permission if authorized........:(a/14) ==> Full Regression
-   Debug Authentication: Discovery Success
-   ```
-
-   Only continue when discovery shows integrity `0xeaeaeaea` and Full
-   Regression. Then close the sample and bring it back:
-
-   ```sh
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x72
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
-   ```
-
-   ```text
-   ADVANCING product state 0x17 -> 0x72 (regress is the only way back)
-   Error: failed to reconnect after reset !
-     [check] PASS  wolfTrust chain boots in Closed
-   now: ST_LIFECYCLE_CLOSED
-   DA certificate Full Regression -> Open (mass-erase):
-   SDMAuthenticate: Authentication successful
-   Debug Authentication Success
-   state after regression: 0xED
-   ```
-
-   The "failed to reconnect" line is expected: Closed drops the debug link.
-   This one rehearsal covers `lock 0x17`, `lock 0x72`, and `lock 0x5C`. For
-   `lock 0xC6`, rehearse with `advance 0xC6` in place of `advance 0x72`.
-
-3. **Preview each step.** Without `WT_LOCK_CONFIRM=1`, `lock` runs every check,
+2. **Preview each step.** Without `WT_LOCK_CONFIRM=1`, `lock` runs every check,
    prints the exact write, and writes nothing:
+
+   ```text
+   $ tests/target/provisioning_ctrl.sh lock 0x17
+   Lock step: Open (0xED) -> Provisioning (0x17)
+     checked: order, rehearsal of Provisioning with images 78ec12f957707ed0
+     will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x17
+   REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
+   ```
+
+   From Provisioning, with DA provisioned:
 
    ```text
    $ tests/target/provisioning_ctrl.sh lock 0x72
    Lock step: Provisioning (0x17) -> Closed (0x72)
-     checked: order, rehearsal of Closed with images 6df4c1a1b2b7cf5c, guest WRP, DA provisioned
+     checked: order, rehearsal of Closed with images 78ec12f957707ed0, guest WRP, DA provisioned
      will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x72
+   REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
+   $ tests/target/provisioning_ctrl.sh lock 0x5C
+   Lock step: Provisioning (0x17) -> Locked (0x5C)
+     checked: order, rehearsal of Closed with images 78ec12f957707ed0, guest WRP
+     will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x5C
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    ```
 
-4. **Lock the part**, on the production station only:
+3. **Enter Provisioning and provision the production DA chain** (`WT_DA_*`,
+   not ST's sample):
 
    ```sh
    export WT_PRODUCTION_LOCK=1
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x17
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh provision-da
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x72
+   tests/target/provisioning_ctrl.sh discover
    ```
 
-   Each step prints the preview, then asks, and only a person at a terminal
+   Each `lock` prints the preview, then asks. Only a person at a terminal
    typing the acceptance exactly continues:
+
+   ```text
+   !!! Moving this STM32H563 to Provisioning (0x17)
+   !!! Only a DA regression, which mass-erases the part, returns it to Open.
+   !!! Are you sure? Type "I ACCEPT 0x17" to continue:
+   ```
+
+4. **Close the part.** A Closed part still regresses with your certificate
+   chain, so stop here if field regression is wanted:
+
+   > **Warning:** only continue when discovery showed integrity `0xeaeaeaea`
+   > and Full Regression in step 3.
+
+   ```sh
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x72
+   ```
 
    ```text
    !!! Moving this STM32H563 to Closed (0x72)
@@ -407,20 +432,18 @@ has been run on a wolfTrust board.
    !!! Are you sure? Type "I ACCEPT 0x72" to continue: I ACCEPT 0x72
    ```
 
-   Expected output: the write, the benign reconnect error, the boot seen on
-   the UART, and the read-back through Debug Authentication discovery:
+   Expected output, which matches the rehearsal above. It shows the
+   reconnect error, the boot seen on the UART, and the read-back through DA
+   discovery:
 
    ```text
-   Error: failed to reconnect after reset !
+   Error: Unable to reconnect after setting the Option Bytes
      [check] PASS  wolfTrust chain boots in Closed
      [check] PASS  product state is Closed (0x72)
    ```
 
-   Stop here if field regression is wanted: a Closed part still regresses
-   with your certificate chain.
-
-5. **Lock for good** instead, only when field regression is not wanted. Run it
-   from Provisioning, in place of `lock 0x72`:
+5. **Or lock for good**, only when field regression is not wanted. Run it from
+   Provisioning, in place of step 4:
 
    > **Warning:** this is IRREVERSIBLE. After it, debug never opens again, the
    > part cannot be regressed or reflashed, and wolfBoot and its key are fixed
@@ -431,36 +454,57 @@ has been run on a wolfTrust board.
    ```
 
    ```text
-   Lock step: Provisioning (0x17) -> Locked (0x5C)
-     checked: order, rehearsal of Closed with images 6df4c1a1b2b7cf5c, guest WRP
-     will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x5C
-
    !!! Locking this STM32H563: product state 0x17 -> 0x5C (Locked)
    !!! This is IRREVERSIBLE: debug closes for good, no regression or mass erase, and only a wolfBoot-signed update can change the firmware.
    !!! Are you sure? Type "I ACCEPT 0x5C" to continue:
    ```
 
-   `lock` confirms Locked through Debug Authentication discovery. If discovery
-   no longer answers, it fails with "the write may still have landed, so do
-   not repeat it". In that case, confirm the state from the part's attestation
-   token instead.
+   `lock` confirms Locked through DA discovery. If discovery no longer
+   answers, `lock` fails with "the write may still have landed, so do not
+   repeat it". Confirm the state from the attestation token instead.
 
 6. **Verify** from the firmware: the attestation token must report `0x3000`
    SECURED, and the production scenarios must pass.
 
-A refused `lock` exits with status 2 and writes nothing. Examples from the
-offline gate tests:
+The production gates, as refused on the board without writing anything:
 
 ```text
-REFUSED: the part is Open (0xED); lock 0x72 runs only from Provisioning (0x17).
-REFUSED: no rehearsal of Closed (0x72) with these images: run 'advance 0x72' and 'regress' first.
+$ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x72
+REFUSED: Moving this STM32H563 to Closed (0x72) is a production lock step. Only a production station sets WT_PRODUCTION_LOCK=1.
+$ echo "I ACCEPT 0x5C" | WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 tests/target/provisioning_ctrl.sh lock 0x5C
+REFUSED: a production lock needs an interactive terminal, not a pipe or script.
+```
+
+Refusals from the offline gate tests:
+
+```text
 REFUSED: guest flash is not write protected (WRPSGn1=0xFFFFFFFF): run 'set-wrp' in Open first.
 REFUSED: Debug Authentication is not provisioned (no intact OBK offering Full Regression): run 'provision-da' and 'discover'.
 REFUSED: confirmation did not match; nothing was changed.
 ```
 
-`advance 0x5C` stays refused. `lock` uses the same `PRODUCT_STATE` option-byte
-write as `advance`.
+`advance 0x5C` stays refused. The Locked write has never been run on a
+wolfTrust board.
+
+### Verified on the NUCLEO-H563ZI
+
+Run on 2026-09-30, from Open, with the `positive` production images:
+
+| Step | Result |
+| --- | --- |
+| `lock 0x72`, `advance 0x72` from Open | refused: only from Provisioning |
+| `advance 0x17` | Provisioning; the chain does not run there |
+| `provision-da`, `discover` | integrity `0xeaeaeaea`, Full Regression offered |
+| `advance 0x72` | Closed; wolfTrust booted (2444 UART bytes across the reset); DA discovery `ST_LIFECYCLE_CLOSED` |
+| `lock 0x5C` while Closed | refused: the link is down |
+| `regress` from Closed, then from Provisioning | certificate authentication succeeded; back to Open |
+| `restore` | perimeter, images, and guest WRP back; chain boots |
+| `lock 0x17` preview from Open | preview printed; nothing written |
+| `lock 0x72`, `lock 0x5C` previews from Provisioning | preview printed; nothing written |
+| `lock 0x72` without `WT_PRODUCTION_LOCK=1` | refused |
+| `lock 0x5C` with a piped acceptance | refused: needs a terminal |
+
+The board ended Open with the chain booting.
 
 ## Recovery rules
 
