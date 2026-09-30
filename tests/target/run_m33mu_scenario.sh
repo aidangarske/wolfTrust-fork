@@ -54,8 +54,8 @@ set -o pipefail
 
 scenario="${1:-}"
 case "$scenario" in
-  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg) ;;
-  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg" >&2; exit 2 ;;
+  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg) ;;
+  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
 esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -92,7 +92,7 @@ export WT_ZEPHYR_DTC_OVERLAY_FILE=boards/wolfboot-stm32h563.overlay
 export WT_MAX_GUESTS=2
 export ZEPHYR_BOARD=nucleo_h563zi/stm32h563xx/ns
 WOLFBOOT_REF=d85fa9dbdf6c36f47b7e96eba5c9df750ad3c963
-M33MU_REF=c84792f7f9e9ce24cf94ffc492c36231de1854c2
+M33MU_REF=5d7f854acd8bcb5b56a6dba391995f9373261b1c
 
 # --- Build the pinned M33MU emulator. Reuse a caller-supplied or already-built
 #     binary so back-to-back scenarios in one container share the build (and a
@@ -108,10 +108,6 @@ else
   cd /tmp/m33mu_src
   git fetch --depth 1 origin "$M33MU_REF"
   git checkout --detach "$M33MU_REF"
-  # M33MU-1 (validation-log.md defect register): TB successor chaining used the
-  # finished block's security state, mis-decoding across BXNS/SG edges. Local
-  # fix until it lands upstream; drop once M33MU_REF includes it.
-  git apply "$repo/tests/target/m33mu-tb-sec-chain.patch"
   cmake -S . -B build -DM33MU_ENABLE_WOLFSSL=OFF
   cmake --build build --target m33mu -j"$(nproc)"
   M33MU=/tmp/m33mu_src/build/m33mu
@@ -282,6 +278,14 @@ elif [ "$scenario" = "spfaultneg" ] || [ "$scenario" = "panicneg" ] ||
   # recovery. The rest of the lifecycle then completes normally through the
   # clean BKPT exit — the restarted SP serves the later requests.
   quit_flag=""
+elif [ "$scenario" = "revneg" ]; then
+  # Production image on revision Z silicon (ES0565 2.2.9): the emulator
+  # reports the refused IDCODE through the real DBGMCU read.
+  if ! grep -aq M33MU_STM32H5_IDCODE "$M33MU"; then
+    echo "FAIL: $M33MU lacks M33MU_STM32H5_IDCODE; rebuild M33MU at $M33MU_REF or later" >&2
+    exit 1
+  fi
+  export M33MU_STM32H5_IDCODE=0x10016484
 elif [ "$scenario" = "authneg" ]; then
   # Guest0 is refused at launch so the BKPT scenario end never fires; the run
   # ends on timeout with guest1's heartbeats as the survival evidence.
@@ -802,6 +806,16 @@ case "$scenario" in
     refute_re "no guest scheduled off the corrupted manifest" \
       '(guest0_psa alive|freertos_guest1:|vnet-guest)'
     echo "PASS: target/manifestneg"
+    ;;
+  revneg)
+    # Engineering-sample silicon must halt in wt_platform_init with the
+    # refusal line and the production panic, before any partition or guest.
+    expect "revision Z refused with the ES0565 2.2.9 console line" \
+      "wolfTrust: halt, STM32H563 engineering sample (ES0565 2.2.9) IDCODE 0x10016484"
+    expect "boot halted on the production panic" "[BKPT] imm=0x7e"
+    refute_re "no partition or guest started on refused silicon" \
+      '(Booting Zephyr|guest0_psa alive|freertos_guest1:|\[BKPT\] imm=0x7f)'
+    echo "PASS: target/revneg"
     ;;
   gtzcneg)
     # A privileged NS guest disables its own NS MPU and stores a sentinel
