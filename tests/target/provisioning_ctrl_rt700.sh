@@ -37,6 +37,8 @@ repo="$(cd "$here/../.." && pwd)"
 target="${RT700_TARGET:-mimxrt798sgfob}"
 spsdk_venv="${RT700_SPSDK_VENV:-$HOME/spsdk-venv}"
 state_dir="${RT700_PROVISION_STATE:-$HOME/.cache/wolftrust}"
+guest_mask="${RT700_GUEST_MASK:-0x3}"
+rehearsal_max_age="${RT700_REHEARSAL_MAX_AGE:-3600}"
 elf="$repo/build/wolftrust.elf"
 
 # OTP shadow words (fuse index * 4 from 0x50018000, both silicon revisions).
@@ -86,14 +88,36 @@ next_lc() {
     esac
 }
 
+sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi
+}
+
+# The four images run_rt700_hardware.sh flashes, as "address file" lines.
+flashed_images() {
+    printf '%s %s\n' \
+        0x28000000 "${RT700_WORK:-$repo/build/rt700}/flash_wolfboot.bin" \
+        0x28040000 "$repo/build/wolftrust_v1_signed.bin" \
+        0x28080000 "$repo/tests/firmware/mimxrt700-baremetal/build/guest0.bin" \
+        0x28100000 "$repo/tests/firmware/mimxrt700-baremetal/build/guest1.bin"
+}
+
 # Rehearsal records hold this digest, so a rebuild needs a fresh rehearsal.
 image_digest() {
-    [ -s "$elf" ] || return 1
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum < "$elf" | cut -c1-16
-    else
-        shasum -a 256 < "$elf" | cut -c1-16
-    fi
+    local a f
+    while read -r a f; do
+        [ -s "$f" ] || return 1
+    done < <(flashed_images)
+    flashed_images | while read -r a f; do cat "$f"; done | sha256 | cut -c1-64
+}
+
+# The flashed images read back over SWD match the host build.
+images_on_device() {
+    local a f
+    while read -r a f; do
+        timeout 120 pyocd cmd -t cortex_m \
+            -c "savemem $a $(wc -c < "$f" | tr -d ' ') $state_dir/readback.bin" \
+            >/dev/null 2>&1 && cmp -s "$state_dir/readback.bin" "$f" || return 1
+    done < <(flashed_images)
 }
 
 # fuse_word <index>: the burned OTP word over the ISP connection, not the shadow.
@@ -105,7 +129,7 @@ import json, sys
 r = json.load(sys.stdin)
 if r.get("status", {}).get("value") != 0 or len(r.get("response", [])) != 2:
     sys.exit(1)
-print("0x%08X" % r["response"][1])'
+print("0x%08X" % r["response"][1])' 2>/dev/null
 }
 
 ensure_spsdk() {
@@ -320,18 +344,25 @@ PYEOF
     esac
     # In Field Return is decommissioned: wolfTrust need not launch guests there.
     if [ "$value" != "0x1F" ]; then
-        read -r vm rm < <(read_words "$(elf_sym g_wt_launch_verified_mask)" \
-            "$(elf_sym g_wt_launch_refused_mask)" | tr '\n' ' '; echo)
-        [ -n "${vm:-}" ] && [ $((0x$vm)) -ne 0 ] && [ $((0x${rm:-1})) -eq 0 ] || \
-            fail "advance" "guests did not all launch (verified=0x${vm:-?} refused=0x${rm:-?})"
-        pass "guests launched (verified=0x$vm refused=0x$rm)"
+        want=$((guest_mask))
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            read -r vm rf < <(read_words "$(elf_sym g_wt_launch_verified_mask)" \
+                "$(elf_sym g_wt_launch_refused_mask)" | tr '\n' ' '; echo)
+            [ -n "${vm:-}" ] && [ $(((0x$vm | 0x${rf:-0}) & want)) -eq "$want" ] && break
+            sleep 1
+        done
+        [ -n "${vm:-}" ] && [ $((0x$vm)) -eq "$want" ] && [ $((0x${rf:-1})) -eq 0 ] || \
+            fail "advance" "guests did not all launch (verified=0x${vm:-?} refused=0x${rf:-?}, want verified=$guest_mask)"
+        pass "guests launched (verified=0x$vm refused=0x$rf)"
     fi
     fence="open"
     if fence_line >/dev/null; then
         fence="armed"
     fi
-    digest="$(image_digest)" || fail "advance" "no $elf to fingerprint the rehearsal"
-    echo "fused=$(fused_lc) image=$digest fence=$fence" > "$state_dir/rt700-booted-$value"
+    digest="$(image_digest)" || fail "advance" "missing a flashed image to fingerprint the rehearsal"
+    images_on_device || fail "advance" "the images on the part differ from the host build: run 'restore'"
+    pass "the images on the part match the host build (${digest:0:16})"
+    echo "fused=$(fused_lc) image=$digest fence=$fence time=$(date +%s)" > "$state_dir/rt700-booted-$value"
     echo "rehearsal of $value recorded; 'regress' completes it"
     ;;
 
@@ -372,7 +403,9 @@ PYEOF
         refuse "lock takes the next life cycle state and an optional fuse configuration: lock <0x07|0x0F|0xCF|0x1F> [fuses.yaml]"
     value="$(lc_hex "$value")"
     case "$value" in
-      0x07|0x0F|0xCF|0x1F) ;;
+      0x07) ;;
+      0x0F|0xCF|0x1F)
+        refuse "$(lc_name "$value") ($value) needs the BootROM to authenticate wolfBoot (a signed image under the fused root key hash), which this port does not build yet; see the MIMXRT700 Guide." ;;
       *) refuse "lock takes 0x07, 0x0F, 0xCF, or 0x1F (got $value)." ;;
     esac
     [ -z "$config" ] || [ -s "$config" ] || refuse "no fuse configuration at $config."
@@ -392,13 +425,17 @@ PYEOF
       *) refuse "the part is fused $(lc_name "$cur") ($cur); its next step is ${nx:-none}, not $value." ;;
     esac
 
-    digest="$(image_digest)" || refuse "no $elf: build the production image first."
+    digest="$(image_digest)" || refuse "missing a flashed image: build the production images first."
     rec="$(cat "$state_dir/rt700-rehearsed-$value" 2>/dev/null || true)"
     rfused="$(sed -n 's/.*fused=\(0x[0-9A-F]*\).*/\1/p' <<<"$rec")"
+    rtime="$(sed -n 's/.* time=\([0-9]*\).*/\1/p' <<<"$rec")"
     [ -n "$rfused" ] && [ $((rfused & ~cur & 0xFF)) -eq 0 ] &&
         [[ "$rec" == *" image=$digest "* ]] || \
-        refuse "no rehearsal of $value ($(lc_name "$value")) with this image: run 'discover', 'advance $value', and 'regress' first."
-    [ "$value" = "0x07" ] || [[ "$rec" == *" fence=armed" ]] || \
+        refuse "no rehearsal of $value ($(lc_name "$value")) with these images: run 'discover', 'advance $value', and 'regress' first."
+    # No silicon UID is documented to bind the record to, so it must be fresh.
+    [ -n "$rtime" ] && [ $(($(date +%s) - rtime)) -le "$rehearsal_max_age" ] || \
+        refuse "the rehearsal of $value is older than ${rehearsal_max_age}s: rehearse this part again right before its burn."
+    [ "$value" = "0x07" ] || [[ "$rec" == *" fence=armed "* ]] || \
         refuse "the rehearsal of $value ran without the guest fence: 'restore' the fenced chain and rehearse again."
 
     mkdir -p "$state_dir"
@@ -444,25 +481,28 @@ for c in lc:
         sys.exit("locking a life cycle word before the last step: %s" % c)
 cmds = [c for c in cmds if c not in lc] + lc
 open(sys.argv[2], "w").write("".join(c + "\n" for c in cmds))
-print(sum(1 for c in cmds if 0x58 <= int(c.split()[1], 0) <= 0x63))
+print(len({int(c.split()[1], 0) for c in cmds if 0x58 <= int(c.split()[1], 0) <= 0x63}))
 PYEOF
 )" || fail "lock" "the burn script is not safe to run as is"
 
     if [ "$value" = "0x0F" ] || [ "$value" = "0xCF" ]; then
-        if [ "$rotkh" -lt "$ROTKH_WORDS" ]; then
+        [ "$rotkh" -eq 0 ] || [ "$rotkh" -eq "$ROTKH_WORDS" ] || \
+            refuse "the fuse configuration programs $rotkh of the $ROTKH_WORDS root key hash words."
+        if [ "$rotkh" -eq 0 ]; then
             n=0
             while [ "$n" -lt "$ROTKH_WORDS" ]; do
                 w="$(fuse_word "$((FUSE_ROTKH + n))")" || refuse "cannot read the root key hash fuses."
-                [ $((w)) -eq 0 ] || break
+                [ $((w)) -ne 0 ] || \
+                    refuse "the root key table hash is not fully burned (word $n is zero): provision it first so the ROM authenticates wolfBoot."
                 n=$((n + 1))
             done
-            [ "$n" -lt "$ROTKH_WORDS" ] || \
-                refuse "the root key table hash is not burned: provision it first (a fuse configuration with RKTH) so the ROM authenticates wolfBoot."
         fi
     fi
 
     echo "Lock step: fused $(lc_name "$cur") ($cur) -> $(lc_name "$value") ($value)"
-    echo "  checked: order, rehearsal of $value with image $digest, guest fence, root key hash"
+    checked="order, rehearsal of $value with images ${digest:0:16} ($(($(date +%s) - rtime))s ago)"
+    [ "$value" = "0x07" ] || checked="$checked, guest fence, root key hash"
+    echo "  checked: $checked"
     echo "  will run: blhost $RT700_ISP batch $script"
     sed 's/^/    /' "$script"
     [ "${WT_LOCK_CONFIRM:-0}" = "1" ] || \

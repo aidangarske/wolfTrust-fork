@@ -53,7 +53,8 @@ state_dir="${WT_PROVISION_STATE:-$HOME/.cache/wolftrust}"
 # 2026-08-19). Use DA_Config.obk with the leaf key and certificate chain, not
 # DA_ConfigWithPassword.obk. Override once a wolfTrust-owned certificate chain
 # replaces ST's sample.
-DA_DIR="${WT_DA_DIR:-$HOME/st-rot-h5/Projects/NUCLEO-H563ZI/ROT_Provisioning/DA}"
+DA_SAMPLE_DIR="$HOME/st-rot-h5/Projects/NUCLEO-H563ZI/ROT_Provisioning/DA"
+DA_DIR="${WT_DA_DIR:-$DA_SAMPLE_DIR}"
 DA_OBK="${WT_DA_OBK:-$DA_DIR/Binary/DA_Config.obk}"
 DA_PWD="${WT_DA_PWD:-$DA_DIR/Binary/password.bin}"
 DA_KEY="${WT_DA_KEY:-$DA_DIR/Keys/key_3_leaf.pem}"
@@ -120,33 +121,48 @@ uart_capture() {
 }
 booted() { strip < "$1" | grep -aqE "guest0_psa|heartbeat|TEE client"; }
 
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi
+}
 # Rehearsal records hold the digest of the images they proved, so a rebuild
 # needs a fresh rehearsal before any lock step.
 image_digest() {
   local f
   for f in "$wb" "$wt" "$g0" "$g1"; do [ -s "$f" ] || return 1; done
-  if command -v sha256sum >/dev/null 2>&1; then
-    cat "$wb" "$wt" "$g0" "$g1" | sha256sum | cut -c1-16
-  else
-    cat "$wb" "$wt" "$g0" "$g1" | shasum -a 256 | cut -c1-16
-  fi
+  cat "$wb" "$wt" "$g0" "$g1" | sha256 | cut -c1-64
+}
+# The DA certificate chain a regression authenticated with.
+da_fingerprint() { [ -s "$DA_CERT" ] && sha256 < "$DA_CERT" | cut -c1-64; }
+# A production part must not carry ST's public sample DA credential.
+da_production_ready() {
+  local pair f s
+  [ -n "${WT_DA_OBK:-}" ] && [ -n "${WT_DA_KEY:-}" ] && [ -n "${WT_DA_CERT:-}" ] || return 1
+  for pair in "$DA_OBK|Binary/DA_Config.obk" "$DA_KEY|Keys/key_3_leaf.pem" \
+              "$DA_CERT|Certificates/cert_leaf_chain.b64"; do
+    f="${pair%%|*}"; s="$DA_SAMPLE_DIR/${pair#*|}"
+    [ -s "$f" ] || return 1
+    if [ -s "$s" ] && [ "$(sha256 < "$f")" = "$(sha256 < "$s")" ]; then
+      return 1
+    fi
+  done
 }
 record() {
   local d
   d="$(image_digest)" || return 0
   mkdir -p "$state_dir"
-  echo "$d" > "$state_dir/h5-$1"
+  echo "$d${2:+ $2}" > "$state_dir/h5-$1"
 }
 # rehearsed <state>: these images booted in <state> and DA regression from it
 # worked. Provisioning runs no wolfTrust chain (seen on the NUCLEO-H563ZI), so
 # its step needs only a regression from it or from a closed state.
 rehearsed() {
-  local d s
+  local d s fp
   d="$(image_digest)" || return 1
+  fp="$(da_fingerprint || true)"
   [ "$1" = "$PS_PROVISIONING" ] ||
     [ "$(cat "$state_dir/h5-booted-$1" 2>/dev/null)" = "$d" ] || return 1
   for s in "$1" $([ "$1" = "$PS_PROVISIONING" ] && echo "$PS_TZCLOSED $PS_CLOSED"); do
-    [ "$(cat "$state_dir/h5-regressed-$s" 2>/dev/null)" = "$d" ] && return 0
+    [ "$(cat "$state_dir/h5-regressed-$s" 2>/dev/null)" = "$d${fp:+ $fp}" ] && return 0
   done
   return 1
 }
@@ -227,6 +243,8 @@ case "$cmd" in
   provision-da)
     confirm
     [ -s "$DA_OBK" ] || fail "provision-da" "DA OBK not found: $DA_OBK"
+    [ "${WT_PRODUCTION_LOCK:-0}" != "1" ] || da_production_ready || \
+      refuse "a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, and WT_DA_CERT, not ST's sample."
     [ "$(product_state)" = "$PS_PROVISIONING" ] || \
       fail "provision-da" "must be in Provisioning ($PS_PROVISIONING); state=$(product_state)"
     echo "Provisioning DA OBK (ST obk_provisioning.sh order): $DA_OBK"
@@ -295,8 +313,9 @@ case "$cmd" in
     [ "$cur" = "$from" ] || \
       refuse "the part is $(ps_name "$cur") ($cur); lock $target runs only from $(ps_name "$from") ($from)."
     rehearsed "$rehearse" || \
-      refuse "no rehearsal of $(ps_name "$rehearse") ($rehearse) with these images: run 'advance $rehearse' and 'regress' first."
-    checked="order, rehearsal of $(ps_name "$rehearse") with images $(image_digest)"
+      refuse "no rehearsal of $(ps_name "$rehearse") ($rehearse) with these images and DA certificate: run 'advance $rehearse' and 'regress' first."
+    digest="$(image_digest)"
+    checked="order, rehearsal of $(ps_name "$rehearse") with images ${digest:0:16}"
     if [ "$target" != "0x17" ]; then
       wrp="$("$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
         | grep -iE "WRPSGn1" | grep -oE "0x[0-9A-Fa-f]+" | head -1 || true)"
@@ -305,6 +324,13 @@ case "$cmd" in
       checked="$checked, guest WRP"
     fi
     if [ "$target" = "0xC6" ] || [ "$target" = "0x72" ]; then
+      if da_production_ready; then
+        checked="$checked, production DA credential"
+      else
+        [ "${WT_PRODUCTION_LOCK:-0}" != "1" ] || \
+          refuse "a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, and WT_DA_CERT, not ST's sample."
+        checked="$checked, DA credential is ST's sample or unset (a production lock refuses it)"
+      fi
       disc="$(da_discovery)"
       grep -q "0xeaeaeaea" <<<"$disc" && grep -q "Full Regression" <<<"$disc" || \
         refuse "Debug Authentication is not provisioned (no intact OBK offering Full Regression): run 'provision-da' and 'discover'."
@@ -329,10 +355,10 @@ case "$cmd" in
     uart_capture 12 /tmp/wt-lock.log
     "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$target" 2>&1 | strip | tail -4 || true
     sleep 10
+    booted_ok=0
     if booted /tmp/wt-lock.log; then
+      booted_ok=1
       pass "wolfTrust chain boots in $(ps_name "$target")"
-    else
-      echo "no wolfTrust boot markers on $SERIAL after the write"
     fi
     if [ "$target" = "0x17" ]; then
       now="$(product_state || true)"
@@ -342,6 +368,8 @@ case "$cmd" in
       now="$(da_lifecycle || true)"
       [ "$now" = "$(st_lifecycle "$target")" ] || \
         fail "lock" "DA discovery reports ${now:-nothing} after the write, expected $(st_lifecycle "$target"); the write may still have landed, so do not repeat it"
+      [ "$booted_ok" = "1" ] || \
+        fail "lock" "the part is $(ps_name "$target") but wolfTrust did not boot on $SERIAL; do not ship it"
     fi
     pass "product state is $(ps_name "$target") ($target)"
     ;;
@@ -369,7 +397,7 @@ case "$cmd" in
     done
     echo "state after regression: ${after:-unreadable}"
     if [ -n "$after" ] && [ "$(hexstate "$after")" = "$PS_OPEN" ] && [ -n "$advanced" ]; then
-      record "regressed-$advanced"
+      record "regressed-$advanced" "$(da_fingerprint || true)"
       rm -f "$state_dir/h5-advanced"
     fi
     ;;
