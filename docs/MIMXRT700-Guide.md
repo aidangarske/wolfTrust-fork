@@ -332,13 +332,20 @@ reset reloads from the fuses.
 The reversible development sequence:
 
 ```sh
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh restore
 tests/target/provisioning_ctrl_rt700.sh status
+tests/target/provisioning_ctrl_rt700.sh verify-wrp
 tests/target/provisioning_ctrl_rt700.sh discover
 WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh advance 0x07
 WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh regress
 WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh advance 0x0F
 WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh regress
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh advance 0xCF
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh regress
 ```
+
+`restore` rebuilds and flashes the production posture: the fenced wolfBoot and a
+`WT_GUEST_FLASH_WRP=1` wolfTrust, verified by the `wrpfence` checks.
 
 `discover` is read-only and gates `advance`: it requires a fused Develop life
 cycle with agreeing copies, an open shadow over-ride, and a readable boot
@@ -354,6 +361,42 @@ proper needs a part with debug disabled in its fuses. A production line burns
 the root key hash, the debug credential root, and the life cycle through NXP's
 secure provisioning flow with a debug credential chain it has already
 validated; `provision-da` and `burn` refuse, and describe that flow instead.
+
+### Verified on the EVK
+
+Every command was run on a MIMXRT700-EVK (fused Develop, `LOCK_CFG3` `0x0`)
+on 2026-09-30, from an empty provisioning state directory, 31 steps in one
+session. Commands that refuse exit with status 2 and change nothing:
+
+| Command | Result |
+| --- | --- |
+| `set-perimeter`, `set-wrp`, `clear-wrp` | explains there is no persistent RT700 form, points at `restore` and `verify-wrp` |
+| `provision-da`, `burn` | refused: fuse programming is permanent |
+| `restore`, `regress`, `advance` without `WT_LOCK_CONFIRM=1` | refused before touching the board |
+| `advance 0x5C`, `advance 0xFF`, `advance junk` | refused: only `0x07`, `0x0F`, `0xCF` |
+| `advance 0x07` before `discover` | refused: run `discover` first |
+| `advance 0x0F` before a proven `regress` | refused |
+| `restore` | fenced chain built, flashed, read back; both guests complete |
+| `verify-wrp` | `armed FRAD2 acp=0x00000000 word3=0xa0000000` |
+| `discover` | four checks pass; stamps the preflight |
+
+`status` in each state (`MGC=0xa8000400`, `TG0MDAD=0xa000c000`, and
+`DAUTHSTATUS=0x000000ff` throughout):
+
+| State | `LC_STATE` / `LC_STATE_RED` | Handoff life cycle | Guest fence | Guests verified / refused |
+| --- | --- | --- | --- | --- |
+| fused, after `restore` | `0x03` / `0x03` | `0x1000` ASSEMBLY_AND_TEST | armed (FRAD2) | `0x3` / `0x0` |
+| `advance 0x07` | `0x07` / `0x07` | `0x2000` PSA_ROT_PROVISIONING | armed | `0x3` / `0x0` |
+| `advance 0x0F` | `0x0F` / `0x0F` | `0x5000` RECOVERABLE_PSA_ROT_DEBUG | armed | `0x3` / `0x0` |
+| `advance 0xCF` (mock locked) | `0xCF` / `0xCF` | `0x5000` RECOVERABLE_PSA_ROT_DEBUG | armed | `0x3` / `0x0` |
+| after each `regress` | `0x03` / `0x03` | `0x1000` ASSEMBLY_AND_TEST | armed | `0x3` / `0x0` |
+
+Each `advance` halted the core inside wolfBoot (`pc` between `0x28004f6a` and
+`0x28005394` across runs), wrote both copies, and read them back before
+resuming. In the mock locked state the device runs its production posture, with
+the fence armed and both guests launched, while the attestation stays below
+SECURED because debug is open. Each `regress` restored the fused life cycle
+through the reset line.
 
 ## Recovery rules
 
