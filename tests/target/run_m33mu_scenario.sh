@@ -365,11 +365,11 @@ case "$scenario" in
       fi
     fi
     if [ "$scenario" = "hsmpinneg" ]; then
-      # The vault forges the server pointer fields once and leaves them; the
-      # unprivileged relay must re-pin them before its next pump or it faults on
-      # the SPM-private address, so the full positive lifecycle must still
-      # complete. Guard against a vacuous pass with the probe compiled out; grep
-      # a symbol file, not a pipe, to stay pipefail-safe.
+      # Every relay pump forges the server pointers to an SPM-private address
+      # right before the pin, so the guest crypto/attestation markers below can
+      # only appear if the unprivileged relay re-pinned them before dereference;
+      # a neutered pin faults instead. Guard against a vacuous pass with the
+      # probe compiled out; grep a symbol file, not a pipe, to stay pipefail-safe.
       tasklet_syms="$repo/build/hsmpinneg-syms.txt"
       "${CROSS_COMPILE}nm" "$repo/build/wolftrust-signed.elf" > "$tasklet_syms"
       if grep -q ' wt_platform_hsm_pin_probe$' "$tasklet_syms"; then

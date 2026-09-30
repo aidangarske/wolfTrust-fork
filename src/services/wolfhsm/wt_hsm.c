@@ -141,6 +141,7 @@ static int g_foreign_probe_fired;
  * ---------------------------------------------------------------------- */
 static void wt_hsm_tasklet_main(void *arg);
 static void wt_hsm_server_pin(wt_guest_id_t guest_id);
+static void wt_hsm_bind_server_cfg(wt_guest_id_t guest_id);
 static void wt_hsm_relay_bind(wt_guest_id_t guest_id,
                               const whTransportServerCb **cb, void **ctx);
 
@@ -271,10 +272,9 @@ static void wt_hsm_tasklet_main(void *arg)
     for (;;) {
         int rc;
 
-        /* This tasklet runs once, at attestation bootstrap, before any
-         * partition is schedulable, so nothing can forge these pointers between
-         * this pin and the pump; the runtime pump is the relay, which pins
-         * itself in wt_hsm_relay_submit (WT-FFM-0011). */
+        /* This tasklet runs only at attestation bootstrap, before any partition
+         * is schedulable; the runtime pump is the relay, which pins itself in
+         * wt_hsm_relay_submit (WT-FFM-0011). */
         wt_hsm_server_pin(gid);
         rc = wh_Server_HandleRequestMessage(&g->server);
         if (rc == WH_ERROR_NOTREADY) {
@@ -290,12 +290,9 @@ static void wt_hsm_tasklet_main(void *arg)
 /* =========================================================================
  * wt_hsm_guest_init
  * ====================================================================== */
-/* Intentional versioned API change: the former public four-argument
- * wt_hsm_guest_init(guest_id, cb, ctx, cfg) is gone. Relay is the sole
- * supported transport (the CMSE transport was retired), so this is static and
- * binds the relay from the same accessor the pin uses; a caller-chosen
- * transport left a pointer a later pump could be made to follow, so there is no
- * compatibility path (WT-FFM-0011). Ports migrate to wt_hsm_guest_init_relay. */
+/* Static and relay-only by design: the former public four-argument
+ * wt_hsm_guest_init is gone because a caller-chosen transport left a pointer a
+ * later pump could follow. Ports use wt_hsm_guest_init_relay (WT-FFM-0011). */
 static int wt_hsm_guest_init(wt_guest_id_t guest_id)
 {
     int                        rc;
@@ -347,20 +344,10 @@ static int wt_hsm_guest_init(wt_guest_id_t guest_id)
     g->transport_cb  = transport_cb;
     g->transport_cfg = transport_cfg;
 
-    g->comm_cfg.transport_cb      = transport_cb;
-    g->comm_cfg.transport_context = transport_ctx;
-    g->comm_cfg.transport_config  = transport_cfg;
-    g->comm_cfg.server_id         = (uint8_t)wt_hsm_guest_client_id(guest_id);
-
     /* ------------------------------------------------------------------
-     * 5. Build server config.
+     * 5. Build comm and server config from trusted sources.
      * ---------------------------------------------------------------- */
-    g->server_cfg.comm_config = &g->comm_cfg;
-    g->server_cfg.nvm         = &g_wt_nvm_ctx;
-    g->server_cfg.crypto      = &g->crypto;
-#if defined(WOLF_CRYPTO_CB)
-    g->server_cfg.devId       = INVALID_DEVID;
-#endif
+    wt_hsm_bind_server_cfg(guest_id);
 
     /* ------------------------------------------------------------------
      * 6. Initialise the wolfHSM server context.
@@ -447,6 +434,7 @@ static int wt_hsm_relay_srv_recv(void* context, uint16_t* out_size,
                                  void* data)
 {
     wt_hsm_relay_buf_t* buf = (wt_hsm_relay_buf_t*)context;
+    uint16_t            len;
 
     if (buf == NULL || out_size == NULL || data == NULL) {
         return WH_ERROR_BADARGS;
@@ -454,8 +442,16 @@ static int wt_hsm_relay_srv_recv(void* context, uint16_t* out_size,
     if (buf->req_pending == 0u) {
         return WH_ERROR_NOTREADY;
     }
-    (void)memcpy(data, buf->req, buf->req_len);
-    *out_size = buf->req_len;
+    /* req_len lives in the partition-writable relay buffer; bound the copy by
+     * the source buffer and the packet capacity from constants so a forged
+     * length cannot overrun either side (WT-FFM-0011). */
+    len = buf->req_len;
+    if (len > sizeof(buf->req) ||
+            len > (uint16_t)(sizeof(whCommHeader) + WOLFHSM_CFG_COMM_DATA_LEN)) {
+        return WH_ERROR_BADARGS;
+    }
+    (void)memcpy(data, buf->req, len);
+    *out_size = len;
     buf->req_pending = 0u;
     return WH_ERROR_OK;
 }
@@ -490,24 +486,14 @@ static const whTransportServerCb g_relay_transport_cb = {
     .Cleanup = wt_hsm_relay_srv_cleanup
 };
 
-/* Every pointer a server pump dereferences lives in the shared keystore band,
- * so any keystore partition can rewrite it. Re-assert each one from link-time
- * constants before the pump, so a forged value is never followed by either
- * the privileged tasklet or the relay partition (WT-FFM-0011). Data fields
- * stay partition-owned; only dereference targets are pinned. */
+/* Re-assert every pointer the server pump dereferences from link-time
+ * constants before the pump, so a keystore partition that rewrote the
+ * band-resident copies cannot steer the pump (WT-FFM-0011). */
 static void wt_hsm_server_pin(wt_guest_id_t guest_id)
 {
     wt_hsm_guest_t *g = &g_guests[guest_id];
     whCommServer   *comm = g->server.comm;
     uintptr_t       packet = (uintptr_t)comm->packet;
-
-    /* Re-assert from link-time-fixed sources: the transport callback table is
-     * in read-only flash and the context/nvm/crypto are fixed addresses in
-     * this guest's band. All are readable by both the privileged tasklet and
-     * the unprivileged relay SP that share this pump, and none is a
-     * partition-forgeable value. This engine has a single transport (relay);
-     * a future second transport must be selected from an equally immutable
-     * source, not from the band-resident server object. */
     const whTransportServerCb *transport_cb;
     void                      *transport_ctx;
 
@@ -529,6 +515,28 @@ static void wt_hsm_relay_bind(wt_guest_id_t guest_id,
     *ctx = &g_relay_bufs[guest_id];
 }
 
+/* Rebuild the comm and server config in the band-writable per-guest struct
+ * from link-time constants, so init and fault recovery consume trusted
+ * pointers even after a partition rewrote them (WT-FFM-0011). */
+static void wt_hsm_bind_server_cfg(wt_guest_id_t guest_id)
+{
+    wt_hsm_guest_t            *g = &g_guests[guest_id];
+    const whTransportServerCb *transport_cb;
+    void                      *transport_ctx;
+
+    wt_hsm_relay_bind(guest_id, &transport_cb, &transport_ctx);
+    g->comm_cfg.transport_cb      = transport_cb;
+    g->comm_cfg.transport_context = transport_ctx;
+    g->comm_cfg.transport_config  = NULL;
+    g->comm_cfg.server_id         = (uint8_t)wt_hsm_guest_client_id(guest_id);
+    g->server_cfg.comm_config     = &g->comm_cfg;
+    g->server_cfg.nvm             = &g_wt_nvm_ctx;
+    g->server_cfg.crypto          = &g->crypto;
+#if defined(WOLF_CRYPTO_CB)
+    g->server_cfg.devId           = INVALID_DEVID;
+#endif
+}
+
 int wt_hsm_guest_init_relay(wt_guest_id_t guest_id)
 {
     if (guest_id >= WT_MAX_GUESTS) {
@@ -536,6 +544,25 @@ int wt_hsm_guest_init_relay(wt_guest_id_t guest_id)
     }
     return wt_hsm_guest_init(guest_id);
 }
+
+#if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
+/* Forge every pointer the server pump follows to an SPM-private address the
+ * unprivileged relay cannot read, so wt_hsm_server_pin must restore them before
+ * the pump or the relay MemManage-faults (WT-FFM-0011). */
+static void wt_hsm_forge_server_ptrs(wt_guest_id_t guest_id)
+{
+    wt_hsm_guest_t *g = &g_guests[guest_id];
+    whCommServer   *comm = g->server.comm;
+
+    comm->transport_cb      = (const whTransportServerCb *)0x30028001u;
+    comm->transport_context = (void *)0x30028001u;
+    comm->hdr  = (whCommHeader *)0x30028001u;
+    comm->data = (void *)0x30028001u;
+    g->server.nvm    = (whNvmContext *)0x30028001u;
+    g->server.crypto = (whServerCryptoContext *)0x30028001u;
+    g->server.devId  = 12345;
+}
+#endif
 
 int wt_hsm_relay_submit(void* submit_ctx, int32_t client_id,
                         const uint8_t* req, size_t req_len,
@@ -561,10 +588,18 @@ int wt_hsm_relay_submit(void* submit_ctx, int32_t client_id,
     }
     g = &g_guests[gid];
     buf = &g_relay_bufs[gid];
-    wt_hsm_server_pin(gid);
+    /* Gate readiness before pinning so an unready guest returns NOTREADY
+     * without the pin touching its server state. */
     if (!g->ready || g->transport_ctx != buf) {
         return WH_ERROR_NOTREADY;
     }
+#if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
+    /* Forge in the same non-yielding window as the pin: the pump below must run
+     * on repinned pointers or fault, so the guest crypto markers are proof the
+     * relay pin ran on forged input every request (WT-FFM-0011). */
+    wt_hsm_forge_server_ptrs(gid);
+#endif
+    wt_hsm_server_pin(gid);
     if (req_len == 0u || req_len > sizeof(buf->req) ||
             req_len > sizeof(whCommHeader) + WOLFHSM_CFG_COMM_DATA_LEN) {
         return WH_ERROR_BADARGS;
@@ -688,9 +723,10 @@ int wt_hsm_relay_reinit_servers(void)
         if (!g->ready) {
             continue;
         }
-        /* A relay fault can tear a server mid-request; rebuild the server
-         * and its DRBG in place rather than trust torn state. The configs
-         * and tasklet stored in g persist — only the live contexts reset. */
+        /* Rebuild the server and DRBG in place after a fault tore them, and
+         * rebuild the config from trusted constants first in case a partition
+         * rewrote the band-resident cfg fields before the fault (WT-FFM-0011). */
+        wt_hsm_bind_server_cfg(gid);
         (void)wh_Server_Cleanup(&g->server);
         (void)wc_FreeRng(g->crypto.rng);
         rc = wc_InitRng_ex(g->crypto.rng, NULL, INVALID_DEVID);
@@ -1135,27 +1171,9 @@ int wt_hsm_attest_public_key(uint8_t* publicKey, size_t publicKeyCapacity,
 __attribute__((used, noinline))
 int wt_platform_hsm_pin_probe(void)
 {
-    wt_hsm_guest_t *g = &g_guests[0];
-    whCommServer   *comm = g->server.comm;
-
-    /* A keystore partition forges every pointer the server pump follows and
-     * leaves them forged. The runtime pump is the UNPRIVILEGED relay, which
-     * must re-pin them in wt_hsm_relay_submit before it dereferences them:
-     * 0x30028001 is SPM-private RAM, so a relay that followed a forged pointer
-     * would MemManage-fault instead of completing the guest's request. The full
-     * positive lifecycle completing is therefore proof the pin ran, and a
-     * neutered relay pin fails this scenario (WT-FFM-0011). */
-    comm->transport_cb      = (const whTransportServerCb *)0x30028001u;
-    comm->transport_context = (void *)0x30028001u;
-    comm->hdr  = (whCommHeader *)0x30028001u;
-    comm->data = (void *)0x30028001u;
-    g->server.nvm    = (whNvmContext *)0x30028001u;
-    g->server.crypto = (whServerCryptoContext *)0x30028001u;
-    g->server.devId  = 12345;
-
-    /* The shared NVM chain is a partition's own-DoS vector rather than the
-     * relay's escalation path, so verify its pin synchronously here and leave
-     * the store correct for the vault's own NVM path (WT-FFM-0011). */
+    /* Per-guest pointers are forged inline on the relay pump path, so the guest
+     * crypto markers prove that pin; here verify the shared NVM-chain pin
+     * synchronously and leave the store correct for the vault (WT-FFM-0011). */
     return wt_nvm_store_pin_probe();
 }
 #endif
