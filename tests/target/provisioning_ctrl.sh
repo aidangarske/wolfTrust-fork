@@ -25,6 +25,8 @@
 #   discover               prove the DA credential authenticates (non-destructive)
 #   advance <hexstate>     set PRODUCT_STATE (GATED; Locked refused)
 #   regress                DA-authenticate + full regression back to Open (GATED)
+#   lock                   PERMANENT: Closed -> Locked (0x5C) on a production station
+#                          only (WT_PRODUCTION_LOCK=1 + typed confirmation)
 #
 # TARGET=mimxrt700 runs the MIMXRT700 backend (provisioning_ctrl_rt700.sh).
 set -euo pipefail
@@ -183,12 +185,27 @@ case "$cmd" in
     confirm
     state="${2:-}"
     case "$state" in
-      "$PS_LOCKED"|0x5c) echo "REFUSED: Locked (0x5C) is permanent — never on a dev board." >&2; exit 2 ;;
+      "$PS_LOCKED"|0x5c) echo "REFUSED: Locked (0x5C) is permanent — never on a dev board; production uses 'lock'." >&2; exit 2 ;;
       "$PS_PROVISIONING"|"$PS_TZCLOSED"|"$PS_CLOSED"|0x17|0xc6|0x72) ;;
       *) echo "REFUSED: advance needs a reversible state (0x17/0xC6/0x72), got '${state:-none}'." >&2; exit 2 ;;
     esac
     echo "ADVANCING product state $(product_state) -> $state (regress is the only way back)"
     "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$state" 2>&1 | strip | tail -4
+    echo "now: $(product_state)"
+    ;;
+
+  lock)
+    # PERMANENT. Locked disables regression for good, so only a Closed part
+    # whose production image and DA chain were already verified may be locked.
+    confirm
+    state="$(product_state || true)"
+    [ "$state" = "$PS_CLOSED" ] || \
+      fail "lock" "lock only a verified Closed ($PS_CLOSED) part; state=${state:-unreadable}"
+    # shellcheck source=lib/lock_confirm.sh disable=SC1091
+    . "$(dirname "$0")/lib/lock_confirm.sh"
+    lock_confirm "LOCK $PS_LOCKED" \
+      "Locking this STM32H563: product state $PS_CLOSED -> $PS_LOCKED (Locked)" || exit 2
+    "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$PS_LOCKED" 2>&1 | strip | tail -4
     echo "now: $(product_state)"
     ;;
 
@@ -208,5 +225,5 @@ case "$cmd" in
     echo "state after regression: $(product_state)"
     ;;
 
-  *) echo "usage: $0 status|set-perimeter|flash|verify|restore|provision-da|discover|advance <hexstate>|regress" >&2; exit 2 ;;
+  *) echo "usage: $0 status|set-perimeter|flash|verify|restore|provision-da|discover|advance <hexstate>|regress|lock" >&2; exit 2 ;;
 esac

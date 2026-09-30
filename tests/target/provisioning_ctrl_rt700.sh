@@ -19,7 +19,10 @@
 #   advance <hexstate>   move the life cycle shadow: 0x07 Develop2, 0x0F
 #                        In Field, 0xCF In Field Locked (GATED)
 #   regress              hardware reset back to the fused life cycle (GATED)
-#   provision-da, burn   refused: both program fuses (production only)
+#   lock <fuses.yaml>    PERMANENT production burn of a reviewed SPSDK fuse
+#                        configuration (WT_PRODUCTION_LOCK=1, RT700_ISP,
+#                        typed confirmation); never on a development EVK
+#   provision-da, burn   refused: fuses are burned only through 'lock'
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -265,13 +268,92 @@ PYEOF
     date -u +%FT%TZ > "$state_dir/rt700-regress-ok"
     ;;
 
+  lock)
+    # PERMANENT. Burns a fuse configuration already rehearsed in the shadow
+    # registers; the operator sees the exact script before the typed gate.
+    confirm
+    config="${2:-}"
+    [ -s "$config" ] || {
+        echo "REFUSED: lock takes the reviewed production fuse configuration: lock <fuses.yaml>" >&2; exit 2; }
+    [ -n "${RT700_ISP:-}" ] || {
+        echo "REFUSED: set RT700_ISP to the blhost ISP connection (for example '-u 0x1fc9,0x014f')." >&2; exit 2; }
+    ensure_spsdk
+    command -v shadowregs >/dev/null 2>&1 || PATH="$spsdk_venv/bin:$PATH"
+    lc="$("$spsdk_venv/bin/python" - "$config" <<'PYEOF'
+import sys
+import yaml
+
+def find(node, key):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == key:
+                return v
+            got = find(v, key)
+            if got is not None:
+                return got
+    return None
+
+cfg = yaml.safe_load(open(sys.argv[1]))
+lc, red = find(cfg, "LC_STATE"), find(cfg, "LC_STATE_RED")
+lc = int(str(lc), 0) if lc is not None else -1
+red = int(str(red), 0) if red is not None else -2
+print("0x%02X" % lc if lc == red and lc in (0x0F, 0xCF) else "bad %s %s" % (lc, red))
+PYEOF
+)"
+    case "$lc" in
+      0x0F|0xCF) ;;
+      *) echo "REFUSED: the configuration must set LC_STATE and LC_STATE_RED to the same 0x0F or 0xCF ($lc)." >&2; exit 2 ;;
+    esac
+    mkdir -p "$state_dir"
+    script="$state_dir/rt700-fuses-$(date -u +%Y%m%dT%H%M%SZ).bls"
+    shadowregs fuses-script -c "$config" -o "$script.raw" >/dev/null || \
+        fail "lock" "shadowregs fuses-script could not build the burn script"
+    # SPSDK 3.11 writes each command's --no-verify on its own line, which blhost
+    # batch would run as a separate command after the fuse before it burned.
+    "$spsdk_venv/bin/python" - "$script.raw" "$script" <<'PYEOF' || \
+        fail "lock" "the generated burn script is not safe to run as is"
+import re
+import sys
+
+cmds = []
+for line in open(sys.argv[1]):
+    text = line.split("#", 1)[0].rstrip()
+    if not text.strip():
+        continue
+    if text[:1].isspace() and text.strip().startswith("--") and cmds:
+        cmds[-1] += " " + text.strip()
+    else:
+        cmds.append(text.strip())
+num = r"(0x[0-9a-fA-F]+|[0-9]+)"
+shape = re.compile(r"^efuse-program-once %s %s( --(no-)?verify)?( lock)?$" % (num, num))
+bad = [c for c in cmds if not shape.match(c)]
+if bad:
+    sys.exit("unexpected line: %s" % bad[0])
+# The life cycle words (0x25 LC_STATE_RED, 0x8F LC_STATE) burn last.
+lc = [c for c in cmds if int(c.split()[1], 0) in (0x25, 0x8F)]
+if sorted(int(c.split()[1], 0) for c in lc) != [0x25, 0x8F]:
+    sys.exit("the configuration must burn both life cycle words exactly once")
+cmds = [c for c in cmds if c not in lc] + lc
+open(sys.argv[2], "w").write("".join(c + "\n" for c in cmds))
+PYEOF
+    echo "Burn script ($script):"
+    cat "$script"
+    # shellcheck source=lib/lock_confirm.sh disable=SC1091
+    . "$here/lib/lock_confirm.sh"
+    lock_confirm "BURN $lc" \
+        "Burning the fuses above, life cycle $lc ($(lc_name "$lc")), into this MIMXRT700" || exit 2
+    # shellcheck disable=SC2086  # RT700_ISP is a blhost option list
+    blhost $RT700_ISP batch "$script"
+    echo "Burned. Reset the part, then check it with: $0 status"
+    ;;
+
   provision-da|burn)
     cat >&2 <<EOF
 REFUSED: '$cmd' programs OTP fuses, which is permanent on the MIMXRT700
-(LOCK_CFG3 is open on this board, so nothing in silicon would stop it). A
-production line burns RKTH, the debug credential root, and the life cycle
-through NXP's secure provisioning flow (SB3.1 or blhost fuse-program) with a
-debug credential chain it has already validated; this script never does.
+(LOCK_CFG3 is open on a development EVK, so nothing in silicon would stop it).
+A production station burns the root key hash, debug credential root, and life
+cycle with 'lock <fuses.yaml>', from a configuration already rehearsed in the
+shadow registers; see the MIMXRT700 Guide.
 EOF
     exit 2
     ;;
@@ -286,5 +368,5 @@ EOF
     exit 2
     ;;
 
-  *) echo "usage: $0 status|discover|verify-wrp|restore|advance <hexstate>|regress" >&2; exit 2 ;;
+  *) echo "usage: $0 status|discover|verify-wrp|restore|advance <hexstate>|regress|lock <fuses.yaml>" >&2; exit 2 ;;
 esac
