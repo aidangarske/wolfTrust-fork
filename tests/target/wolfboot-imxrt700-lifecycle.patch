@@ -1,28 +1,150 @@
 diff --git a/hal/imx_rt7xx.c b/hal/imx_rt7xx.c
-index a5b40299..559c8822 100644
+index a5b40299..bf9227a6 100644
 --- a/hal/imx_rt7xx.c
 +++ b/hal/imx_rt7xx.c
-@@ -21,6 +21,7 @@
+@@ -21,6 +21,8 @@
  #include <stdint.h>
  #include "image.h"
  #include "hal.h"
 +#include "wolfboot/secure_handoff.h"
++#include "imx_rt7xx_lifecycle.h"
  #include "loader.h"
  #include "printf.h"
  #include "imx_rt7xx.h"
-@@ -1051,3 +1052,15 @@ void hal_prepare_boot(void)
+@@ -1051,3 +1053,24 @@ void hal_prepare_boot(void)
      }
  #endif
  }
 +
-+/* The PSA security lifecycle the Secure application attests. The OTP
-+ * lifecycle state is not read yet, so this reports the development state
-+ * rather than claim a secured device. */
++/* The PSA security lifecycle the Secure application attests, from the OTP
++ * life cycle shadow and the debug authentication state. */
 +int hal_attestation_get_lifecycle(uint32_t *lifecycle)
 +{
++    uint32_t lcState;
++    uint32_t lcStateRed;
++    uint32_t debugAuthStatus;
++
 +    if (lifecycle == NULL) {
 +        return -1;
 +    }
-+    *lifecycle = WOLFBOOT_SECURE_HANDOFF_LIFECYCLE_ASSEMBLY_AND_TEST;
++    lcState = *(volatile uint32_t *)(IMX_RT7XX_OTP_SHADOW_BASE_S +
++        IMX_RT7XX_OTP_LC_STATE_OFFSET) & IMX_RT7XX_OTP_LC_STATE_MASK;
++    lcStateRed = *(volatile uint32_t *)(IMX_RT7XX_OTP_SHADOW_BASE_S +
++        IMX_RT7XX_OTP_LC_STATE_RED_OFFSET) & IMX_RT7XX_OTP_LC_STATE_MASK;
++    debugAuthStatus = *(volatile uint32_t *)IMX_RT7XX_DAUTHSTATUS_ADDRESS;
++    *lifecycle = imx_rt7xx_attestation_lifecycle(lcState, lcStateRed,
++        debugAuthStatus);
 +    return 0;
 +}
+diff --git a/hal/imx_rt7xx_lifecycle.h b/hal/imx_rt7xx_lifecycle.h
+new file mode 100644
+index 00000000..c6a99736
+--- /dev/null
++++ b/hal/imx_rt7xx_lifecycle.h
+@@ -0,0 +1,106 @@
++/* imx_rt7xx_lifecycle.h
++ *
++ * Copyright (C) 2026 wolfSSL Inc.
++ *
++ * This file is part of wolfBoot.
++ *
++ * wolfBoot is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * wolfBoot is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <https://www.gnu.org/licenses/>.
++ */
++
++#ifndef WOLFBOOT_IMX_RT7XX_LIFECYCLE_H
++#define WOLFBOOT_IMX_RT7XX_LIFECYCLE_H
++
++#include <stdint.h>
++
++/* OTP shadow registers, the same on both silicon revisions: the life cycle
++ * byte and its redundant copy, which must agree before either is trusted. */
++#define IMX_RT7XX_OTP_SHADOW_BASE_S        0x50018000u
++#define IMX_RT7XX_OTP_LC_STATE_OFFSET      0x23Cu
++#define IMX_RT7XX_OTP_LC_STATE_RED_OFFSET  0x094u
++#define IMX_RT7XX_OTP_LC_STATE_MASK        0xFFu
++
++#define IMX_RT7XX_LC_DEVELOP               0x03u
++#define IMX_RT7XX_LC_DEVELOP2              0x07u
++#define IMX_RT7XX_LC_IN_FIELD              0x0Fu
++#define IMX_RT7XX_LC_IN_FIELD_RETURN       0x1Fu
++#define IMX_RT7XX_LC_IN_FIELD_LOCKED       0xCFu
++
++#define IMX_RT7XX_DAUTHSTATUS_ADDRESS      0xE000EFB8u
++#define IMX_RT7XX_DAUTHSTATUS_NSID_SHIFT   0u
++#define IMX_RT7XX_DAUTHSTATUS_NSNID_SHIFT  2u
++#define IMX_RT7XX_DAUTHSTATUS_SID_SHIFT    4u
++#define IMX_RT7XX_DAUTHSTATUS_SNID_SHIFT   6u
++#define IMX_RT7XX_DAUTHSTATUS_FIELD_MASK   0x3u
++#define IMX_RT7XX_DAUTHSTATUS_ENABLED      0x3u
++
++static inline uint32_t imx_rt7xx_lc_to_psa_lifecycle(uint32_t lcState,
++    uint32_t lcStateRed)
++{
++    uint32_t lifecycle;
++
++    if (lcState != lcStateRed) {
++        return 0x0000u; /* PSA_LIFECYCLE_UNKNOWN */
++    }
++    switch (lcState) {
++        case IMX_RT7XX_LC_DEVELOP:
++            lifecycle = 0x1000u; /* PSA_LIFECYCLE_ASSEMBLY_AND_TEST */
++            break;
++        case IMX_RT7XX_LC_DEVELOP2:
++            lifecycle = 0x2000u; /* PSA_LIFECYCLE_PSA_ROT_PROVISIONING */
++            break;
++        case IMX_RT7XX_LC_IN_FIELD:
++        case IMX_RT7XX_LC_IN_FIELD_LOCKED:
++            lifecycle = 0x3000u; /* PSA_LIFECYCLE_SECURED */
++            break;
++        case IMX_RT7XX_LC_IN_FIELD_RETURN:
++            lifecycle = 0x6000u; /* PSA_LIFECYCLE_DECOMMISSIONED */
++            break;
++        default:
++            lifecycle = 0x0000u; /* PSA_LIFECYCLE_UNKNOWN */
++            break;
++    }
++    return lifecycle;
++}
++
++static inline int imx_rt7xx_debug_status_field_enabled(
++    uint32_t debugAuthStatus, uint32_t shift)
++{
++    return (((debugAuthStatus >> shift) &
++        IMX_RT7XX_DAUTHSTATUS_FIELD_MASK) ==
++        IMX_RT7XX_DAUTHSTATUS_ENABLED);
++}
++
++static inline uint32_t imx_rt7xx_attestation_lifecycle(uint32_t lcState,
++    uint32_t lcStateRed, uint32_t debugAuthStatus)
++{
++    uint32_t lifecycle = imx_rt7xx_lc_to_psa_lifecycle(lcState, lcStateRed);
++
++    if (lifecycle == 0x3000u) {
++        if (imx_rt7xx_debug_status_field_enabled(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_SID_SHIFT) ||
++                imx_rt7xx_debug_status_field_enabled(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_SNID_SHIFT)) {
++            lifecycle = 0x5000u; /* PSA_LIFECYCLE_RECOVERABLE_PSA_ROT_DEBUG */
++        }
++        else if (imx_rt7xx_debug_status_field_enabled(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_NSID_SHIFT) ||
++                imx_rt7xx_debug_status_field_enabled(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_NSNID_SHIFT)) {
++            lifecycle = 0x4000u; /* PSA_LIFECYCLE_NON_PSA_ROT_DEBUG */
++        }
++    }
++    return lifecycle;
++}
++
++#endif /* WOLFBOOT_IMX_RT7XX_LIFECYCLE_H */

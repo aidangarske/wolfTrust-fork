@@ -1,0 +1,140 @@
+/* main.c
+ *
+ * Copyright (C) 2026 wolfSSL Inc.
+ *
+ * This file is part of wolfTrust.
+ *
+ * wolfTrust is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * wolfTrust is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <https://www.gnu.org/licenses/>.
+ */
+
+/* The MIMXRT700 life cycle mapping wolfBoot hands wolfTrust, tested from the
+ * copy inside the carried wolfBoot patch: only an agreeing, known OTP life
+ * cycle maps to a PSA state, and no fault or debug state reads as SECURED. */
+
+#include "imx_rt7xx_lifecycle.h"
+
+#include <stdint.h>
+#include <stdio.h>
+
+static int checks;
+static int failures;
+
+#define EXPECT_LC(actual, expected) \
+    do { \
+        uint32_t a_ = (actual); \
+        uint32_t e_ = (expected); \
+        checks++; \
+        if (a_ != e_) { \
+            (void)fprintf(stderr, "line %d: expected 0x%04x, got 0x%04x\n", \
+                          __LINE__, (unsigned)e_, (unsigned)a_); \
+            failures++; \
+        } \
+    } while (0)
+
+/* DAUTHSTATUS encodings: each 2-bit field is 3 when that debug is enabled. */
+#define DAUTH_NONE      0x00u
+#define DAUTH_NS_ONLY   (0x3u << IMX_RT7XX_DAUTHSTATUS_NSID_SHIFT)
+#define DAUTH_NSNID     (0x3u << IMX_RT7XX_DAUTHSTATUS_NSNID_SHIFT)
+#define DAUTH_SECURE    (0x3u << IMX_RT7XX_DAUTHSTATUS_SID_SHIFT)
+#define DAUTH_SNID      (0x3u << IMX_RT7XX_DAUTHSTATUS_SNID_SHIFT)
+#define DAUTH_ALL       0xFFu
+
+static void test_state_table(void)
+{
+    uint32_t lc;
+
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(IMX_RT7XX_LC_DEVELOP,
+              IMX_RT7XX_LC_DEVELOP), 0x1000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(IMX_RT7XX_LC_DEVELOP2,
+              IMX_RT7XX_LC_DEVELOP2), 0x2000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD), 0x3000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(IMX_RT7XX_LC_IN_FIELD_LOCKED,
+              IMX_RT7XX_LC_IN_FIELD_LOCKED), 0x3000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(IMX_RT7XX_LC_IN_FIELD_RETURN,
+              IMX_RT7XX_LC_IN_FIELD_RETURN), 0x6000u);
+
+    /* NXP-internal, blank, bricked, and every unlisted code are unknown. */
+    for (lc = 0u; lc <= 0xFFu; lc++) {
+        if (lc == IMX_RT7XX_LC_DEVELOP || lc == IMX_RT7XX_LC_DEVELOP2 ||
+                lc == IMX_RT7XX_LC_IN_FIELD ||
+                lc == IMX_RT7XX_LC_IN_FIELD_LOCKED ||
+                lc == IMX_RT7XX_LC_IN_FIELD_RETURN) {
+            continue;
+        }
+        EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(lc, lc), 0x0000u);
+    }
+}
+
+static void test_redundancy(void)
+{
+    /* The redundant copy must agree; a single flipped byte never promotes. */
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_DEVELOP), 0x0000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(IMX_RT7XX_LC_DEVELOP,
+              IMX_RT7XX_LC_IN_FIELD), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              0x00u, DAUTH_NONE), 0x0000u);
+}
+
+static void test_debug_refinement(void)
+{
+    /* A secured part with debug closed attests SECURED. */
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, DAUTH_NONE), 0x3000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD_LOCKED,
+              IMX_RT7XX_LC_IN_FIELD_LOCKED, DAUTH_NONE), 0x3000u);
+
+    /* Any Secure debug open downgrades to recoverable PSA RoT debug. */
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, DAUTH_SECURE), 0x5000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, DAUTH_SNID), 0x5000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD_LOCKED,
+              IMX_RT7XX_LC_IN_FIELD_LOCKED, DAUTH_ALL), 0x5000u);
+
+    /* Only Non-secure debug open is non-PSA-RoT debug. */
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, DAUTH_NS_ONLY), 0x4000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, DAUTH_NSNID), 0x4000u);
+
+    /* A partially enabled field (value 2) is not enabled. */
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD,
+              0x2u << IMX_RT7XX_DAUTHSTATUS_SID_SHIFT), 0x3000u);
+
+    /* Debug state never refines an open, provisioning, or returned part. */
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_DEVELOP,
+              IMX_RT7XX_LC_DEVELOP, DAUTH_ALL), 0x1000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_DEVELOP2,
+              IMX_RT7XX_LC_DEVELOP2, DAUTH_ALL), 0x2000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD_RETURN,
+              IMX_RT7XX_LC_IN_FIELD_RETURN, DAUTH_ALL), 0x6000u);
+}
+
+int main(void)
+{
+    test_state_table();
+    test_redundancy();
+    test_debug_refinement();
+
+    if (failures != 0) {
+        (void)fprintf(stderr, "rt700 lifecycle checks failed: %d/%d\n",
+                      failures, checks);
+        return 1;
+    }
+    (void)printf("rt700 lifecycle checks passed: %d\n", checks);
+    return 0;
+}
