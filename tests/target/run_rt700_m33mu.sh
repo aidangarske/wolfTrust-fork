@@ -106,10 +106,13 @@ GUEST_STARTED_RE='wolfTrust RT700 guest[01]: start'
 # shellcheck disable=SC2034
 GUEST_DONE_RE='wolfTrust RT700 guest[01]: FF-M connect ok, done'
 
-# --- The pinned upstream M33MU. ---
+# --- The pinned upstream M33MU, plus the carried RT700 fuse seed (the
+#     Develop life cycle) until M33MU seeds it itself. ---
+m33mu_stamp="$M33MU_REF $(cksum "$here/m33mu-imxrt700.patch" | cut -d' ' -f1)"
 if [ -n "${M33MU:-}" ] && [ -x "$M33MU" ]; then
   log "Using prebuilt M33MU: $M33MU"
-elif [ -x /tmp/m33mu_rt700_src/build/m33mu ]; then
+elif [ -x /tmp/m33mu_rt700_src/build/m33mu ] &&
+     [ "$(cat /tmp/m33mu_rt700_src/.wt-stamp 2>/dev/null)" = "$m33mu_stamp" ]; then
   M33MU=/tmp/m33mu_rt700_src/build/m33mu
   log "Reusing M33MU from a prior scenario: $M33MU"
 else
@@ -118,10 +121,12 @@ else
   git clone --no-checkout https://github.com/danielinux/m33mu.git /tmp/m33mu_rt700_src
   git -C /tmp/m33mu_rt700_src fetch --depth 1 origin "$M33MU_REF"
   git -C /tmp/m33mu_rt700_src checkout --detach "$M33MU_REF"
+  git -C /tmp/m33mu_rt700_src apply "$here/m33mu-imxrt700.patch"
   cmake -S /tmp/m33mu_rt700_src -B /tmp/m33mu_rt700_src/build \
         -DM33MU_ENABLE_WOLFSSL=OFF -DM33MU_BUILD_TESTS=OFF \
         -DM33MU_ENABLE_RUST_PLUGINS=OFF
   cmake --build /tmp/m33mu_rt700_src/build --target m33mu -j"$(nproc)"
+  echo "$m33mu_stamp" > /tmp/m33mu_rt700_src/.wt-stamp
   M33MU=/tmp/m33mu_rt700_src/build/m33mu
 fi
 
