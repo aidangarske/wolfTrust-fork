@@ -5,6 +5,11 @@ product-state changes can erase the device or remove debug access. Read the
 current state first, keep the board in a recoverable state during development,
 and never enter the permanent Locked state on a development board.
 
+Supported silicon is STM32H563 revision X or W (DBGMCU_IDCODE REV_ID 0x1007 or
+0x100F); the Secure image halts at boot on engineering samples A (0x1000) and
+Z (0x1001), which need more flash wait states during read-while-write than the
+port sets (ST ES0565 2.2.9), and on any other IDCODE.
+
 ## Required tools
 
 - NUCLEO-H563ZI with ST-Link and USB serial

@@ -34,6 +34,7 @@
 #include <wolfHAL/reg.h>
 
 #include "memory_map.h"
+#include "silicon_rev.h"
 #include "stm32h563_regs.h"
 
 #include "wolftrust/ffm_gateway.h"
@@ -386,6 +387,7 @@ void wt_platform_init(void)
     }
     wt_rcc_enable_clock(WT_RCC_BASE_S, &rng_clock);
     wt_uart_gpio_init();
+    wt_h563_silicon_guard();
     wt_arch_zero_guest_memory(WT_GUEST0_RAM_BASE, WT_GUEST_RAM_SIZE);
     wt_arch_zero_guest_memory(WT_GUEST1_RAM_BASE, WT_GUEST_RAM_SIZE);
     g_secure_service_depth = 0u;

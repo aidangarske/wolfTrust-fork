@@ -33,6 +33,18 @@
 #define WT_LPUART1_CR1_TXEIE     (1u << 7)
 #define WT_LPUART1_IRQ           63u
 
+#define WT_DBGMCU_IDCODE         (*(volatile uint32_t*)0x44024000u)
+
+#define WT_USART3_BASE_NS        0x40004800u
+#define WT_USART_CR1(base)       (*(volatile uint32_t*)((base) + 0x00u))
+#define WT_USART_BRR(base)       (*(volatile uint32_t*)((base) + 0x0Cu))
+#define WT_USART_ISR(base)       (*(volatile uint32_t*)((base) + 0x1Cu))
+#define WT_USART_TDR(base)       (*(volatile uint32_t*)((base) + 0x28u))
+#define WT_USART_CR1_UE          (1u << 0)
+#define WT_USART_CR1_TE          (1u << 3)
+#define WT_USART_ISR_TC          (1u << 6)
+#define WT_USART_ISR_TXE         (1u << 7)
+
 #define WT_RCC_BASE_S            0x54020C00u
 #define WT_RCC_BASE_NS           WHAL_STM32H5_RCC_BASE
 #define WT_RCC_CR                (*(volatile uint32_t*)(WT_RCC_BASE_S + 0x00u))

@@ -62,5 +62,7 @@ TARGET_PARTITIONS_SRC := $(PORT_DIR)/partitions.c
 TARGET_EXTRA_SRCS := \
     $(wildcard $(PORT_DIR)/rng_entropy.c) \
     $(wildcard $(PORT_DIR)/hsm_flash.c) \
+    $(PORT_DIR)/silicon_rev.c \
+    $(PORT_DIR)/silicon_guard.c \
     $(WOLFHAL_DIR)/src/reg.c \
     $(WOLFHAL_DIR)/src/rng/stm32h5_rng.c
