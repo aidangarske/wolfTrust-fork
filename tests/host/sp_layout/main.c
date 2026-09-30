@@ -63,6 +63,31 @@ WT_STATIC_ASSERT(WT_SP_FF_CLIENT_STACK_BASE + WT_SP_SECURE_STACK_SIZE ==
                    WT_SP_SECURE_RAM_END,
                "SP stacks do not fill the reserved region");
 
+/* Isolation level 3: the vault, attestation, and crypto partitions own
+ * disjoint, adjacent, MPU-granule-aligned data bands that exactly fill the
+ * keystore envelope below the FWU stack. */
+WT_STATIC_ASSERT(WT_SP_VAULT_DATA_BASE == WT_KEYSTORE_BASE,
+               "vault data band does not start the keystore envelope");
+WT_STATIC_ASSERT(WT_SP_VAULT_DATA_BASE + WT_SP_VAULT_DATA_SIZE ==
+                   WT_SP_ATTEST_DATA_BASE,
+               "vault and attestation data bands overlap or leave a gap");
+WT_STATIC_ASSERT(WT_SP_ATTEST_DATA_BASE + WT_SP_ATTEST_DATA_SIZE ==
+                   WT_SP_HSM_DATA_BASE,
+               "attestation and crypto data bands overlap or leave a gap");
+WT_STATIC_ASSERT(WT_SP_HSM_DATA_BASE + WT_SP_HSM_DATA_SIZE ==
+                   WT_KEYSTORE_BASE + WT_KEYSTORE_SIZE,
+               "crypto data band does not end the keystore envelope");
+WT_STATIC_ASSERT(WT_KEYSTORE_BASE + WT_KEYSTORE_SIZE == WT_SP_FWU_STACK_BASE,
+               "keystore envelope does not end at the FWU stack");
+WT_STATIC_ASSERT((WT_SP_VAULT_DATA_BASE & 0x1FU) == 0U &&
+                   (WT_SP_ATTEST_DATA_BASE & 0x1FU) == 0U &&
+                   (WT_SP_HSM_DATA_BASE & 0x1FU) == 0U,
+               "keystore data band not 32-byte aligned");
+WT_STATIC_ASSERT((WT_SP_VAULT_DATA_SIZE & 0x1FU) == 0U &&
+                   (WT_SP_ATTEST_DATA_SIZE & 0x1FU) == 0U &&
+                   (WT_SP_HSM_DATA_SIZE & 0x1FU) == 0U,
+               "keystore data band size not a 32-byte multiple");
+
 int main(void)
 {
     (void)printf("WT-FFM-0011 PASS SP secure RAM [0x%08lX,0x%08lX) size 0x%lX\n",
@@ -72,6 +97,11 @@ int main(void)
     (void)printf("WT-FFM-0011 PASS crypto stack 0x%08lX, attest stack 0x%08lX\n",
                  (unsigned long)WT_SP_CRYPTO_STACK_BASE,
                  (unsigned long)WT_SP_ATTEST_STACK_BASE);
+    (void)printf("WT-FFM-0011 PASS vault band 0x%08lX, attest band 0x%08lX, "
+                 "crypto band 0x%08lX\n",
+                 (unsigned long)WT_SP_VAULT_DATA_BASE,
+                 (unsigned long)WT_SP_ATTEST_DATA_BASE,
+                 (unsigned long)WT_SP_HSM_DATA_BASE);
     (void)printf("PASS: sp_layout\n");
     return 0;
 }

@@ -510,6 +510,28 @@ def validate_policy(manifest, supported_features, word_max,
     if profile != 0 and spm_count != 1:
         policy_error("exactly one SPM is required")
 
+    # Isolation level 3 isolates every Secure Partition's runtime state from
+    # every other partition: a writable resource may be shared only with the
+    # SPM, never between a Secure Partition and another partition. Read-only
+    # sharing (code, constants) stays allowed at every level.
+    if profile == 3:
+        domain_class = {domain["id"]: domain["domain_class"]
+                        for domain in domains}
+        for index, (owner, first) in enumerate(all_memory):
+            for other_owner, second in all_memory[index + 1:]:
+                if owner == other_owner or not ranges_overlap(
+                        first["base"], first["size"],
+                        second["base"], second["size"]):
+                    continue
+                if not first["attributes"] & 0x02 or first["attributes"] & 0x08:
+                    continue
+                if domain_class[owner] == 0 or domain_class[other_owner] == 0:
+                    continue
+                if domain_class[owner] != 1 and domain_class[other_owner] != 1:
+                    continue
+                policy_error("isolation level 3 forbids a writable memory "
+                             "resource shared between partitions")
+
     service_names = set()
     service_ids = set()
     stateless_handles = set()

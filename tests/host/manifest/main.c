@@ -468,6 +468,30 @@ static void wt_test_ffm_resource_ownership(void)
                   WT_MANIFEST_ERROR_RESOURCE_OWNERSHIP);
 }
 
+/* Isolation level 3 (WT-FFM-0011): a writable resource shared between two
+ * partitions is refused at the manifest level; read-only sharing stays. */
+static void wt_test_isolation_level_3(void)
+{
+    wt_manifest_fixture_t fixture;
+    size_t i;
+
+    wt_fixture_init(&fixture);
+    for (i = 1U; i < 3U; i++) {
+        fixture.memory[i][2].base = 0xD000U;
+        fixture.memory[i][2].size = 0x1000U;
+        fixture.memory[i][2].attributes =
+            WT_MEMORY_ATTR_READ | WT_MEMORY_ATTR_SHARED;
+        fixture.memory[i][2].share_id = 7U;
+        fixture.domains[i].memory_resource_count = 3U;
+    }
+    EXPECT_RESULT(wt_validate(&fixture), WT_MANIFEST_VALID);
+
+    for (i = 1U; i < 3U; i++) {
+        fixture.memory[i][2].attributes |= WT_MEMORY_ATTR_WRITE;
+    }
+    EXPECT_RESULT(wt_validate(&fixture), WT_MANIFEST_ERROR_DOMAIN);
+}
+
 static void wt_test_service(void)
 {
     wt_manifest_fixture_t fixture;
@@ -744,6 +768,7 @@ int main(void)
     wt_test_header();
     wt_test_partition();
     wt_test_ffm_resource_ownership();
+    wt_test_isolation_level_3();
     wt_test_service();
     wt_test_interrupt();
     wt_test_uniqueness();

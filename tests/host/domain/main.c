@@ -380,6 +380,72 @@ static void wt_test_memory_sharing(void)
     EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_SHARING);
 }
 
+/* Isolation level 3: a writable resource shared between two partitions is
+ * refused; read-only sharing and sharing with the SPM keep it. */
+static void wt_test_isolation_level_3(void)
+{
+    wt_domain_fixture_t fixture;
+    wt_domain_descriptor_t domains[3];
+    wt_memory_resource_t band[3][3];
+    wt_profile_capabilities_t caps;
+    size_t i;
+    size_t j;
+
+    wt_fixture_init(&fixture);
+    caps = fixture.capabilities;
+    caps.max_domains = 3U;
+    domains[0] = fixture.domains[0];
+    domains[1] = fixture.domains[1];
+    domains[2] = fixture.domains[1];
+    domains[2].id = 2U;
+    domains[2].entry_point = 0x00009100U;
+    domains[2].stack_base = 0x0000B800U;
+    for (i = 0U; i < 3U; i++) {
+        for (j = 0U; j < 3U; j++) {
+            band[i][j] = fixture.memory[i < 2U ? i : 1U][j];
+        }
+        domains[i].memory_resources = band[i];
+        domains[i].memory_resource_count = 3U;
+        domains[i].interrupt_resource_count = 0U;
+    }
+    band[2][0].base = 0x00009000U;
+    band[2][1].base = 0x0000B000U;
+    for (i = 0U; i < 3U; i++) {
+        band[i][2].base = 0x0000D000U;
+        band[i][2].size = 0x00001000U;
+        band[i][2].attributes = WT_MEMORY_ATTR_READ | WT_MEMORY_ATTR_SHARED;
+        band[i][2].share_id = 9U;
+    }
+    EXPECT_RESULT(wt_domain_validate_set(domains, 3U,
+                      WT_ISOLATION_PROFILE_LEVEL_3, &caps), WT_DOMAIN_VALID);
+
+    for (i = 0U; i < 3U; i++) {
+        band[i][2].attributes |= WT_MEMORY_ATTR_WRITE;
+    }
+    EXPECT_RESULT(wt_domain_validate_set(domains, 3U,
+                      WT_ISOLATION_PROFILE_LEVEL_3, &caps),
+                  WT_DOMAIN_ERROR_ISOLATION);
+    /* No lower level exists to fall back to with the sharing intact. */
+    EXPECT_RESULT(wt_domain_validate_set(domains, 3U,
+                      WT_ISOLATION_PROFILE_LEVEL_2, &caps),
+                  WT_DOMAIN_ERROR_PROFILE);
+
+    /* Only the SPM and one partition: sharing with the SPM is mediation. */
+    domains[2].memory_resource_count = 2U;
+    EXPECT_RESULT(wt_domain_validate_set(domains, 3U,
+                      WT_ISOLATION_PROFILE_LEVEL_3, &caps), WT_DOMAIN_VALID);
+
+    /* A Non-secure domain sharing writable memory with a partition. */
+    domains[2].memory_resource_count = 3U;
+    domains[2].domain_class = WT_DOMAIN_CLASS_NONSECURE_APPLICATION;
+    domains[2].rot_role = WT_ROT_ROLE_NONE;
+    domains[2].security_state = WT_SECURITY_STATE_NONSECURE;
+    domains[0].memory_resource_count = 2U;
+    EXPECT_RESULT(wt_domain_validate_set(domains, 3U,
+                      WT_ISOLATION_PROFILE_LEVEL_3, &caps),
+                  WT_DOMAIN_ERROR_ISOLATION);
+}
+
 static void wt_test_interrupts(void)
 {
     wt_domain_fixture_t fixture;
@@ -480,6 +546,7 @@ int main(void)
     wt_test_memory_regions();
     wt_test_entry_and_stack();
     wt_test_memory_sharing();
+    wt_test_isolation_level_3();
     wt_test_interrupts();
     wt_test_profile_capabilities();
 
