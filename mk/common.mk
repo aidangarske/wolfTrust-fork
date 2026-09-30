@@ -808,8 +808,8 @@ $(UPSTREAM_STAMP): | $(BUILD_DIR)
 # Derived schedule, not a suite edit: skipped tests need a runtime capability
 # the current image lacks, each tracked in task-list.md.
 #   i067        -> dynamic heap the zero-allocation secure image forbids
-# The panic tests run across their panic-reset reboots: the runner applies the
-# M33MU-1 emulator fix (m33mu-tb-sec-chain.patch) before building the emulator.
+# The panic tests run across their panic-reset reboots, which the pinned M33MU
+# supports.
 $(CONF_GEN_STAMP): $(UPSTREAM_STAMP) $(MANIFEST_STAMP)
 	sed -e 's/^test_i067$$/test_i067, skip/' \
 	    -e 's/^test_i002, panic_test$$/test_i002/' \

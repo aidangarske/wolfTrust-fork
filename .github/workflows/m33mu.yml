@@ -121,8 +121,8 @@ jobs:
       WT_MAX_GUESTS: 2
       ZEPHYR_BOARD: nucleo_h563zi/stm32h563xx/ns
       WT_TEST_GUEST: ${{ matrix.guest }}
-      # Upstream merge of danielinux/m33mu PR #13.
-      M33MU_REF: c84792f7f9e9ce24cf94ffc492c36231de1854c2
+      # Upstream master with danielinux/m33mu PR #19 (STM32H5 DBGMCU_IDCODE).
+      M33MU_REF: 5d7f854acd8bcb5b56a6dba391995f9373261b1c
     steps:
       - uses: actions/checkout@v4
 
@@ -136,9 +136,6 @@ jobs:
           git clone --no-checkout https://github.com/danielinux/m33mu.git m33mu
           git -C m33mu fetch --depth 1 origin "$M33MU_REF"
           git -C m33mu checkout --detach "$M33MU_REF"
-          # Carry the tb-sec-chain (SPSEL + ITSTATE) fix like run_m33mu_scenario.sh
-          # until M33MU_REF includes it; without it wolfTrust key-ops fault (#63).
-          git -C m33mu apply "$GITHUB_WORKSPACE/tests/target/m33mu-tb-sec-chain.patch"
           cmake -S m33mu -B m33mu/build -DM33MU_ENABLE_WOLFSSL=OFF
           cmake --build m33mu/build --target m33mu -j2
           echo "M33MU=$GITHUB_WORKSPACE/m33mu/build/m33mu" >> "$GITHUB_ENV"
