@@ -40,6 +40,12 @@ EXPECT_VERSION = {
     "DRIVER_UART_VERSION": 1,
 }
 
+EXPECT_ROT_ROLE = {
+    "SERVER_PARTITION": 3,
+    "DRIVER_PARTITION": 2,
+    "CLIENT_PARTITION": 3,
+}
+
 EXPECT_DRIVER_SIGNAL = {
     "DRIVER_UART_SIGNAL": 0x10,
     "DRIVER_NVMEM_SIGNAL": 0x40,
@@ -140,6 +146,38 @@ def main():
             print("committed manifest-conformance.json is not reproducible "
                   "from the upstream manifests", file=sys.stderr)
             failures += 1
+        if emit.returncode == 0:
+            merged = json.loads(emitted.read_text())
+            roles = {d["id"]: d["rot_role"] for d in merged["domains"]}
+            got = {p["name"]: roles.get(p["domain_id"])
+                   for p in merged["partitions"]}
+            for name, expect in EXPECT_ROT_ROLE.items():
+                if got.get(name) != expect:
+                    print("rot_role {}: expected {}, got {}".format(
+                        name, expect, got.get(name)), file=sys.stderr)
+                    failures += 1
+    for bad_type in (None, "NS-AGENT", []):
+        with tempfile.TemporaryDirectory() as bad_dir:
+            source = json.loads(inputs[0].read_text(encoding="utf-8"))
+            if bad_type is None:
+                del source["type"]
+            else:
+                source["type"] = bad_type
+            bad_input = Path(bad_dir) / "server_partition_psa.json"
+            bad_input.write_text(json.dumps(source), encoding="utf-8")
+            bad_emit = Path(bad_dir) / "conformance.json"
+            refused = subprocess.run(
+                [sys.executable, str(INGESTER), str(bad_input),
+                 *[str(p) for p in inputs[1:]], "--base", str(base),
+                 "--emit-manifest", str(bad_emit)],
+                capture_output=True, text=True)
+            if refused.returncode != 1 or \
+                    "unknown partition type" not in refused.stderr or \
+                    bad_emit.exists():
+                print("partition type {!r} was not refused: {}".format(
+                    bad_type, refused.stderr.strip()), file=sys.stderr)
+                failures += 1
+
     with tempfile.TemporaryDirectory() as ingest_out, \
             tempfile.TemporaryDirectory() as conf_out:
         result = subprocess.run(

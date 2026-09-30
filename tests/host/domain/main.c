@@ -177,6 +177,7 @@ static void wt_test_spm_count(void)
     wt_fixture_init(&fixture);
     fixture.domains[0].domain_class = WT_DOMAIN_CLASS_SECURE_PARTITION;
     fixture.domains[0].rot_role = WT_ROT_ROLE_PROT;
+    fixture.domains[0].privilege_state = WT_PRIVILEGE_STATE_UNPRIVILEGED;
     EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_SPM_COUNT);
 
     wt_fixture_init(&fixture);
@@ -205,6 +206,10 @@ static void wt_test_domain_metadata(void)
     wt_fixture_init(&fixture);
     fixture.domains[0].privilege_state =
         WT_PRIVILEGE_STATE_UNPRIVILEGED;
+    EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_PRIVILEGE_STATE);
+
+    wt_fixture_init(&fixture);
+    fixture.domains[1].privilege_state = WT_PRIVILEGE_STATE_PRIVILEGED;
     EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_PRIVILEGE_STATE);
 
     wt_fixture_init(&fixture);
@@ -448,16 +453,18 @@ static void wt_test_profile_capabilities(void)
     EXPECT_RESULT(wt_validate(&fixture), WT_DOMAIN_ERROR_CAPABILITY);
 
     wt_fixture_init(&fixture);
+    EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 2U,
+        WT_ISOLATION_PROFILE_LEVEL_1, &fixture.capabilities),
+        WT_DOMAIN_ERROR_PROFILE);
+    EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 2U,
+        WT_ISOLATION_PROFILE_LEVEL_2, &fixture.capabilities),
+        WT_DOMAIN_ERROR_PROFILE);
+
+    wt_fixture_init(&fixture);
     fixture.domains[0].interrupt_resource_count = 0U;
     fixture.domains[0].interrupt_resources = NULL;
     fixture.capabilities.capabilities = WT_CAPABILITY_SECURITY_STATE |
                                         WT_CAPABILITY_MEMORY_PROTECTION;
-    EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 1U,
-        WT_ISOLATION_PROFILE_LEVEL_1, &fixture.capabilities),
-        WT_DOMAIN_VALID);
-    EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 1U,
-        WT_ISOLATION_PROFILE_LEVEL_2, &fixture.capabilities),
-        WT_DOMAIN_ERROR_CAPABILITY);
     EXPECT_RESULT(wt_domain_validate_set(fixture.domains, 1U,
         WT_ISOLATION_PROFILE_SERVICE_ONLY, &fixture.capabilities),
         WT_DOMAIN_VALID);

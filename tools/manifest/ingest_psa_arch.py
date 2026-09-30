@@ -35,7 +35,10 @@ SP_STACK_SIZE = 0x2000
 MEM_ATTR_CODE = 5     # READ | EXEC
 MEM_ATTR_STACK = 19   # READ | WRITE | RESTART_CLEAR
 DOMAIN_CLASS_SP = 1
-ROT_ROLE_APP = 2
+ROT_ROLE = {
+    "PSA-ROT": 2,
+    "APPLICATION-ROT": 3,
+}
 SP_REQUIRED_CAPS = 80
 SP_RESTART_POLICY = {
     "action": 1,
@@ -125,13 +128,23 @@ def ingest(paths, pid_base):
     return {"partitions": partitions}
 
 
-def sp_domain(domain_id, index, code_base, stack_base, stack_size):
+def partition_rot_role(source):
+    partition_type = source.get("type")
+    role = None
+    if isinstance(partition_type, str):
+        role = ROT_ROLE.get(partition_type)
+    if role is None:
+        raise IngestError("unknown partition type: {!r}".format(partition_type))
+    return role
+
+
+def sp_domain(domain_id, index, code_base, stack_base, stack_size, rot_role):
     code = code_base + index * SP_CODE_SIZE
     stack = stack_base + index * stack_size
     return {
         "id": domain_id,
         "domain_class": DOMAIN_CLASS_SP,
-        "rot_role": ROT_ROLE_APP,
+        "rot_role": rot_role,
         "security_state": 0,
         "privilege_state": 1,
         "initial_lifecycle": 0,
@@ -197,7 +210,8 @@ def emit_manifest(base_path, arm_paths, code_base, stack_base, stack_size):
 
     for index, part in enumerate(normalized):
         domain_id = next_id + index
-        domain = sp_domain(domain_id, index, code_base, stack_base, stack_size)
+        domain = sp_domain(domain_id, index, code_base, stack_base, stack_size,
+                           partition_rot_role(part["_source"]))
         domain["interrupt_resources"] = [
             {"interrupt": irq["interrupt"], "attributes": 0, "share_id": 0}
             for irq in part["interrupts"]

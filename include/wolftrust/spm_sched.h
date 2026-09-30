@@ -40,21 +40,21 @@ int wt_spm_sched_add(wt_ffm_runtime_t* runtime, int32_t partition_id,
                      wt_spm_sp_entry_fn entry, void* arg);
 
 /* Start the SERVICE_HSM relay partition (WT-FFM-0054) as a scheduled
- * PRIVILEGED coroutine: its loop hands each mediated wolfHSM packet to the
- * monitor's inline server pump, which reads secure state and may block on
- * the shared NVM mutex — the same privilege rationale as the vault. */
+ * UNPRIVILEGED SP confined to its manifest domain: its loop reaches the
+ * wolfHSM server state through the shared keystore band, and flash, entropy,
+ * and the NVM lock trap to the SVC gate. */
 int wt_spm_hsm_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 
-/* Start the SERVICE_ATTEST partition as a scheduled PRIVILEGED coroutine: its
- * dispatch loop runs on its own stack and reaches the secure attestation
- * server state, so it runs privileged like the HSM relay for now. Defined only
+/* Start the SERVICE_ATTEST partition as a scheduled UNPRIVILEGED SP: its
+ * dispatch loop runs on its own stack and reaches the attestation server state
+ * through the shared keystore band its manifest domain grants. Defined only
  * in attestation-enabled builds. */
 int wt_spm_attest_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 
-/* Start the vault partition (WT-FFM-0047) as a scheduled PRIVILEGED coroutine:
- * same slot machinery and SVC gate, but wt_co_set_domain is never called, so
- * the loop may reach the wolfHSM NVM state and block on its mutex. Clients
- * still cross the gate; the manifest's dependencies[] authorizes them. */
+/* Start the vault partition (WT-FFM-0047) as a scheduled UNPRIVILEGED SP:
+ * the loop reaches the wolfHSM NVM state through the shared keystore band, and
+ * the NVM lock traps to the SVC gate. Clients still cross the gate; the
+ * manifest's dependencies[] authorizes them. */
 int wt_spm_vault_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 
 /* Start the ITS partition as a normal UNPRIVILEGED scheduled SP whose service
@@ -64,9 +64,9 @@ int wt_spm_its_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 /* Schedule the PS partition: the storage loop with sealing forced on. */
 int wt_spm_ps_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 
-/* Start the Firmware Update partition (WT-FWU-0001) as a scheduled PRIVILEGED
- * coroutine: it programs the wolfBoot update partition flash to stage a
- * candidate, so it runs privileged like the vault. */
+/* Start the Firmware Update partition (WT-FWU-0001) as a scheduled
+ * UNPRIVILEGED SP: it stages a candidate in the wolfBoot update partition
+ * through the FWU-pinned SVC gate, which programs the flash. */
 int wt_spm_fwu_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 
 int wt_spm_vnet_start(wt_ffm_runtime_t* runtime, int32_t partition_id);

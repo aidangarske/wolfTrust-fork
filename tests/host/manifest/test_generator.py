@@ -283,6 +283,35 @@ class GeneratorTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("partition interrupt", result.stderr)
 
+    def test_isolation_levels_1_and_2_are_rejected(self):
+        for level in (1, 2):
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / "level.json"
+                manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+                manifest["isolation_profile"] = level
+                source.write_text(json.dumps(manifest), encoding="utf-8")
+
+                result = self.run_generator(source, root / "output")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("isolation levels 1 and 2 are not implemented",
+                              result.stderr)
+                self.assertFalse((root / "output").exists())
+
+    def test_privileged_secure_partition_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "privileged.json"
+            manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+            manifest["domains"][1]["privilege_state"] = 0
+            source.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = self.run_generator(source, root / "output")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Secure Partitions must be unprivileged",
+                          result.stderr)
+            self.assertFalse((root / "output").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

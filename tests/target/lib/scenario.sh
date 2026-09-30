@@ -39,6 +39,7 @@ scenario_secure_flags() {
         vnet)             echo "CONFIG_VNET=y" ;;
         vnetneg)          echo "CONFIG_VNET=y WT_VNET_NEG_PROBE=1" ;;
         manifestneg)      echo "WT_MANIFEST_NEG_PROBE=1" ;;
+        manifestneg2)     echo "WT_MANIFEST_NEG_PROBE=2" ;;
         *)                echo "" ;;
     esac
 }
@@ -48,7 +49,7 @@ scenario_secure_flags() {
 scenario_end() {
     case "$1" in
         rollbackneg|spbudgetneg) echo "bkpt:0x7d" ;;
-        manifestneg)             echo "bkpt:0x7e" ;;
+        manifestneg|manifestneg2) echo "bkpt:0x7e" ;;
         remeasureneg)            echo "bkpt:0x6c" ;;
         *)                       echo "idle" ;;
     esac
@@ -73,7 +74,7 @@ scenario_assert_verdict() {
             expect "clean re-measure passed, then the in-flash tamper was caught before dispatch" \
                 "[BKPT] imm=0x6c"
             ;;
-        manifestneg)
+        manifestneg|manifestneg2)
             expect "boot halted on the production manifest-validation panic" \
                 "[BKPT] imm=0x7e"
             refute_re "no guest scheduled off the corrupted manifest" \

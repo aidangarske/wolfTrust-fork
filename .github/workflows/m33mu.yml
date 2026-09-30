@@ -317,6 +317,7 @@ jobs:
       image: ${{ matrix.image }}
     env:
       WT_ENGINE: ${{ matrix.engine }}
+      WT_MANIFEST_NEG_PROBE: ${{ matrix.scenario.probe }}
     steps:
       - uses: actions/checkout@v4
 

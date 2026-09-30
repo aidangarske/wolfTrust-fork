@@ -149,9 +149,11 @@ where the platform and feature set are held constant.
 
 The STM32H563 manifest sets `isolation_profile` to
 `WT_ISOLATION_PROFILE_LEVEL_3` and declares the capabilities checked
-by the manifest validator. The manifest declares its Non-secure guests
-unprivileged, but the current runtime initializes `CONTROL_NS.nPRIV` to zero and
-launches them privileged. TrustZone protects Secure state, GTZC isolates peer
+by the manifest validator. Only level 3 is implemented, so the generator and
+the validator refuse levels 1 and 2. The manifest declares its Non-secure guests
+privileged, matching the runtime, which initializes `CONTROL_NS.nPRIV` to zero.
+It declares every Secure Partition unprivileged, and the generator and the
+validator refuse a privileged one. TrustZone protects Secure state, GTZC isolates peer
 guest RAM, and unprivileged Secure threads use per-partition Secure MPU regions.
 The guest Non-secure MPU and interrupt masks are scheduling policy because a
 privileged guest can reprogram them.

@@ -77,6 +77,7 @@ PORTS = {
             ("vnet", "wolfIP virtual network (mediated ping)"),
             ("vnetneg", "Confined VNET isolation negatives"),
             ("manifestneg", "Corrupted-manifest activation refused"),
+            ("manifestneg2", "Level 2 manifest refused at boot"),
             ("gtzcneg", "NS MPU bypass cannot reach peer guest RAM"),
             ("spbudgetneg", "SP restart-budget exhaustion escalates"),
             ("revneg", "Engineering-sample silicon refused"),

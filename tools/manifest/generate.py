@@ -309,11 +309,11 @@ def validate_policy(manifest, supported_features, word_max,
         policy_error("profile capability mask is invalid")
     required_by_profile = {
         0: 0,
-        1: 0x01 | 0x10,
-        2: 0x01 | 0x04 | 0x10,
         3: 0x01 | 0x02 | 0x04 | 0x08 | 0x10 | 0x20,
     }
     profile = manifest["isolation_profile"]
+    if profile in (1, 2):
+        policy_error("isolation levels 1 and 2 are not implemented; use 0 or 3")
     if profile not in required_by_profile:
         policy_error("isolation profile is invalid")
     if capabilities["capabilities"] & required_by_profile[profile] != \
@@ -355,6 +355,8 @@ def validate_policy(manifest, supported_features, word_max,
         elif domain_class == 1:
             if domain["rot_role"] not in (2, 3) or domain["security_state"] != 0:
                 policy_error("Secure Partition identity is invalid")
+            if domain["privilege_state"] != 1:
+                policy_error("Secure Partitions must be unprivileged")
         elif domain["rot_role"] != 0 or domain["security_state"] != 1:
             policy_error("Non-secure identity is invalid")
 

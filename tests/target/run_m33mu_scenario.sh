@@ -54,8 +54,8 @@ set -o pipefail
 
 scenario="${1:-}"
 case "$scenario" in
-  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg) ;;
-  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
+  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg) ;;
+  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|spfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
 esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -670,9 +670,8 @@ case "$scenario" in
     check_fail "keystore-band isolation" "expected MEMFAULT at 0x30075000, none seen"
     ;;
   spfaultneg)
-    # The SERVICE_HSM relay SP faults once on its first entry (udf #0 — the
-    # relay runs privileged, so an undefined instruction stands in for the
-    # MPU read the unprivileged probe used). wolfTrust must catch the
+    # The SERVICE_HSM relay SP faults once on its first entry (udf #0, an
+    # undefined-instruction UsageFault). wolfTrust must catch the
     # Secure-Thread UsageFault, restart the partition in place, and the
     # RESTARTED relay must then serve every mediated crypto request from both
     # OS clients with no platform reset. (The pinned-client defined-error
@@ -812,7 +811,7 @@ case "$scenario" in
     expect "[EXPECT BKPT] Success clean exit" "[EXPECT BKPT] Success"
     echo "PASS: target/vnetneg"
     ;;
-  manifestneg)
+  manifestneg|manifestneg2)
     # A corrupted manifest must fail activation closed BEFORE scheduling: the
     # boot halts on the production panic (BKPT 0x7E) and neither guest ever
     # starts. A guest banner in the log means the SPM scheduled work off an
@@ -821,7 +820,8 @@ case "$scenario" in
       "[BKPT] imm=0x7e"
     refute_re "no guest scheduled off the corrupted manifest" \
       '(guest0_psa alive|freertos_guest1:|vnet-guest)'
-    echo "PASS: target/manifestneg"
+    check_pass "refused variant built with $(scenario_secure_flags "$scenario")"
+    echo "PASS: target/$scenario"
     ;;
   revneg)
     # Engineering-sample silicon must halt in wt_platform_init with the
