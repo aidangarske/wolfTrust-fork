@@ -42,7 +42,7 @@ set -o pipefail
 mode="${1:-all}"
 scenario="${2:-positive}"
 case "$mode" in build|flash|all) ;; *) echo "usage: $0 build|flash|all [scenario]" >&2; exit 2 ;; esac
-case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg" >&2; exit 2 ;; esac
+case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
@@ -166,6 +166,10 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "hsmattackneg" ] && guest_flags="WT_HSM_ATTACK_PROBE=1"
   [ "$scenario" = "gtzcneg" ] && guest_flags="WT_MPU_BYPASS_PROBE=1"
   [ "$scenario" = "bootupdate" ] && secure_flags="WT_BOOTUPDATE_PROBE=1"
+  # Architectural-context negatives on silicon.
+  [ "$scenario" = "fpneg" ] && secure_flags="WT_SP_FAULT_PROBE=1 WT_FP_NEG_PROBE=1"
+  [ "$scenario" = "sealneg" ] && secure_flags="WT_SEAL_NEG_PROBE=1"
+  [ "$scenario" = "sealpivotneg" ] && secure_flags="WT_SEAL_NEG_PROBE=4"
   [ "$scenario" = "vnet" ] && secure_flags="CONFIG_VNET=y"
   [ "$scenario" = "vnetneg" ] && secure_flags="CONFIG_VNET=y WT_VNET_NEG_PROBE=1"
   # WT_CONF_DIAG_TRAP=0: the emulator-only hang-probe fault would become a
@@ -373,7 +377,7 @@ if [ "$mode" != "build" ]; then
     erase_verified 0x0C1FE000
     erase_verified 0x0C1FA000
     pyocd cmd -t "$PYOCD_TARGET" -c reset >/dev/null 2>&1 || true
-  elif [ "$scenario" = "positive" ] || [ "$scenario" = "bothpsa" ] || [ "$scenario" = "crossdomain" ] || [ "$scenario" = "keystoreneg" ] || [ "$scenario" = "panicneg" ]; then
+  elif [ "$scenario" = "positive" ] || [ "$scenario" = "bothpsa" ] || [ "$scenario" = "crossdomain" ] || [ "$scenario" = "keystoreneg" ] || [ "$scenario" = "panicneg" ] || [ "$scenario" = "fpneg" ] || [ "$scenario" = "sealneg" ] || [ "$scenario" = "sealpivotneg" ]; then
     # Guest0's ITS+PS lifecycle persists vault objects across runs on silicon
     # (the emulator starts on fresh flash); blank the vault like the dev
     # scenarios do so the pool stays emulator-equivalent.
@@ -828,6 +832,58 @@ if [ "$mode" != "build" ]; then
           "gtzc probe latch 0x${probe:-none}, want 1 or 2"
       fi
       refute_re "no HardFault escalation" '^(\[HARDFLT\]|HardFault|SecureFault)'
+      ;;
+    fpneg)
+      # The SERVICE_HSM relay runs one FP instruction on first entry. Silicon
+      # must report NOCP, restart the relay, and complete the guest lifecycle.
+      refute_re "FP fault did not escalate to HardFault" \
+        '^(\[HARDFLT\]|HardFault|SecureFault)'
+      fault_cnt=$(read_secure_u32 g_tasklet_fault_count)
+      fault_cfsr=$(read_secure_u32 g_tasklet_fault_cfsr)
+      if [ -n "$fault_cnt" ] && [ $((0x$fault_cnt)) -ge 1 ]; then
+        check_pass "relay SP faulted on the FP instruction (count=0x$fault_cnt)"
+      else
+        check_fail "FP fault" "SP fault count not captured (count=${fault_cnt:-none})"
+      fi
+      if [ -n "$fault_cfsr" ] && \
+         [ $(( (0x$fault_cfsr >> 19) & 0x1 )) -eq 1 ]; then
+        check_pass "FP fault took the NOCP trap on silicon (CFSR=0x$fault_cfsr)"
+      else
+        check_fail "NOCP trap" "CFSR 0x${fault_cfsr:-none} lacks NOCP (bit 19)"
+      fi
+      lc=$(read_guest0_u32 g_guest0_lifecycle)
+      if [ -n "$lc" ] && [ $((0x$lc & 0xFF)) -eq 255 ]; then
+        check_pass "lifecycle completed after FP-fault recovery (0x$lc)"
+      else
+        check_fail "recovery" "lifecycle 0x${lc:-none} after the FP fault, expected 0xFF"
+      fi
+      expect "guest1 alive through the FP fault" "freertos_guest1: heartbeat"
+      ;;
+    sealneg|sealpivotneg)
+      # Software check only: the partition overwrites its own stack-top seal
+      # (sealneg) or blocks with SP parked on it so the SVC frame lands there
+      # (sealpivotneg); the SPM latches g_wt_seal_violation and faults it alone.
+      refute_re "seal violation did not escalate to HardFault" \
+        '^(\[HARDFLT\]|HardFault|SecureFault)'
+      viol=$(read_secure_u32 g_wt_seal_violation)
+      if [ -n "$viol" ] && [ $((0x$viol)) -eq $((0xFEF5EDA5)) ]; then
+        check_pass "switch-time seal check detected the tamper (latch=0x$viol)"
+      else
+        check_fail "seal violation latch" "g_wt_seal_violation=0x${viol:-none}, want 0xFEF5EDA5"
+      fi
+      fault_cnt=$(read_secure_u32 g_tasklet_fault_count)
+      if [ -n "$fault_cnt" ] && [ $((0x$fault_cnt)) -ge 1 ]; then
+        check_pass "offending partition took the contained fault (count=0x$fault_cnt)"
+      else
+        check_fail "partition fault" "SP fault count not captured (count=${fault_cnt:-none})"
+      fi
+      lc=$(read_guest0_u32 g_guest0_lifecycle)
+      if [ -n "$lc" ] && [ $((0x$lc & 0xFF)) -eq 255 ]; then
+        check_pass "lifecycle completed after the partition restarted (0x$lc)"
+      else
+        check_fail "recovery" "lifecycle 0x${lc:-none} after the seal fault, expected 0xFF"
+      fi
+      expect "guest1 alive after the partition fault" "freertos_guest1: heartbeat"
       ;;
   esac
   echo "PASS: hardware/h5/$scenario"

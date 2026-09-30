@@ -116,6 +116,12 @@ static void wt_reset_main(void)
     }
 #endif
 
+#if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE == 3)
+    /* sealbootneg: a damaged main-stack seal must stop the boot here. The
+     * store is opaque so the compiler cannot fold the check and drop the
+     * boot path behind it. */
+    __asm__ volatile ("str %1, [%0]" : : "r"(seal), "r"(0u) : "memory");
+#endif
     /* Refuse to boot unless the reset entry sealed the main stack top and
      * moved MSP below the seal words. */
     __asm__ volatile ("mrs %0, msp" : "=r"(msp));

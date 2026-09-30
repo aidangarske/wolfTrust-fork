@@ -65,6 +65,7 @@ run: $(MANIFEST_TEST) $(GENERATED_TEST)
 	$(GENERATED_TEST)
 	python3 $(GENERATOR_TEST)
 	sh test_variant_stamp.sh $(BUILD_DIR)/variant
+	sh test_probe_stamp.sh $(BUILD_DIR)/probe-stamp
 
 compiler-gcc:
 	$(MAKE) run CC=gcc BUILD_DIR=$(BUILD_DIR)/gcc

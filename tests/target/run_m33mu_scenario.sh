@@ -261,6 +261,7 @@ fi
 #     is handled by the monitor, which restarts the guest; halting on the fault
 #     would defeat the count. The others halt on any unexpected fault. ---
 quit_flag="--quit-on-faults"
+expect_bkpt=0x7f
 timeout_s=60
 if [ "$scenario" = "restart" ]; then
   quit_flag=""
@@ -279,8 +280,23 @@ elif [ "$scenario" = "gtzcneg" ]; then
   # authneg), or on the clean BKPT when the store is silently discarded.
   quit_flag=""
   timeout_s=40
+elif [ "$scenario" = "fpneg" ]; then
+  # The partition's FP instruction faults on purpose; do not quit on the fault.
+  # M33MU ends the run itself when it raises NOCP, so nothing after the fault
+  # executes here.
+  quit_flag=""
+  timeout_s=40
+elif [ "$scenario" = "sealhaltneg" ]; then
+  # The run must end on the seal-check halt, never at the success BKPT.
+  expect_bkpt=0x6e
+  timeout_s=40
+elif [ "$scenario" = "sealbootneg" ]; then
+  # The reset path refuses the damaged main-stack seal before any partition.
+  expect_bkpt=0x7e
+  timeout_s=40
 elif [ "$scenario" = "spfaultneg" ] || [ "$scenario" = "panicneg" ] ||
-     [ "$scenario" = "vnetneg" ]; then
+     [ "$scenario" = "vnetneg" ] || [ "$scenario" = "sealneg" ] ||
+     [ "$scenario" = "sealpivotneg" ]; then
   # The SP faults on purpose; wolfTrust catches the fault and restarts
   # the partition in place, so halting on the fault would defeat the
   # recovery. The rest of the lifecycle then completes normally through the
@@ -333,7 +349,7 @@ set +e
   "$g0_img:0xA0000" \
   "$g1_img:0xE0000" \
   ${update_img:+"$update_img"} \
-  --uart-stdout --expect-bkpt 0x7f $quit_flag --timeout "$timeout_s" | tee "$log"
+  --uart-stdout --expect-bkpt $expect_bkpt $quit_flag --timeout "$timeout_s" | tee "$log"
 emu_status=${PIPESTATUS[0]}
 set -e
 echo "wolfBoot/wolfTrust M33MU exit status: $emu_status"
@@ -856,6 +872,13 @@ case "$scenario" in
     check_pass "refused variant built with $(scenario_secure_flags "$scenario")"
     echo "PASS: target/$scenario"
     ;;
+  sealbootneg)
+    expect "boot halted on the damaged main-stack seal" "[BKPT] imm=0x7e"
+    expect "the emulator stopped on that halt" "[EXPECT BKPT] Success"
+    refute_re "no guest scheduled after the refused boot" \
+      '(guest0_psa alive|freertos_guest1:|vnet-guest)'
+    echo "PASS: target/sealbootneg"
+    ;;
   revneg)
     # Engineering-sample silicon must halt in wt_platform_init with the
     # refusal line and the production panic, before any partition or guest.
@@ -902,5 +925,71 @@ case "$scenario" in
     refute_re "no clean lifecycle exit after the mandatory service died" \
       '\[BKPT\] imm=0x7f'
     echo "PASS: target/spbudgetneg"
+    ;;
+
+  fpneg)
+    # Containment only: NOCP (not the fallback UNDEFINSTR) shows the FP
+    # instruction hit a disabled coprocessor. M33MU ends the run on NOCP, so
+    # restart and guest survival are asserted on the H5 run (docs/Testing.md).
+    if grep -Eq '\[USGFLT\].*CFSR=0x00080000' "$log"; then
+      check_pass "partition FP instruction took the NOCP trap (Secure FP disabled)"
+    else
+      check_fail "FP NOCP fault" "expected NOCP UsageFault (CFSR=0x00080000), none seen"
+    fi
+    refute_re "FP fault did not escalate (containment only; recovery not proven here)" \
+      '(\[HARDFLT\]|HardFault|SecureFault)'
+    expect "the emulator ended the run at the fault, not on the wall clock" \
+      "Execution stopped"
+    refute_re "run did not reach the wall-clock budget" 'wall-clock'
+    printf '  [check] INFO  partition restart and guest survival are not asserted on the emulator; see the H5 fpneg run\n'
+    echo "PASS: target/fpneg (containment only)"
+    ;;
+
+  sealneg)
+    # Software check only: the partition that overwrote its own seal is
+    # resumed on the panic trap, so it alone takes a contained UsageFault and
+    # restarts; the platform must not halt (no BKPT 0x6e or 0x7e).
+    if grep -Eq '\[USGFLT\].*CFSR=0x00010000' "$log" &&
+       grep -Eq '\[USGFLT\] mem16\[0x[0-9a-f]+\]=0xde50' "$log"; then
+      check_pass "seal violation faulted the offending partition on the panic trap"
+    else
+      check_fail "seal violation" "expected the panic-trap UsageFault, none seen"
+    fi
+    refute_re "partition fault was contained, not escalated" \
+      '(\[HARDFLT\]|HardFault|SecureFault)'
+    refute_re "platform did not halt on the partition's seal" \
+      '\[BKPT\] imm=0x(6e|7e|7d)'
+    expect "unrelated guest kept running" "freertos_guest1: alive"
+    expect "run reached the clean scenario end" "[EXPECT BKPT] Success"
+    echo "PASS: target/sealneg"
+    ;;
+
+  sealpivotneg)
+    # The partition's blocking wait is stacked on its stack top, over the seal
+    # words; the SPM must still contain the fault to that partition.
+    if grep -Eq '\[USGFLT\].*CFSR=0x00010000' "$log" &&
+       grep -Eq '\[USGFLT\] mem16\[0x[0-9a-f]+\]=0xde50' "$log"; then
+      check_pass "seal violation faulted the offending partition on the panic trap"
+    else
+      check_fail "seal violation" "expected the panic-trap UsageFault, none seen"
+    fi
+    refute_re "partition fault was contained, not escalated" \
+      '(\[HARDFLT\]|HardFault|SecureFault)'
+    refute_re "platform did not halt on the partition's seal" \
+      '\[BKPT\] imm=0x(6e|7e|7d)'
+    expect "unrelated guest kept running" "freertos_guest1: alive"
+    expect "run reached the clean scenario end" "[EXPECT BKPT] Success"
+    echo "PASS: target/sealpivotneg"
+    ;;
+  sealhaltneg)
+    # The dedicated BKPT 0x6e separates the seal halt from an unrelated boot
+    # panic (BKPT 0x7e); the damaged partition must never have run.
+    expect "damaged seal halted the platform at dispatch" "[BKPT] imm=0x6e"
+    expect "the emulator stopped on that halt" "[EXPECT BKPT] Success"
+    check "$([ "$emu_status" -eq 0 ]; echo $?)" \
+      "emulator exited clean on the halt (status $emu_status)"
+    refute_re "partition with the damaged seal was never resumed" '\[USGFLT\]'
+    refute_re "run did not reach a clean success exit" '\[BKPT\] imm=0x7f'
+    echo "PASS: target/sealhaltneg"
     ;;
 esac

@@ -53,6 +53,13 @@ WT_STATIC_ASSERT(sizeof(uintptr_t) == 4,
 
 struct wt_co *g_wt_co_pendsv_target __attribute__((used));
 
+#if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE != 0)
+/* Seal negatives on the first unprivileged Secure Partition (target read back
+ * from R5, so the trampoline touches no SPM memory): probe 1 overwrites its
+ * own seal, probe 2 damages it before dispatch, probe 4 blocks with SP on it. */
+#define WT_CTX_PROBE_MAGIC 0x00F9EDA5u
+static uint8_t g_wt_ctx_probe_armed __attribute__((used)) = 1u;
+#endif
 
 __attribute__((naked))
 static void wt_co_trampoline(void)
@@ -62,6 +69,17 @@ static void wt_co_trampoline(void)
      * system: the fault dispatcher quarantines just this coroutine under its
      * own restart policy, the same path a must-panic PROGRAMMER ERROR takes. */
     __asm__ volatile (
+#if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE == 1)
+        "movw r1, #0xEDA5       \n"
+        "movt r1, #0x00F9       \n"
+        "cmp  r5, r1            \n"
+        "bne  2f                \n"
+        /* PSP points at this stack's two seal words on first entry. */
+        "movw r1, #0xFFF9       \n"
+        "movt r1, #0xFFFF       \n"
+        "str  r1, [sp, #0]      \n"
+        "2:                     \n"
+#endif
         "blx  r4                \n"
         "udf  #0x51             \n"
         "1: b 1b                \n"
@@ -144,6 +162,33 @@ static void wt_co_check_seal_in(const struct wt_co *to)
     }
 }
 
+#if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE == 4)
+/* sealpivotneg: as the armed partition is switched out, re-stack its frame on
+ * its stack top, as if it had parked SP there, so the frame covers the seal. */
+static void wt_co_probe_pivot_out(const struct wt_co *co)
+{
+    uint32_t *frame;
+    uint32_t *top;
+    uint32_t ipsr;
+    uint32_t psp;
+    int i;
+
+    __asm volatile("mrs %0, ipsr" : "=r"(ipsr));
+    __asm volatile("mrs %0, psp" : "=r"(psp));
+    if (g_wt_ctx_probe_armed == 0u || co == NULL || co->domain == NULL ||
+        co->unprivileged == 0u || ipsr == 0u || psp == 0u) {
+        return;
+    }
+    frame = (uint32_t *)(uintptr_t)psp;
+    top = wt_co_seal_top(co) - 8;
+    for (i = 0; i < 8; i++) {
+        top[i] = frame[i];
+    }
+    __asm volatile("msr psp, %0" : : "r"(top));
+    g_wt_ctx_probe_armed = 0u;
+}
+#endif
+
 /* A partition that damaged its own seal is made to fault on resume, so the
  * normal partition recovery handles it and no other domain is affected. */
 static void wt_co_check_seal_out(const struct wt_co *co)
@@ -153,6 +198,9 @@ static void wt_co_check_seal_out(const struct wt_co *co)
     uint32_t ipsr;
     uint32_t psp;
 
+#if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE == 4)
+    wt_co_probe_pivot_out(co);
+#endif
     if (wt_co_seal_intact(co) != 0) {
         return;
     }
@@ -187,6 +235,18 @@ void wt_co_arch_enter(struct wt_co *to)
     const struct wt_secure_domain *domain = to->domain;
 
     g_wt_co_pendsv_target = to;
+#if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE == 1 || WT_SEAL_NEG_PROBE == 2)
+    /* First dispatch is first entry, so this never edits a live frame. */
+    if (g_wt_ctx_probe_armed != 0u && to != NULL && to->domain != NULL &&
+        to->unprivileged != 0u) {
+#if (WT_SEAL_NEG_PROBE == 2)
+        wt_co_seal_top(to)[-2] = 0xFFFFFFF9u;
+#else
+        ((volatile uint32_t *)to->sp)[1] = WT_CTX_PROBE_MAGIC;
+#endif
+        g_wt_ctx_probe_armed = 0u;
+    }
+#endif
     wt_co_check_seal_in(to);
     if (domain != NULL) {
         wt_arch_program_sp_thread_domain(domain->regions,

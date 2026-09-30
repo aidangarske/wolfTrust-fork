@@ -42,6 +42,11 @@ scenario_secure_flags() {
         vnetneg)          echo "CONFIG_VNET=y WT_VNET_NEG_PROBE=1" ;;
         manifestneg)      echo "WT_MANIFEST_NEG_PROBE=1" ;;
         manifestneg2)     echo "WT_MANIFEST_NEG_PROBE=2" ;;
+        fpneg)            echo "WT_SP_FAULT_PROBE=1 WT_FP_NEG_PROBE=1" ;;
+        sealneg)          echo "WT_SEAL_NEG_PROBE=1" ;;
+        sealhaltneg)      echo "WT_SEAL_NEG_PROBE=2" ;;
+        sealbootneg)      echo "WT_SEAL_NEG_PROBE=3" ;;
+        sealpivotneg)     echo "WT_SEAL_NEG_PROBE=4" ;;
         *)                echo "" ;;
     esac
 }
@@ -51,7 +56,8 @@ scenario_secure_flags() {
 scenario_end() {
     case "$1" in
         rollbackneg|spbudgetneg) echo "bkpt:0x7d" ;;
-        manifestneg|manifestneg2) echo "bkpt:0x7e" ;;
+        manifestneg|manifestneg2|sealbootneg) echo "bkpt:0x7e" ;;
+        sealhaltneg)             echo "bkpt:0x6e" ;;
         remeasureneg)            echo "bkpt:0x6c" ;;
         *)                       echo "idle" ;;
     esac
@@ -80,6 +86,12 @@ scenario_assert_verdict() {
             expect "boot halted on the production manifest-validation panic" \
                 "[BKPT] imm=0x7e"
             refute_re "no guest scheduled off the corrupted manifest" \
+                "$GUEST_STARTED_RE"
+            ;;
+        sealbootneg)
+            expect "boot halted on the damaged main-stack seal" \
+                "[BKPT] imm=0x7e"
+            refute_re "no guest scheduled after the refused boot" \
                 "$GUEST_STARTED_RE"
             ;;
         spbudgetneg)
