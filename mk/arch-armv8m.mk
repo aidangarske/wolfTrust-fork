@@ -58,7 +58,7 @@ ARCH_LDFLAGS := -Wl,--cmse-implib -Wl,--out-implib=$(SECURE_CMSE_IMPLIB)
 
 # A changed post-link checker must relink so the image is checked again.
 $(BUILD_DIR)/wolftrust.elf $(ARCH_LINK_OUTPUTS): \
-    $(ROOT)/tools/check_no_fp_insn.py
+    $(ROOT)/tools/check_no_fp_insn.py $(ROOT)/tools/check_stack_seal.py
 
 # Whitelist of non-secure-callable veneers the linked secure image may
 # export: exactly the five mediated FF-M gateway entries, pinned by full
@@ -93,4 +93,9 @@ define arch_image_checks
 		{ echo "FAIL: objdump on the secure image failed" >&2; exit 1; }
 	@python3 $(ROOT)/tools/check_no_fp_insn.py $(ARCH_FP_SCAN_FLAGS) \
 		$(BUILD_DIR)/sec-disasm.txt
+	@$(TOOLPREFIX)size -A -x $(SECURE_ELF) > $(BUILD_DIR)/sec-sections.txt || \
+		{ echo "FAIL: size on the secure image failed" >&2; exit 1; }
+	@estack=$$(awk '$$3 == "_estack" { print $$1 }' $(BUILD_DIR)/nsc-syms.txt); \
+	python3 $(ROOT)/tools/check_stack_seal.py --estack "$$estack" \
+		$(BUILD_DIR)/sec-sections.txt
 endef
