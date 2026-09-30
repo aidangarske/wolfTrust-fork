@@ -723,14 +723,17 @@ int wt_hsm_relay_reinit_servers(void)
         if (!g->ready) {
             continue;
         }
-        /* Rebuild the server and DRBG in place after a fault tore them, and
-         * rebuild the config from trusted constants first in case a partition
-         * rewrote the band-resident cfg fields before the fault (WT-FFM-0011). */
-        wt_hsm_bind_server_cfg(gid);
+        /* Rebuild the server and DRBG in place after a fault tore them. Pin the
+         * live server pointers first so wh_Server_Cleanup runs on trusted
+         * transport/nvm/crypto pointers, then rebuild the config from trusted
+         * constants for wh_Server_Init: a partition may have rewritten either
+         * band-resident set before the fault (WT-FFM-0011). */
+        wt_hsm_server_pin(gid);
         (void)wh_Server_Cleanup(&g->server);
         (void)wc_FreeRng(g->crypto.rng);
         rc = wc_InitRng_ex(g->crypto.rng, NULL, INVALID_DEVID);
         if (rc == 0) {
+            wt_hsm_bind_server_cfg(gid);
             rc = wh_Server_Init(&g->server, &g->server_cfg);
         }
         if (rc == 0) {
