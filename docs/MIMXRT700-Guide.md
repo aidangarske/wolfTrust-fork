@@ -28,10 +28,13 @@ Read the current state first and keep a development board recoverable.
   RAM with a per-dispatch SAU window, because the AHB secure controller's SRAM
   rules do not gate CPU0 on this silicon (an earlier fabric-filter attempt let
   a guest with its Non-secure MPU disabled write the other guest's RAM).
-- **Not yet ported:** `SERVICE_VNET` and the NOR guest-window write-protect
-  check. The target has no VNET manifest, so `CONFIG_VNET=y` stops the build
-  with an error, and a `WT_GUEST_FLASH_WRP=1` build refuses to launch any
-  guest. `SERVICE_FWU` stages a candidate into the wolfBoot update partition
+- **Validated on the EVK and in emulation:** the XSPI guest flash fence
+  (`wrpfence`, `wrpoff`; `wrpneg` on the EVK) and the reversible device life
+  cycle flow, described under Guest flash write protection and Device life
+  cycle below.
+- **Not yet ported:** `SERVICE_VNET`. The target has no VNET manifest, so
+  `CONFIG_VNET=y` stops the build with an error. `SERVICE_FWU` stages a
+  candidate into the wolfBoot update partition
   (`0x38180000`, the `imx-rt700-tz.config` update address) and arms the swap
   trigger in its trailer, as the STM32H563 port does; staging must be
   contiguous from offset 0, so a finished candidate has no unwritten gap. `WT_CONFORMANCE=1`
@@ -56,6 +59,8 @@ wolfBoot; the Secure runtime changes live in wolfTrust.
 | `config/examples/imx-rt700-tz.config` | TrustZone enabled with the generic Secure-application handoff (`WOLFBOOT_SECURE_APP`): wolfBoot writes the measured-boot record to Secure SRAM and stays in Secure state across the jump to the Secure runtime. |
 | `config/examples/imx-rt700-mldsa.config` | ML-DSA-87 image signatures for a CNSA 2.0 boot chain. |
 | Boot-region protection | Before handoff, wolfBoot programs and locks the XSPI Secure Flash Protection descriptors so the bootloader region is read-only to the application, and refuses to continue if the protection cannot be read back. |
+| Guest flash fence | Carried as `tests/target/wolfboot-imxrt700-guest-fence.patch`: with `XSPI_GUEST_FENCE_START`/`END` defined, a further locked descriptor makes both guest windows read-only to every initiator until the next reset. |
+| Life cycle | Carried as `tests/target/wolfboot-imxrt700-lifecycle.patch`: `hal_attestation_get_lifecycle()` reads the OTP `LC_STATE` shadow, its redundant copy, and `DAUTHSTATUS`, and maps them to the PSA life cycle in the handoff. |
 
 The loader satisfies the [Porting](Porting.md) bootloader contract: it
 authenticates the Secure image, provides `wt_boot_handoff_t` (SHA-256
@@ -189,7 +194,8 @@ similar bit-28 IDAU part:
 
 - MIMXRT700-EVK with its on-board MCU-Link (CMSIS-DAP) and USB serial
 - `arm-none-eabi-gcc` with newlib headers, and `arm-none-eabi-{nm,objcopy,size}`
-- NXP SPSDK (`nxpimage` for FCB and bootable-image assembly)
+- NXP SPSDK (`nxpimage` for FCB and bootable-image assembly; `shadowregs`
+  support for `mimxrt798s`, checked by the life cycle preflight)
 - pyOCD with MIMXRT798S pack support (flash and SWD inspection)
 - Python 3
 - wolfBoot key tools and a signing key for the Secure payload
@@ -203,7 +209,12 @@ assembly and flashing so the addresses stay paired; its emulator sibling
 (`tests/target/run_rt700_m33mu.sh`) runs the same chain and scenario names
 under M33MU. The `romsmoke` scenario proves the BootROM XIP path; the
 `positive` scenario is the wolfTrust chain; `ahbscneg` adds the guest
-isolation negative. The emulator runner then carries the STM32H563 scenario
+isolation negative; `wrpfence`, `wrpoff`, and `wrpneg` cover the guest flash
+fence. `make test-hardware TARGET=mimxrt700` runs that set through
+`tests/target/run_rt700_suite.sh` on the probe host and skips without a board.
+Both runners build the wolfBoot first stage from one pinned upstream commit
+plus the carried patches (`tests/target/lib/rt700_wolfboot.sh`) unless
+`RT700_WOLFBOOT_DIR` names a prebuilt tree. The emulator runner then carries the STM32H563 scenario
 matrix (restart and launch refusal, SP fault recovery, the Secure-verdict
 negatives, the PSA guest's lifecycle and negatives, and Arm's conformance
 suites), listed in [Testing](Testing.md).
@@ -259,6 +270,91 @@ runner also reads guest 1's RAM over SWD to confirm the sentinel never landed
 and that the core is not parked in a fault handler, and logs the AHBSC0
 violation latches for reference.
 
+## Guest flash write protection
+
+The STM32H563 protects guest flash with persistent WRP option bytes. This part
+has none; the equivalent is the XSPI Secure Flash Protection fabric, whose
+region descriptors (FRADs) are programmed by wolfBoot on every boot and locked
+until the next hard reset. With the guest fence armed, wolfBoot's descriptor
+layout is:
+
+| FRAD | Range | Writable |
+| --- | --- | --- |
+| 0 | boot root, `0x28000000`-`0x2803FFFF` | no |
+| 1 | Secure image, `0x28040000`-`0x2807FFFF` | yes |
+| 2 | guest windows, `0x28080000`-`0x2813FFFF` | no (the guest fence) |
+| 3 | update, swap, and storage, `0x28140000`-end of NOR | yes |
+| 4-7 | unused | locked invalid |
+
+The fence refuses writes from every initiator, the Secure runtime included, so
+guest images are installed before wolfBoot arms it and a scenario that
+deliberately rewrites guest flash (`remeasureneg`) runs unfenced. The fence
+bounds come from the same `WT_GUEST*_FLASH_*` values the wolfTrust build uses
+(`tests/target/lib/rt700_fence.sh`), and the build refuses a layout whose guest
+windows are not contiguous and 64 KiB aligned.
+
+Build wolfTrust with `WT_GUEST_FLASH_WRP=1` and every required launch checks,
+from the registers alone, that the SFP configuration is valid and sealed, the
+initiator domain descriptor is valid and locked, and valid, hard-reset-locked,
+write-denying descriptors cover the whole guest window with no write-granting
+or unlocked descriptor overlapping it. Anything less refuses the launch. The
+runners set this up per scenario:
+
+```sh
+tests/target/run_rt700_hardware.sh wrpfence   # fence armed: both guests run
+tests/target/run_rt700_hardware.sh wrpoff     # no fence: both guests refused
+tests/target/run_rt700_hardware.sh wrpneg     # the silicon refuses a fenced erase
+tests/target/provisioning_ctrl_rt700.sh verify-wrp
+```
+
+Because the fence is rebuilt on every boot and cleared by every reset, there is
+no `set-wrp` or `clear-wrp` step: the probe always flashes a parked core with
+the controller unfenced, and which wolfBoot is flashed decides the posture.
+
+## Device life cycle
+
+The life cycle lives in OTP fuses (`LC_STATE` and its redundant copy
+`LC_STATE_RED`). Programming a fuse is permanent, and on this EVK
+`LOCK_CFG3.LIFE_CYCLE_LOCK` is open, so nothing in silicon would stop it.
+`tests/target/provisioning_ctrl_rt700.sh` therefore never programs a fuse: it
+moves the life cycle only in the OTP shadow registers, which every hardware
+reset reloads from the fuses.
+
+| `LC_STATE` | State | PSA life cycle wolfBoot hands wolfTrust |
+| --- | --- | --- |
+| `0x03` | Develop (as the EVK ships) | `0x1000` ASSEMBLY_AND_TEST |
+| `0x07` | Develop2 | `0x2000` PSA_ROT_PROVISIONING |
+| `0x0F` | In-Field | `0x3000` SECURED, or `0x5000`/`0x4000` while debug is open |
+| `0xCF` | In-Field Locked | as In-Field |
+| `0x1F` | In-Field Return | `0x6000` DECOMMISSIONED |
+| other, or copies disagree | NXP-internal or corrupt | `0x0000` UNKNOWN |
+
+The reversible development sequence:
+
+```sh
+tests/target/provisioning_ctrl_rt700.sh status
+tests/target/provisioning_ctrl_rt700.sh discover
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh advance 0x07
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh regress
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh advance 0x0F
+WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh regress
+```
+
+`discover` is read-only and gates `advance`: it requires a fused Develop life
+cycle with agreeing copies, an open shadow over-ride, and a readable boot
+handoff. `advance` halts the core inside wolfBoot, after the ROM has loaded the
+shadows and before wolfBoot reads them, writes both copies, resumes, and reports
+the life cycle wolfTrust received. Past Develop2 it also requires a proven
+`regress`, which is a hardware reset through the board's reset line, outside
+the debug port's control.
+
+A shadow-only advance cannot close debug, because debug enablement is decided
+from the fuses at boot, so In-Field on this EVK attests `0x5000`. SECURED
+proper needs a part with debug disabled in its fuses. A production line burns
+the root key hash, the debug credential root, and the life cycle through NXP's
+secure provisioning flow with a debug credential chain it has already
+validated; `provision-da` and `burn` refuse, and describe that flow instead.
+
 ## Recovery rules
 
 - If the BootROM does not run the image, confirm the FCB is present and the
@@ -292,6 +388,15 @@ violation latches for reference.
   HardFault, which currently stops the whole system rather than the one guest.
 - Never reuse another NXP part's FCB, clock, or pin table without checking its
   reference manual and NOR geometry.
+- The guest fence and a shadow life cycle both end at the next hard reset, so a
+  board can never be left stuck protected or advanced: flash from a parked core,
+  or run `provisioning_ctrl_rt700.sh regress`.
+- With an advanced shadow life cycle live, the device-pack reset sequence can
+  fail with a FAULT ACK; `regress` resets through the board's reset line, which
+  the debug port cannot block, and restores the fused state.
+- Never program a life cycle, debug credential, or root key fuse on a
+  development board. `LOCK_CFG3` is open on the EVK, so the silicon will not
+  stop a burn, and none of it can be undone.
 
 See [Porting](Porting.md) for the generic port contract, [Testing](Testing.md)
 for scenario selection, and [Security Model](Security-Model.md) for the policy
