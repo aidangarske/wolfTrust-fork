@@ -179,8 +179,9 @@ Product-state values used by the control script are:
 | Closed | `0x72` |
 | Locked | `0x5C` |
 
-Locked is permanent and the script refuses it. The reversible development
-sequence is deliberately manual:
+`advance` refuses Locked, which is permanent; the real, gated command for
+each state is `lock` (see [Locking a production part](#locking-a-production-part)).
+The reversible development sequence is deliberately manual:
 
 ```sh
 tests/target/provisioning_ctrl.sh status
@@ -210,10 +211,39 @@ Review the exact current command in
 ## Locking a production part
 
 > **IRREVERSIBLE.** Locked (`0x5C`) is permanent: no Debug Authentication
-> regression, no mass erase, no reflash. Closed (`0x72`) is only reversible
-> through a Debug Authentication chain you have already proven can regress
-> the part; without one, Closed is permanent too. Never lock a development
-> board.
+> regression, no mass erase, no reflash. Provisioning, TrustZone Closed, and
+> Closed are only reversible through a Debug Authentication chain you have
+> already proven can regress the part; without one, they are permanent too.
+> Never lock a development board.
+
+`advance` is the mock for development. `lock` is the real command for each
+state. It moves one step, only from the state before it:
+
+| Command | Runs only from | Sets | Also needs |
+| --- | --- | --- | --- |
+| `lock 0x17` | Open `0xED` | Provisioning | a rehearsal of `0x17` |
+| `lock 0xC6` | Provisioning `0x17` | TrustZone Closed | a rehearsal of `0xC6` |
+| `lock 0x72` | Provisioning `0x17` or TrustZone Closed `0xC6` | Closed | a rehearsal of `0x72`; guest WRP set (`WRPSGn1=0x000FFFFF`) |
+| `lock 0x5C` | Closed `0x72` | Locked (final) | a rehearsal of `0x72` |
+
+The gates follow the pattern of ST's `ROT_Provisioning` scripts and NXP's
+provisioning tools: provision first, set the product state last, rehearse or
+preview before the write, and require an explicit acceptance. ST's script
+takes any state from a menu and pauses with "Press any key to continue".
+`lock` is stricter:
+
+- **One step at a time**, checked against the product state read from the
+  part.
+- **Rehearse, then lock.** A state is rehearsed by `advance <state>`, `verify`,
+  and `regress`. `verify` records that these exact images booted in that state,
+  and `regress` records that Debug Authentication brought the part back to
+  Open from it. Both records hold a digest of the four images, so a rebuild
+  needs a new rehearsal. Locked cannot be rehearsed, so `lock 0x5C` requires
+  a rehearsal of Closed, the same images with debug closed.
+- **Provision first.** The Closed rehearsal can only pass once Debug
+  Authentication is provisioned and proven, which is the brick ST warns about:
+  a part closed without working Debug Authentication cannot come back.
+  `lock 0x72` also requires the guest WRP in place.
 
 A production part moves through the whole life cycle once:
 
@@ -228,43 +258,61 @@ A production part moves through the whole life cycle once:
    tests/target/provisioning_ctrl.sh verify
    ```
 
-2. **Provision Debug Authentication** with the production certificate chain
-   (`WT_DA_*`), not ST's sample, and prove it:
+2. **Rehearse Closed** with the production Debug Authentication chain
+   (`WT_DA_*`), not ST's sample. Regression mass-erases the part, so this runs
+   on a production sample first:
 
    ```sh
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x17
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh provision-da
    tests/target/provisioning_ctrl.sh discover
-   ```
-
-3. **Close** the part. It still regresses to Open with the provisioned chain:
-
-   ```sh
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x72
+   tests/target/provisioning_ctrl.sh verify
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
    ```
 
-   Confirm the attestation token reports `0x3000` SECURED with debug closed.
-4. **Lock**, only when field regression is not wanted:
+   Rehearse Provisioning the same way (`advance 0x17`, `provision-da`,
+   `verify`, `regress`). Then repeat step 1.
+3. **Preview each step.** Without `WT_LOCK_CONFIRM=1`, `lock` runs every check,
+   prints the exact write, and exits with status 2 without writing anything:
+
+   ```text
+   $ tests/target/provisioning_ctrl.sh lock 0x5C
+   Lock step: Closed (0x72) -> Locked (0x5C)
+     checked: order, rehearsal of Closed with images 6df4c1a1b2b7cf5c, DA regression from it
+     will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x5C
+   REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
+   ```
+
+4. **Lock each step**, on the production station:
 
    ```sh
    export WT_PRODUCTION_LOCK=1
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x17
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh provision-da
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x72
+   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x5C
    ```
 
-   `lock` refuses unless the part is already Closed, then asks, and only a
-   person at a terminal typing the phrase exactly continues:
+   Stop after `lock 0x72` if field regression is wanted. Each step prints the
+   preview, then asks, and only a person at a terminal typing the acceptance
+   exactly continues:
 
    ```text
    !!! Locking this STM32H563: product state 0x72 -> 0x5C (Locked)
-   !!! This is IRREVERSIBLE: the part can never be unlocked or reflashed
-   !!! for development again. Are you sure? Type "LOCK 0x5C" to continue:
+   !!! This is IRREVERSIBLE: the part can never be unlocked or reflashed for development again.
+   !!! Are you sure? Type "I ACCEPT 0x5C" to continue:
    ```
 
    Anything else, a pipe, or a missing `WT_PRODUCTION_LOCK=1` refuses with
-   nothing changed. `advance 0x5C` stays refused. `lock` uses the same
-   `PRODUCT_STATE` option-byte write that `advance` uses; its gates were
-   exercised off the board, and the Locked write itself has never been run on a
-   wolfTrust board.
+   nothing changed. After the write, `lock` reads the product state back and
+   fails unless it is the new state. Confirm the attestation token reports
+   `0x3000` SECURED with debug closed.
+
+`advance 0x5C` stays refused. `lock` uses the same `PRODUCT_STATE` option-byte
+write as `advance`. Its gates were exercised offline against a stubbed
+`STM32_Programmer_CLI`, and none of its writes has been run on a wolfTrust
+board.
 
 ## Recovery rules
 

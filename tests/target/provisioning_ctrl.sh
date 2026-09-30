@@ -23,10 +23,13 @@
 #   restore                set-perimeter + flash + verify (full recovery)
 #   provision-da           -sdp the DA OBK (only valid in Provisioning state)
 #   discover               prove the DA credential authenticates (non-destructive)
-#   advance <hexstate>     set PRODUCT_STATE (GATED; Locked refused)
+#   advance <hexstate>     set PRODUCT_STATE (GATED; Locked refused); rehearses it
 #   regress                DA-authenticate + full regression back to Open (GATED)
-#   lock                   PERMANENT: Closed -> Locked (0x5C) on a production station
-#                          only (WT_PRODUCTION_LOCK=1 + typed confirmation)
+#   lock <hexstate>        production step, one state at a time: 0x17 from Open,
+#                          0xC6 or 0x72 from Provisioning, 0x5C (PERMANENT) from
+#                          Closed. Needs a rehearsal of that state with these
+#                          images; previews without WT_LOCK_CONFIRM=1, writes only
+#                          with WT_PRODUCTION_LOCK=1 and a typed "I ACCEPT <state>"
 #
 # TARGET=mimxrt700 runs the MIMXRT700 backend (provisioning_ctrl_rt700.sh).
 set -euo pipefail
@@ -41,6 +44,7 @@ CP="${STM32_CP:-$HOME/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin}"
 CLI="${STM32_CLI:-$CP/STM32_Programmer_CLI}"
 SERIAL="${H5_SERIAL:-/dev/ttyACM0}"
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
+state_dir="${WT_PROVISION_STATE:-$HOME/.cache/wolftrust}"
 
 # ST DA credential from the pinned NUCLEO-H563ZI ROT_Provisioning/DA folder.
 # wolfTrust runs with TrustZone ENABLED, so DA is CERTIFICATE-based: AN6008
@@ -91,6 +95,39 @@ confirm() { [ "${WT_LOCK_CONFIRM:-0}" = "1" ] || {
 product_state() {
   "$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
     | grep -iE "PRODUCT_STATE" | grep -oE "0x[0-9A-Fa-f]+" | head -1
+}
+hexstate() { printf '0x%02X' "$(( $1 ))"; }
+ps_name() {
+  case "$(hexstate "$1")" in
+    0xED) echo "Open" ;; 0x17) echo "Provisioning" ;; 0xC6) echo "TZ-Closed" ;;
+    0x72) echo "Closed" ;; 0x5C) echo "Locked" ;; *) echo "unknown" ;;
+  esac
+}
+refuse() { echo "REFUSED: $1" >&2; exit 2; }
+
+# Rehearsal records hold the digest of the images they proved, so a rebuild
+# needs a fresh rehearsal before any lock step.
+image_digest() {
+  local f
+  for f in "$wb" "$wt" "$g0" "$g1"; do [ -s "$f" ] || return 1; done
+  if command -v sha256sum >/dev/null 2>&1; then
+    cat "$wb" "$wt" "$g0" "$g1" | sha256sum | cut -c1-16
+  else
+    cat "$wb" "$wt" "$g0" "$g1" | shasum -a 256 | cut -c1-16
+  fi
+}
+record() {
+  local d
+  d="$(image_digest)" || return 0
+  mkdir -p "$state_dir"
+  echo "$d" > "$state_dir/h5-$1"
+}
+# rehearsed <state>: these images booted in <state> and DA regression from it worked.
+rehearsed() {
+  local d
+  d="$(image_digest)" || return 1
+  [ "$(cat "$state_dir/h5-booted-$1" 2>/dev/null)" = "$d" ] &&
+    [ "$(cat "$state_dir/h5-regressed-$1" 2>/dev/null)" = "$d" ]
 }
 
 cmd="${1:-status}"
@@ -149,6 +186,9 @@ case "$cmd" in
     sleep 7
     if strip < /tmp/wt-verify.log | grep -aqE "guest0_psa|heartbeat|TEE client"; then
       pass "wolfTrust chain boots on silicon"
+      ps="$(product_state || true)"
+      [ -n "$ps" ] || ps="$(cat "$state_dir/h5-advanced" 2>/dev/null || true)"
+      [ -z "$ps" ] || record "booted-$(hexstate "$ps")"
     else
       fail "verify" "no wolfTrust boot markers on $SERIAL"
     fi
@@ -191,22 +231,60 @@ case "$cmd" in
     esac
     echo "ADVANCING product state $(product_state) -> $state (regress is the only way back)"
     "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$state" 2>&1 | strip | tail -4
+    mkdir -p "$state_dir"
+    hexstate "$state" > "$state_dir/h5-advanced"
     echo "now: $(product_state)"
     ;;
 
   lock)
-    # PERMANENT. Locked disables regression for good, so only a Closed part
-    # whose production image and DA chain were already verified may be locked.
-    confirm
-    state="$(product_state || true)"
-    [ "$state" = "$PS_CLOSED" ] || \
-      fail "lock" "lock only a verified Closed ($PS_CLOSED) part; state=${state:-unreadable}"
+    # One production step at a time, only from the state before it, and only
+    # after 'advance', 'verify', and 'regress' rehearsed that state with these
+    # images. Without WT_LOCK_CONFIRM=1 this is a read-only preview.
+    [[ "${2:-}" =~ ^0[xX][0-9A-Fa-f]{2}$ ]] || \
+      refuse "lock takes the next product state: 0x17, 0xC6, 0x72, or 0x5C."
+    target="$(hexstate "$2")"
+    case "$target" in
+      0x17) from="0xED"; rehearse=0x17 ;;
+      0xC6) from="0x17"; rehearse=0xC6 ;;
+      0x72) from="0x17 0xC6"; rehearse=0x72 ;;
+      0x5C) from="0x72"; rehearse=0x72 ;;
+      *) refuse "lock takes the next product state: 0x17, 0xC6, 0x72, or 0x5C (got $target)." ;;
+    esac
+    cur="$(product_state || true)"
+    [ -n "$cur" ] || refuse "cannot read the product state over SWD."
+    cur="$(hexstate "$cur")"
+    case " $from " in
+      *" $cur "*) ;;
+      *) refuse "the part is $(ps_name "$cur") ($cur); lock $target runs only from $(for s in $from; do printf '%s (%s) ' "$(ps_name "$s")" "$s"; done)" ;;
+    esac
+    rehearsed "$rehearse" || \
+      refuse "no rehearsal of $(ps_name "$rehearse") ($rehearse) with these images: run 'advance $rehearse', 'verify', and 'regress' first."
+    if [ "$target" = "0x72" ]; then
+      wrp="$("$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
+        | grep -iE "WRPSGn1" | grep -oE "0x[0-9A-Fa-f]+" | head -1 || true)"
+      [ -n "$wrp" ] && [ $((wrp)) -eq $((WRP_GUEST)) ] || \
+        refuse "guest flash is not write protected (WRPSGn1=${wrp:-unreadable}): run 'set-wrp' in Open first."
+    fi
+    echo "Lock step: $(ps_name "$cur") ($cur) -> $(ps_name "$target") ($target)"
+    echo "  checked: order, rehearsal of $(ps_name "$rehearse") with images $(image_digest), DA regression from it"
+    echo "  will run: $CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=$target"
+    [ "${WT_LOCK_CONFIRM:-0}" = "1" ] || \
+        refuse "preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1."
     # shellcheck source=lib/lock_confirm.sh disable=SC1091
     . "$(dirname "$0")/lib/lock_confirm.sh"
-    lock_confirm "LOCK $PS_LOCKED" \
-      "Locking this STM32H563: product state $PS_CLOSED -> $PS_LOCKED (Locked)" || exit 2
-    "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$PS_LOCKED" 2>&1 | strip | tail -4
-    echo "now: $(product_state)"
+    if [ "$target" = "$PS_LOCKED" ]; then
+      lock_confirm "I ACCEPT $target" \
+        "Locking this STM32H563: product state $cur -> $target (Locked)" || exit 2
+    else
+      lock_confirm "I ACCEPT $target" \
+        "Moving this STM32H563 to $(ps_name "$target") ($target)" \
+        "Only a DA regression, which mass-erases the part, returns it to Open." || exit 2
+    fi
+    "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$target" 2>&1 | strip | tail -4
+    now="$(product_state || true)"
+    [ -n "$now" ] && [ "$(hexstate "$now")" = "$target" ] || \
+      fail "lock" "product state reads ${now:-unreadable} after the write, expected $target"
+    pass "product state is $(ps_name "$target") ($target)"
     ;;
 
   regress)
@@ -218,12 +296,18 @@ case "$cmd" in
     # authenticate on a bare "-c port=SWD" (default NORMAL/under-reset so the RSS
     # answers) with the key+cert; CubeProgrammer selects the certificate because
     # TZEN is enabled and the RSS mass-erases the device back to Open.
+    advanced="$(cat "$state_dir/h5-advanced" 2>/dev/null || true)"
     echo "DA certificate Full Regression -> Open (mass-erase):"
     "$CLI" -c port=SWD mode=HotPlug -rst 2>&1 | strip | tail -1 || true
     "$CLI" -c port=SWD per=a key="$DA_KEY" cert="$DA_CERT" pwd="$DA_PWD" \
       debugauth=1 </dev/null 2>&1 | strip | tail -14
-    echo "state after regression: $(product_state)"
+    after="$(product_state || true)"
+    echo "state after regression: $after"
+    if [ -n "$after" ] && [ "$(hexstate "$after")" = "$PS_OPEN" ] && [ -n "$advanced" ]; then
+      record "regressed-$advanced"
+      rm -f "$state_dir/h5-advanced"
+    fi
     ;;
 
-  *) echo "usage: $0 status|set-perimeter|flash|verify|restore|provision-da|discover|advance <hexstate>|regress|lock" >&2; exit 2 ;;
+  *) echo "usage: $0 status|set-perimeter|flash|verify|restore|provision-da|discover|advance <hexstate>|regress|lock <hexstate>" >&2; exit 2 ;;
 esac
