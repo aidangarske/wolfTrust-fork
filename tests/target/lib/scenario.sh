@@ -25,6 +25,7 @@ scenario_secure_flags() {
     case "$1" in
         crossdomain)      echo "WT_FFM_NEGATIVE_PROBE=1" ;;
         keystoreneg)      echo "WT_KEYSTORE_NEG_PROBE=1" ;;
+        periphspneg)      echo "WT_PERIPH_SP_NEG_PROBE=1" ;;
         deputyneg)        echo "WT_DEPUTY_NEG_PROBE=1" ;;
         hsmpinneg)        echo "WT_HSM_PIN_NEG_PROBE=1" ;;
         spfaultneg)       echo "WT_SP_FAULT_PROBE=1" ;;

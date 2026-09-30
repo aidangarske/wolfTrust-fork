@@ -709,6 +709,17 @@ case "$scenario" in
     fi
     check_fail "cross-domain isolation" "expected MEMFAULT at 0x30028000, none seen"
     ;;
+  periphspneg)
+    # WT-FFM-0068: the storage SP reads the SPM's RNG registers at their Secure
+    # address; no partition domain maps an unassigned peripheral, so the read
+    # must MemManage-fault at exactly that address.
+    if grep -Eqi '\[MEMFAULT\].*addr=0x520c0800' "$log"; then
+      check_pass "SP read of the SPM's RNG at 0x520C0800 denied (MEMFAULT)"
+      echo "PASS: target/periphspneg"
+      exit 0
+    fi
+    check_fail "SP peripheral isolation" "expected MEMFAULT at 0x520C0800, none seen"
+    ;;
   keystoreneg)
     # A non-keystore partition (FWU) reads the shared keystore band; its
     # manifest domain does not grant the band, so the read must MemManage-fault
