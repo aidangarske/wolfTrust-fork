@@ -99,6 +99,10 @@ handoff_lifecycle() {
     read_words "$sym"
 }
 
+elf_sym() {
+    arm-none-eabi-nm "$elf" | awk -v s="$1" '$3 == s { print "0x" $1; exit }'
+}
+
 fence_line() {
     local -a cmds=()
     local w0 w1 w2 w3 n=0 out=""
@@ -138,6 +142,11 @@ case "$cmd" in
     echo "guest fence      $(fence_line || true)"
     if hl="$(handoff_lifecycle)"; then
         echo "wolfTrust saw    0x$hl ($(psa_name "$hl"))"
+    fi
+    if [ -s "$elf" ]; then
+        read -r vm rm < <(read_words "$(elf_sym g_wt_launch_verified_mask)" \
+            "$(elf_sym g_wt_launch_refused_mask)" | tr '\n' ' '; echo)
+        echo "guest launches   verified=0x${vm:-?} refused=0x${rm:-?}"
     fi
     ;;
 
