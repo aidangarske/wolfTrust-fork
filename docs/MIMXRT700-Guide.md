@@ -29,8 +29,8 @@ Read the current state first and keep a development board recoverable.
   rules do not gate CPU0 on this silicon (an earlier fabric-filter attempt let
   a guest with its Non-secure MPU disabled write the other guest's RAM).
 - **Validated on the EVK and in emulation:** the XSPI guest flash fence
-  (`wrpfence`, `wrpoff`; `wrpneg` on the EVK) and the reversible device life
-  cycle flow, described under Guest flash write protection and Device life
+  (`wrpfence`, `wrpoff`, `wrpneg`) and the reversible device life
+  cycle flow, described under Guest flash write protection and Reversible life
   cycle below.
 - **Not yet ported:** `SERVICE_VNET`. The target has no VNET manifest, so
   `CONFIG_VNET=y` stops the build with an error. `SERVICE_FWU` stages a
@@ -202,6 +202,54 @@ similar bit-28 IDAU part:
 - a hardware runner host that owns the probe, with a controllable reset line to
   the EVK, and a serial console (default `/dev/ttyACM0`)
 
+## Read-only preflight
+
+Before any command that writes to the board, read the life cycle, debug, and
+fence state, then run the preflight that gates `advance`:
+
+```sh
+tests/target/provisioning_ctrl_rt700.sh status
+tests/target/provisioning_ctrl_rt700.sh discover
+```
+
+Both only read over SWD, with the generic Cortex-M attach that never resets the
+chip. A factory EVK running the fenced chain (after `restore`) reads:
+
+```text
+OTP life cycle   LC_STATE=0x03 (Develop)  LC_STATE_RED=0x03
+LOCK_CFG3        0x00000000 (LIFE_CYCLE_LOCK=0: 0 = shadow override and fuse burn both open)
+DAUTHSTATUS      0x000000ff
+XSPI SFP         MGC=0xa8000400 TG0MDAD=0xa000c000
+guest fence      armed FRAD2 acp=0x00000000 word3=0xa0000000
+wolfTrust saw    0x00001000 (ASSEMBLY_AND_TEST)
+guest launches   verified=0x00000003 refused=0x00000000
+```
+
+| Line | Meaning |
+| --- | --- |
+| `OTP life cycle` | the `LC_STATE` shadow and its redundant copy; they must agree |
+| `LOCK_CFG3` | `LIFE_CYCLE_LOCK` bits: bit 0 blocks burning, bit 1 blocks shadow over-ride, bit 2 blocks reads |
+| `DAUTHSTATUS` | Cortex-M debug authentication; `0xff` means Secure and Non-secure debug are open |
+| `XSPI SFP` | global flash-protection configuration and the initiator domain; `0xa8000400` and `0xa000c000` mean valid and sealed |
+| `guest fence` | the descriptor spanning the guest windows; `armed` needs write access `0` and a hard-reset lock |
+| `wolfTrust saw` | the life cycle wolfBoot handed wolfTrust at `0x30180000` |
+| `guest launches` | wolfTrust's launch-verified and launch-refused guest masks |
+
+On an unfenced chain the fence line instead reads
+`open FRAD1 acp=0x00000007 word3=0xa0000000`: FRAD1 grants write access over the
+guest windows. `discover` then checks the preflight:
+
+```text
+  [check] PASS  SPSDK shadowregs supports mimxrt798s
+  [check] PASS  fused life cycle is Develop and its redundant copy agrees
+  [check] PASS  life cycle shadow over-ride is open (LOCK_CFG3 0x00000000)
+  [check] PASS  the boot handoff life cycle is readable (0x00001000, ASSEMBLY_AND_TEST)
+PASS: discovery stamped (/home/<user>/.cache/wolftrust/rt700-discovery-ok)
+```
+
+The stamp lives under `RT700_PROVISION_STATE` (default `~/.cache/wolftrust`).
+Running `discover` again clears both it and any earlier `regress` stamp.
+
 ## Build, flash, and verify
 
 The hardware runner (`tests/target/run_rt700_hardware.sh`) drives image
@@ -311,7 +359,7 @@ Because the fence is rebuilt on every boot and cleared by every reset, there is
 no `set-wrp` or `clear-wrp` step: the probe always flashes a parked core with
 the controller unfenced, and which wolfBoot is flashed decides the posture.
 
-## Device life cycle
+## Reversible life cycle flow
 
 The life cycle lives in OTP fuses (`LC_STATE` and its redundant copy
 `LC_STATE_RED`). Programming a fuse is permanent, and on this EVK
@@ -345,11 +393,60 @@ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh regress
 ```
 
 `restore` rebuilds and flashes the production posture: the fenced wolfBoot and a
-`WT_GUEST_FLASH_WRP=1` wolfTrust, verified by the `wrpfence` checks.
+`WT_GUEST_FLASH_WRP=1` wolfTrust, verified by the `wrpfence` checks. It ends:
 
-`discover` is read-only and gates `advance`: it requires a fused Develop life
-cycle with agreeing copies, an open shadow over-ride, and a readable boot
-handoff. `advance` halts the core inside wolfBoot, after the ROM has loaded the
+```text
+  [check] PASS  XSPI SFP configuration valid and sealed until reset
+  [check] PASS  a locked, write-denying FRAD spans the guest windows (0x28080000-0x28140000)
+  [check] PASS  launch-verified guest mask 0x00000003 (want 0x00000003)
+  [check] PASS  launch-refused guest mask 0x00000000 (want 0x00000000)
+  [check] PASS  guest0 done: FF-M connect verified, status 0x600D600D (600d600d)
+  [check] PASS  guest1 done: FF-M connect verified, status 0x600D600D (600d600d)
+PASS: hardware/wrpfence
+```
+
+`verify-wrp` checks the running fence alone:
+
+```text
+  [check] PASS  guest fence armed FRAD2 acp=0x00000000 word3=0xa0000000
+```
+
+Advancing to the mock locked state (In-Field Locked) and reading it back:
+
+```text
+$ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh advance 0xCF
+ADVANCING the life cycle shadow to 0xCF (In-Field Locked); regress or any reset undoes it
+halted in wolfBoot at 0x28005004; shadow LC_STATE=0xcf LC_STATE_RED=0xcf
+wolfTrust saw 0x00005000 (RECOVERABLE_PSA_ROT_DEBUG)
+
+$ tests/target/provisioning_ctrl_rt700.sh status
+OTP life cycle   LC_STATE=0xcf (In-Field Locked)  LC_STATE_RED=0xcf
+LOCK_CFG3        0x00000000 (LIFE_CYCLE_LOCK=0: 0 = shadow override and fuse burn both open)
+DAUTHSTATUS      0x000000ff
+XSPI SFP         MGC=0xa8000400 TG0MDAD=0xa000c000
+guest fence      armed FRAD2 acp=0x00000000 word3=0xa0000000
+wolfTrust saw    0x00005000 (RECOVERABLE_PSA_ROT_DEBUG)
+guest launches   verified=0x00000003 refused=0x00000000
+```
+
+Returning to the fused state:
+
+```text
+$ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh regress
+  [check] PASS  hardware reset reloaded the fused Develop life cycle
+  [check] PASS  wolfTrust booted ASSEMBLY_AND_TEST again
+```
+
+A refused command changes nothing and exits with status 2, for example:
+
+```text
+$ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh advance 0x0F
+REFUSED: prove 'regress' from Develop2 before advancing to 0x0F.
+$ tests/target/provisioning_ctrl_rt700.sh burn
+REFUSED: 'burn' programs OTP fuses, which is permanent on the MIMXRT700
+```
+
+`discover` (see Read-only preflight) gates `advance`. `advance` halts the core inside wolfBoot, after the ROM has loaded the
 shadows and before wolfBoot reads them, writes both copies, resumes, and reports
 the life cycle wolfTrust received. Past Develop2 it also requires a proven
 `regress`, which is a hardware reset through the board's reset line, outside
