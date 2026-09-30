@@ -34,11 +34,9 @@
 
 static wt_ffm_runtime_t g_ffm_runtime;
 
-/* WT-FFM-0012: NS callers are validated by the installed NS-window checks.
- * Positive Secure-Partition callers are accepted here because wt_spm_gate
- * validates each dereferenced SP pointer against that caller's resolved
- * protection domain. Service nonsecure_clients policy is independent of
- * these pointer checks. */
+/* WT-FFM-0012: the SPM validates every external memory reference before
+ * an API transfer: a Non-secure guest (caller < 0) against its Non-secure
+ * window, a Secure Partition (caller > 0) against its composed table. */
 static int wt_ffm_boot_caller_guest(psa_client_id_t caller,
                                     wt_guest_id_t* guest_id)
 {
@@ -47,6 +45,24 @@ static int wt_ffm_boot_caller_guest(psa_client_id_t caller,
     }
     *guest_id = (wt_guest_id_t)(-caller - 1);
     return 1;
+}
+
+/* Secure Partition callers are checked against their composed table, which
+ * only a target build schedules; a host runtime has no table to check. */
+static int wt_ffm_boot_check_partition(psa_client_id_t caller,
+                                       const void* address, size_t size,
+                                       int need_write)
+{
+#if defined(WT_TARGET_BUILD)
+    return wt_spm_partition_memory_ok((int32_t)caller, address, size,
+                                      need_write);
+#else
+    (void)caller;
+    (void)address;
+    (void)size;
+    (void)need_write;
+    return 1;
+#endif
 }
 
 /* NS-window checks are installed by the architecture port (Armv8-M:
@@ -68,11 +84,8 @@ static int wt_ffm_boot_check_read(void* context, psa_client_id_t caller,
     wt_guest_id_t guest_id;
 
     (void)context;
-    /* Positive callers are Secure Partitions whose pointers the SPM gate
-     * already bounded to their own protection domain (WT-FFM-0014); the
-     * installed checks only describe Non-secure windows. */
     if (caller > 0) {
-        return 1;
+        return wt_ffm_boot_check_partition(caller, address, size, 0);
     }
     if (!wt_ffm_boot_caller_guest(caller, &guest_id)) {
         return 0;
@@ -90,7 +103,7 @@ static int wt_ffm_boot_check_write(void* context, psa_client_id_t caller,
 
     (void)context;
     if (caller > 0) {
-        return 1;
+        return wt_ffm_boot_check_partition(caller, address, size, 1);
     }
     if (!wt_ffm_boot_caller_guest(caller, &guest_id)) {
         return 0;
@@ -256,6 +269,33 @@ int wt_ffm_boot_start_sched(void)
     if (ret == WT_FFM_SUCCESS) {
         ret = wt_spm_sched_add(&g_ffm_runtime, DRIVER_PARTITION_ID,
                                wt_conformance_driver_entry, NULL);
+    }
+#endif
+    /* Every table is composed: no partition may run unless they are all
+     * isolated from each other and from the SPM. */
+    if (ret == WT_FFM_SUCCESS) {
+        ret = wt_spm_sched_validate();
+    }
+#if defined(WT_BAND_NEG_PROBE) && (WT_BAND_NEG_PROBE != 0)
+    if (ret == WT_FFM_SUCCESS) {
+#if (WT_BAND_NEG_PROBE <= 2)
+        wt_spm_sched_prime(PARTITION_HSM_ID);
+#elif (WT_BAND_NEG_PROBE <= 4)
+        wt_spm_sched_prime(PARTITION_ATTEST_ID);
+#else
+        wt_spm_sched_prime(PARTITION_VAULT_ID);
+#endif
+    }
+#endif
+#if defined(WT_RESTART_NEG_PROBE) && (WT_RESTART_NEG_PROBE != 0)
+    if (ret == WT_FFM_SUCCESS) {
+#if (WT_RESTART_NEG_PROBE == 1)
+        wt_spm_sched_prime(PARTITION_HSM_ID);
+#elif (WT_RESTART_NEG_PROBE == 2)
+        wt_spm_sched_prime(PARTITION_ATTEST_ID);
+#else
+        wt_spm_sched_prime(PARTITION_VAULT_ID);
+#endif
     }
 #endif
     return ret;

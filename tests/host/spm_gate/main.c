@@ -908,6 +908,172 @@ static void test_gate_call_panic_class(void)
                  "server-completed PROGRAMMER_ERROR (i024-i027)\n");
 }
 
+/* The caller's block as the SPM's memory checks see it change under them. */
+static wt_spm_call_t* g_swap_call;
+static const uint8_t g_swap_good[3] = { 'a', 'b', 'c' };
+static const uint8_t g_swap_evil[6] = { 'E', 'V', 'I', 'L', '!', '!' };
+static uint8_t g_swap_out[4];
+static uint8_t g_swap_other[4];
+
+static void swap_vectors(void)
+{
+    if (g_swap_call != NULL) {
+        g_swap_call->sp_in[0].base = g_swap_evil;
+        g_swap_call->sp_in[0].len = sizeof(g_swap_evil);
+        g_swap_call->sp_out[0].base = g_swap_other;
+        g_swap_call->sp_in_len = 4U;
+        g_swap_call->msg_handle = PSA_NULL_HANDLE;
+    }
+}
+
+static int swap_check_read(void* context, psa_client_id_t caller,
+                           const void* address, size_t size)
+{
+    (void)context;
+    (void)caller;
+    swap_vectors();
+    return size == 0U || address != NULL;
+}
+
+static int swap_check_write(void* context, psa_client_id_t caller,
+                            void* address, size_t size)
+{
+    (void)context;
+    (void)caller;
+    swap_vectors();
+    return size == 0U || address != NULL;
+}
+
+static const wt_ffm_port_ops_t g_swap_ops = {
+    swap_check_read,
+    swap_check_write,
+    gate_dispatch,
+    test_panic
+};
+
+/* The gate acts on one private copy of the caller's block: a block that
+ * changes after the memory checks ran cannot swap the vectors, the counts or
+ * the handle the request was checked with. */
+static void test_gate_snapshot(void)
+{
+    static const uint8_t answer[2] = { 'O', 'K' };
+    wt_ffm_runtime_t runtime;
+    wt_spm_call_t call;
+    psa_signal_t asserted = 0U;
+    psa_handle_t handle;
+    psa_msg_t msg;
+    uint8_t seen[8];
+
+    g_swap_call = NULL;
+    EXPECT_INT(wt_ffm_init(&runtime, &g_i063_manifest, &g_swap_ops, NULL),
+               WT_FFM_SUCCESS);
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_CONNECT;
+    call.partition_id = I063_CLIENT_ID;
+    call.sid = I063_SVC_IRR_SID;
+    call.version = 1U;
+    EXPECT_INT(wt_spm_gate(&runtime, NULL, &call), WT_FFM_SUCCESS);
+    EXPECT_INT(wt_ffm_wait(&runtime, I063_SERVER_ID, I063_SIG_IRR, &asserted),
+               WT_FFM_SUCCESS);
+    i063_server_serve(&runtime, I063_SIG_IRR, PSA_SUCCESS);
+    EXPECT_INT(wt_spm_gate(&runtime, NULL, &call), WT_FFM_SUCCESS);
+    handle = call.ret_handle;
+    EXPECT_TRUE(PSA_HANDLE_IS_VALID(handle));
+
+    (void)memset(&call, 0, sizeof(call));
+    (void)memset(g_swap_out, 0, sizeof(g_swap_out));
+    (void)memset(g_swap_other, 0, sizeof(g_swap_other));
+    call.op = WT_SPM_OP_CALL;
+    call.partition_id = I063_CLIENT_ID;
+    call.msg_handle = handle;
+    call.call_type = PSA_IPC_CALL;
+    call.sp_in[0].base = g_swap_good;
+    call.sp_in[0].len = sizeof(g_swap_good);
+    call.sp_in_len = 1U;
+    call.sp_out[0].base = g_swap_out;
+    call.sp_out[0].len = sizeof(g_swap_out);
+    call.sp_out_len = 1U;
+    g_swap_call = &call;
+    EXPECT_INT(wt_spm_gate(&runtime, NULL, &call), WT_FFM_SUCCESS);
+    EXPECT_INT(call.ret_int, WT_FFM_ERROR_NOT_READY);
+    EXPECT_INT((int)call.pending_valid, 1);
+    /* The gate's copy, not the changed block, is what it hands back. */
+    EXPECT_TRUE(call.sp_in[0].base == g_swap_good);
+    EXPECT_SIZE(call.sp_in[0].len, sizeof(g_swap_good));
+    EXPECT_INT((int)call.sp_in_len, 1);
+    EXPECT_TRUE(call.msg_handle == handle);
+
+    /* The server sees the vector that was checked. */
+    asserted = 0U;
+    EXPECT_INT(wt_ffm_wait(&runtime, I063_SERVER_ID, I063_SIG_IRR, &asserted),
+               WT_FFM_SUCCESS);
+    EXPECT_INT(wt_ffm_get(&runtime, I063_SERVER_ID, I063_SIG_IRR, &msg),
+               PSA_SUCCESS);
+    EXPECT_SIZE(msg.in_size[0], sizeof(g_swap_good));
+    EXPECT_SIZE(msg.in_size[1], 0U);
+    EXPECT_SIZE(msg.out_size[0], sizeof(g_swap_out));
+    (void)memset(seen, 0, sizeof(seen));
+    EXPECT_SIZE(wt_ffm_read(&runtime, I063_SERVER_ID, msg.handle, 0U, seen,
+                            sizeof(seen)), sizeof(g_swap_good));
+    EXPECT_INT(memcmp(seen, g_swap_good, sizeof(g_swap_good)), 0);
+    EXPECT_INT(wt_ffm_write(&runtime, I063_SERVER_ID, msg.handle, 0U, answer,
+                            sizeof(answer)), WT_FFM_SUCCESS);
+    EXPECT_INT(wt_ffm_reply(&runtime, I063_SERVER_ID, msg.handle,
+                            PSA_SUCCESS), WT_FFM_SUCCESS);
+
+    /* The reply lands in the buffer that was checked, not the swapped one. */
+    EXPECT_INT(wt_spm_gate(&runtime, NULL, &call), WT_FFM_SUCCESS);
+    EXPECT_INT(call.ret_int, WT_FFM_SUCCESS);
+    EXPECT_INT(call.ret_status, PSA_SUCCESS);
+    EXPECT_INT(memcmp(g_swap_out, answer, sizeof(answer)), 0);
+    EXPECT_INT(g_swap_other[0], 0);
+    EXPECT_SIZE(call.sp_out[0].len, sizeof(answer));
+    EXPECT_TRUE(call.sp_out[0].base == g_swap_out);
+    g_swap_call = NULL;
+
+    (void)printf("PASS: WT-FFM-0012 gate acts on one copy of the caller's "
+                 "block\n");
+}
+
+/* Keystore platform services are pinned per partition (WT-FFM-0062). */
+static void test_keystore_pins(void)
+{
+    const int32_t vault = 5;
+    const int32_t crypto = 4;
+    const int32_t attest = 3;
+    const int32_t storage = 6;
+
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_FLASH, vault,
+                                         vault, crypto), 1);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_LOCK, vault,
+                                         vault, crypto), 1);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_ENTROPY, vault,
+                                         vault, crypto), 1);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_ENTROPY, crypto,
+                                         vault, crypto), 1);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_FLASH, crypto,
+                                         vault, crypto), 0);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_LOCK, crypto,
+                                         vault, crypto), 0);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_FLASH, attest,
+                                         vault, crypto), 0);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_LOCK, attest,
+                                         vault, crypto), 0);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_ENTROPY, attest,
+                                         vault, crypto), 0);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_FLASH, storage,
+                                         vault, crypto), 0);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_ENTROPY, storage,
+                                         vault, crypto), 0);
+    /* No partition identity at all is never the owner. */
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_FLASH, 0, 0, 0),
+               0);
+    EXPECT_INT(wt_spm_keystore_op_pinned(WT_SPM_OP_KEYSTORE_ENTROPY, -1, -1,
+                                         -1), 0);
+    (void)printf("PASS: WT-FFM-0062 keystore services pinned per "
+                 "partition\n");
+}
+
 /* The i013-i023 server-side misuse classes: psa_get on multi-bit, doorbell,
  * or unasserted signals, psa_set_rhandle/psa_reply on forged handles, and a
  * connect reply outside SUCCESS/REFUSED/BUSY all panic the server. */
@@ -1120,6 +1286,8 @@ int main(void)
     test_gate_irq_enable();
     test_gate_connect_close_panic_class();
     test_gate_call_panic_class();
+    test_gate_snapshot();
+    test_keystore_pins();
     test_gate_server_misuse_panic_class();
 
     if (g_failures != 0U) {
