@@ -17,7 +17,7 @@
 #   verify-wrp           the running chain's guest fence is armed (read-only)
 #   restore              rebuild, flash, and verify the fenced production chain
 #   advance <hexstate>   move the life cycle shadow: 0x07 Develop2, 0x0F
-#                        In-Field, 0xCF In-Field Locked (GATED)
+#                        In Field, 0xCF In Field Locked (GATED)
 #   regress              hardware reset back to the fused life cycle (GATED)
 #   provision-da, burn   refused: both program fuses (production only)
 set -euo pipefail
@@ -76,8 +76,8 @@ psa_name() {
 
 lc_name() {
     case "$(printf '0x%02X' $(( $1 & 0xFF )))" in
-        0x03) echo "Develop" ;; 0x07) echo "Develop2" ;; 0x0F) echo "In-Field" ;;
-        0x1F) echo "In-Field Return" ;; 0xCF) echo "In-Field Locked" ;;
+        0x03) echo "Develop" ;; 0x07) echo "Develop2" ;; 0x0F) echo "In Field" ;;
+        0x1F) echo "In Field Return" ;; 0xCF) echo "In Field Locked" ;;
         *) echo "NXP-internal or unknown" ;;
     esac
 }

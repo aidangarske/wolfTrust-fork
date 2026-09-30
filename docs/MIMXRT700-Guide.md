@@ -368,14 +368,20 @@ The life cycle lives in OTP fuses (`LC_STATE` and its redundant copy
 moves the life cycle only in the OTP shadow registers, which every hardware
 reset reloads from the fuses.
 
-| `LC_STATE` | State | PSA life cycle wolfBoot hands wolfTrust |
-| --- | --- | --- |
-| `0x03` | Develop (as the EVK ships) | `0x1000` ASSEMBLY_AND_TEST |
-| `0x07` | Develop2 | `0x2000` PSA_ROT_PROVISIONING |
-| `0x0F` | In-Field | `0x3000` SECURED, or `0x5000`/`0x4000` while debug is open |
-| `0xCF` | In-Field Locked | as In-Field |
-| `0x1F` | In-Field Return | `0x6000` DECOMMISSIONED |
-| other, or copies disagree | NXP-internal or corrupt | `0x0000` UNKNOWN |
+| `LC_STATE` | NXP state | Nearest STM32H5 state | PSA life cycle wolfBoot hands wolfTrust |
+| --- | --- | --- | --- |
+| `0x03` | Develop (as the EVK ships) | Open | `0x1000` ASSEMBLY_AND_TEST |
+| `0x07` | Develop2 | Provisioning | `0x2000` PSA_ROT_PROVISIONING |
+| `0x0F` | In Field | Closed | `0x3000` SECURED, or `0x5000`/`0x4000` while debug is open |
+| `0xCF` | In Field Locked | Locked | as In Field |
+| `0x1F` | In Field Return | none | `0x6000` DECOMMISSIONED |
+| other, or copies disagree | NXP Blank, Fab, FA, Dev, Bricked, or corrupt | none | `0x0000` UNKNOWN |
+
+The state names are NXP's, as SPSDK's life cycle check uses them. The STM32H5
+column is only an orientation: the machines differ. STM32H5 has a TrustZone
+Closed state and returns Closed parts to Open by regression; the MIMXRT700 has
+no TrustZone Closed, and In Field Return is a one-way failure-analysis state,
+not a return to Develop.
 
 The reversible development sequence:
 
@@ -411,16 +417,16 @@ PASS: hardware/wrpfence
   [check] PASS  guest fence armed FRAD2 acp=0x00000000 word3=0xa0000000
 ```
 
-Advancing to the mock locked state (In-Field Locked) and reading it back:
+Advancing to the mock locked state (In Field Locked) and reading it back:
 
 ```text
 $ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl_rt700.sh advance 0xCF
-ADVANCING the life cycle shadow to 0xCF (In-Field Locked); regress or any reset undoes it
+ADVANCING the life cycle shadow to 0xCF (In Field Locked); regress or any reset undoes it
 halted in wolfBoot at 0x28005004; shadow LC_STATE=0xcf LC_STATE_RED=0xcf
 wolfTrust saw 0x00005000 (RECOVERABLE_PSA_ROT_DEBUG)
 
 $ tests/target/provisioning_ctrl_rt700.sh status
-OTP life cycle   LC_STATE=0xcf (In-Field Locked)  LC_STATE_RED=0xcf
+OTP life cycle   LC_STATE=0xcf (In Field Locked)  LC_STATE_RED=0xcf
 LOCK_CFG3        0x00000000 (LIFE_CYCLE_LOCK=0: 0 = shadow override and fuse burn both open)
 DAUTHSTATUS      0x000000ff
 XSPI SFP         MGC=0xa8000400 TG0MDAD=0xa000c000
@@ -453,11 +459,49 @@ the life cycle wolfTrust received. Past Develop2 it also requires a proven
 the debug port's control.
 
 A shadow-only advance cannot close debug, because debug enablement is decided
-from the fuses at boot, so In-Field on this EVK attests `0x5000`. SECURED
+from the fuses at boot, so In Field on this EVK attests `0x5000`. SECURED
 proper needs a part with debug disabled in its fuses. A production line burns
 the root key hash, the debug credential root, and the life cycle through NXP's
 secure provisioning flow with a debug credential chain it has already
 validated; `provision-da` and `burn` refuse, and describe that flow instead.
+
+### Locking a production part
+
+Neither the script nor this guide's test flow burns fuses, and a development EVK
+must never be locked. A production part is locked once, on the production line,
+in this order:
+
+1. **Authenticate the first stage in ROM.** The reference chain boots wolfBoot
+   as a plain XIP image the BootROM does not authenticate. A locked part must
+   boot wolfBoot as a signed image whose root key hash is fused, so the ROM
+   refuses any other first stage. Locking the life cycle without this leaves
+   the whole chain replaceable. This is not yet part of the port.
+2. **Prove the configuration in the shadows.** Write the exact fuse
+   configuration (root key hash, debug settings, and life cycle) to the shadow
+   registers on a production sample, boot the production images, and confirm
+   `status` shows the intended life cycle, a closed `DAUTHSTATUS`, and wolfTrust
+   receiving `0x3000` SECURED. `advance` rehearses the life cycle half of this.
+3. **Generate the burn script from that same configuration.** SPSDK writes a
+   blhost script from a shadow-register configuration file, so what is burned is
+   what was rehearsed:
+
+   ```sh
+   shadowregs get-template -f mimxrt798s -o production-fuses.yaml
+   shadowregs fuses-script -c production-fuses.yaml
+   ```
+
+   Review the generated script line by line before running it.
+4. **Burn the life cycle last**, then set the `LOCK_CFG3` life cycle write
+   lock. Once the part leaves Develop it may refuse further provisioning; check
+   the RT700 security reference manual for exactly what each state closes.
+5. **Verify.** `status` must show both life cycle copies at the burned value,
+   the `LOCK_CFG3` write lock set, debug closed, the guest fence armed, and
+   `wolfTrust saw 0x00003000 (SECURED)`. Then run the production image's
+   hardware scenarios.
+
+Field returns go to In Field Return through NXP's debug credential flow, which
+needs the debug credential root fused in step 3 and a validated credential
+chain; wolfTrust attests that state as DECOMMISSIONED.
 
 ### Verified on the EVK
 
