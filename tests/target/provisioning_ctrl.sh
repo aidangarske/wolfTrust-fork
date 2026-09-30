@@ -138,11 +138,13 @@ record() {
   echo "$d" > "$state_dir/h5-$1"
 }
 # rehearsed <state>: these images booted in <state> and DA regression from it
-# worked; a regression from a closed state also proves the Provisioning step.
+# worked. Provisioning runs no wolfTrust chain (seen on the NUCLEO-H563ZI), so
+# its step needs only a regression from it or from a closed state.
 rehearsed() {
   local d s
   d="$(image_digest)" || return 1
-  [ "$(cat "$state_dir/h5-booted-$1" 2>/dev/null)" = "$d" ] || return 1
+  [ "$1" = "$PS_PROVISIONING" ] ||
+    [ "$(cat "$state_dir/h5-booted-$1" 2>/dev/null)" = "$d" ] || return 1
   for s in "$1" $([ "$1" = "$PS_PROVISIONING" ] && echo "$PS_TZCLOSED $PS_CLOSED"); do
     [ "$(cat "$state_dir/h5-regressed-$s" 2>/dev/null)" = "$d" ] && return 0
   done
@@ -235,8 +237,7 @@ case "$cmd" in
 
   discover)
     echo "DA discovery (non-destructive) with $DA_PWD:"
-    "$CLI" $DA_CONN pwd="$DA_PWD" debugauth=2 2>&1 | strip \
-      | grep -iE "permission|regression|discovery|not supported|error|auth" | head
+    da_discovery | grep -iE "PSA lifecycle|integrity|permission|Discovery Success|not supported|error" || true
     ;;
 
   advance)
@@ -256,13 +257,16 @@ case "$cmd" in
     fi
     echo "ADVANCING product state ${cur:-?} -> $state (regress is the only way back)"
     uart_capture 12 /tmp/wt-advance.log
-    "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$state" 2>&1 | strip | tail -4
+    # The CLI fails its post-write reconnect once debug closes; the read-back decides.
+    "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$state" 2>&1 | strip | tail -4 || true
     mkdir -p "$state_dir"
     echo "$state" > "$state_dir/h5-advanced"
     sleep 10
     if booted /tmp/wt-advance.log; then
       pass "wolfTrust chain boots in $(ps_name "$state")"
       record "booted-$state"
+    elif [ "$state" = "$PS_PROVISIONING" ]; then
+      echo "Provisioning does not run the wolfTrust chain; a closed-state rehearsal proves the boot"
     else
       echo "no wolfTrust boot markers on $SERIAL after the write; the rehearsal needs them"
     fi
@@ -323,7 +327,7 @@ case "$cmd" in
         "Only a DA regression, which mass-erases the part, returns it to Open." || exit 2
     fi
     uart_capture 12 /tmp/wt-lock.log
-    "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$target" 2>&1 | strip | tail -4
+    "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$target" 2>&1 | strip | tail -4 || true
     sleep 10
     if booted /tmp/wt-lock.log; then
       pass "wolfTrust chain boots in $(ps_name "$target")"
