@@ -134,10 +134,11 @@ authenticated wolfIP guests under M33MU.
 
 ### Engine matrix
 
-The full CI scenario list contains 30 scenarios and adds
-`engine: [native, hsm]` as a matrix dimension. There are 58 applicable
-engine/scenario cells: every scenario runs with both engines except
-`hsmattackneg` and `hsmpinneg` under native.
+The full CI scenario list adds `engine: [native, hsm]` as a matrix dimension.
+Every scenario runs with both engines except the wolfHSM-only ones listed in
+`HSM_ONLY` in `tests/target/lib/scenario_matrix.py`, which run under hsm only.
+The generator is the source of truth for the exact list:
+`python3 tests/target/lib/scenario_matrix.py --port stm32h563 --tier full --json`.
 
 `hsmattackneg` drives the raw wolfHSM protocol from a compromised-guest probe.
 It checks that a forged wolfHSM client ID cannot select the attestation key and
