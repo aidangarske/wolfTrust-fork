@@ -10,6 +10,11 @@ additional Cortex-M ports is an intended extension point. Such ports may reuse
 common policy and service code and an existing architecture adapter when their
 execution and protection models match.
 
+No AArch64 architecture adapter or target is implemented or validated in the
+current release. An AArch64 port needs a separate architecture layer and device
+port; the common contracts describe its intended boundary, not an available
+build.
+
 Every new port must report its actual capabilities and must not claim security
 properties until they are tested on that target.
 
@@ -191,6 +196,11 @@ worked examples above give a concrete map for each board.
    before signing wolfTrust.
 8. Add safe provisioning tooling for the target's security attribution,
    application-image write protection, debug policy, and product lifecycle.
+9. Add the target to [Ports and supported targets](Targets.md) with its actual
+   validation status. Keep board-specific setup in a separate guide, add that
+   guide to `mkdocs.yml`, and document which results came from an emulator
+   versus physical hardware. Do not label a port supported until its build,
+   deployment, and target security checks have been validated.
 
 ## Validation checklist
 
