@@ -1357,6 +1357,178 @@ static void exercise_mpu_bypass_probe(void)
 }
 #endif
 
+#if defined(WT_PERIPH_NEG_PROBE)
+/* WT-FFM-0068 negatives: a privileged NS kernel pokes the SPM's RNG through
+ * its Non-secure alias, then aims a Non-secure GPDMA channel at the Secure
+ * image and Secure SRAM. Each must read nothing and change nothing. */
+#define PERIPH_RNG_CR_NS     ((volatile uint32_t *)0x420C0800u)
+#define PERIPH_RCC_AHB1ENR   ((volatile uint32_t *)0x44020C88u)
+#define PERIPH_GPDMA1_NS     0x40020000u
+#define PERIPH_CH0(off)      ((volatile uint32_t *)(PERIPH_GPDMA1_NS + 0x50u + (off)))
+#define PERIPH_SECURE_IMAGE  0x08060000u
+#define PERIPH_SECURE_SRAM   0x20030000u
+#define PERIPH_SENTINEL      0xA5A5A5A5u
+#define PERIPH_MPU_CTRL_NS   ((volatile uint32_t *)0xE000ED94u)
+
+#define PERIPH_SR_TCF        (1u << 8)
+#define PERIPH_SR_DTEF       (1u << 10)
+#define PERIPH_SR_ULEF       (1u << 11)
+#define PERIPH_SR_USEF       (1u << 12)
+#define PERIPH_SR_FLAGS      0x7F00u
+
+enum {
+	PERIPH_DMA_DENIED = 0,
+	PERIPH_DMA_LEAKED = 1,
+	PERIPH_DMA_INCONCLUSIVE = 2
+};
+
+volatile uint32_t g_guest0_periph_probe;
+static volatile uint32_t g_periph_src[4];
+static volatile uint32_t g_periph_dst[4];
+
+/* One word-wide copy on a freshly reset channel 0; returns the final status. */
+static uint32_t periph_dma_copy(uint32_t src)
+{
+	uint32_t sr = 0u;
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(g_periph_dst); i++) {
+		g_periph_dst[i] = PERIPH_SENTINEL;
+	}
+	*PERIPH_CH0(0x14u) = 0u;
+	*PERIPH_CH0(0x0Cu) = PERIPH_SR_FLAGS;
+	*PERIPH_CH0(0x40u) = 2u | (1u << 3) | (2u << 16) | (1u << 19);
+	*PERIPH_CH0(0x44u) = 1u << 9;
+	*PERIPH_CH0(0x48u) = sizeof(g_periph_dst);
+	*PERIPH_CH0(0x4Cu) = src;
+	*PERIPH_CH0(0x50u) = (uint32_t)(uintptr_t)g_periph_dst;
+	__asm volatile("dsb" ::: "memory");
+	*PERIPH_CH0(0x14u) = 1u;
+	for (i = 0; i < 100000u; i++) {
+		sr = *PERIPH_CH0(0x10u);
+		if ((sr & (PERIPH_SR_TCF | PERIPH_SR_DTEF | PERIPH_SR_ULEF |
+			   PERIPH_SR_USEF)) != 0u) {
+			break;
+		}
+	}
+	*PERIPH_CH0(0x14u) = 0u;
+	__asm volatile("dsb" ::: "memory");
+	LOG_INF("wolfTrust periph probe: DMA from 0x%08x sr=0x%08x word0=0x%08x",
+		src, sr, g_periph_dst[0]);
+	return sr;
+}
+
+/* The control copy between Non-secure buffers must complete exactly, or the
+ * denials that follow would prove nothing about the DMA path. */
+static int periph_dma_control_ok(void)
+{
+	uint32_t sr;
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(g_periph_src); i++) {
+		g_periph_src[i] = 0x11223344u + (uint32_t)i;
+	}
+	sr = periph_dma_copy((uint32_t)(uintptr_t)g_periph_src);
+	if ((sr & PERIPH_SR_TCF) == 0u ||
+	    (sr & (PERIPH_SR_DTEF | PERIPH_SR_ULEF | PERIPH_SR_USEF)) != 0u) {
+		return 0;
+	}
+	for (i = 0; i < ARRAY_SIZE(g_periph_dst); i++) {
+		if (g_periph_dst[i] != g_periph_src[i]) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+/* Denial is a transfer error with nothing written or, where the source is
+ * known to be nonzero, a completed copy of zeros; any other data leaked. */
+static int periph_dma_secure_copy(uint32_t src, int zero_fill_ok)
+{
+	uint32_t sr;
+	size_t i;
+	int untouched = 1;
+	int zeroed = 1;
+
+	sr = periph_dma_copy(src);
+	for (i = 0; i < ARRAY_SIZE(g_periph_dst); i++) {
+		if (g_periph_dst[i] != PERIPH_SENTINEL) {
+			untouched = 0;
+		}
+		if (g_periph_dst[i] != 0u) {
+			zeroed = 0;
+		}
+		if (g_periph_dst[i] != PERIPH_SENTINEL && g_periph_dst[i] != 0u) {
+			return PERIPH_DMA_LEAKED;
+		}
+	}
+	if ((sr & PERIPH_SR_DTEF) != 0u && untouched != 0) {
+		return PERIPH_DMA_DENIED;
+	}
+	if (zero_fill_ok != 0 && (sr & PERIPH_SR_TCF) != 0u && zeroed != 0) {
+		return PERIPH_DMA_DENIED;
+	}
+	return PERIPH_DMA_INCONCLUSIVE;
+}
+
+static void exercise_periph_neg_probe(void)
+{
+	uint8_t out[16];
+	psa_status_t st;
+	uint32_t mpu_ctrl;
+	int leaked = 0;
+	int inconclusive = 0;
+	int rc;
+
+	g_guest0_periph_probe = 1u;
+	/* The attacker is the privileged NS kernel, so drop its own MPU first. */
+	mpu_ctrl = *PERIPH_MPU_CTRL_NS;
+	*PERIPH_MPU_CTRL_NS = 0u;
+	__asm volatile("dsb; isb");
+	*PERIPH_RCC_AHB1ENR |= 1u;
+	if (*PERIPH_RNG_CR_NS != 0u) {
+		LOG_ERR("wolfTrust periph probe: Secure RNG readable from NS");
+		leaked = 1;
+	}
+	*PERIPH_RNG_CR_NS = 0u;
+	__asm volatile("dsb");
+	if (periph_dma_control_ok() == 0) {
+		LOG_ERR("wolfTrust periph probe: NS DMA control copy failed");
+		inconclusive = 1;
+	}
+	else {
+		/* The signed image header starts with nonzero magic. */
+		rc = periph_dma_secure_copy(PERIPH_SECURE_IMAGE, 1);
+		leaked |= (rc == PERIPH_DMA_LEAKED);
+		inconclusive |= (rc == PERIPH_DMA_INCONCLUSIVE);
+		rc = periph_dma_secure_copy(PERIPH_SECURE_SRAM, 0);
+		leaked |= (rc == PERIPH_DMA_LEAKED);
+		inconclusive |= (rc == PERIPH_DMA_INCONCLUSIVE);
+	}
+	*PERIPH_MPU_CTRL_NS = mpu_ctrl;
+	__asm volatile("dsb; isb");
+	memset(out, 0, sizeof(out));
+	st = psa_generate_random(out, sizeof(out));
+	if (st != PSA_SUCCESS) {
+		LOG_ERR("wolfTrust periph probe: Secure entropy broken st=%d",
+			(int)st);
+		leaked = 1;
+	}
+	if (leaked != 0) {
+		g_guest0_periph_probe = 3u;
+		LOG_ERR("wolfTrust periph probe LEAKED");
+	}
+	else if (inconclusive != 0) {
+		g_guest0_periph_probe = 4u;
+		LOG_ERR("wolfTrust periph probe INCONCLUSIVE");
+	}
+	else {
+		g_guest0_periph_probe = 2u;
+		LOG_INF("wolfTrust periph probe blocked");
+	}
+}
+#endif
+
 int main(void)
 {
 	int rc;
@@ -1391,6 +1563,9 @@ int main(void)
 #endif
 #if defined(WT_MPU_BYPASS_PROBE)
 	exercise_mpu_bypass_probe();
+#endif
+#if defined(WT_PERIPH_NEG_PROBE)
+	exercise_periph_neg_probe();
 #endif
 #if defined(WT_FWU_PROBE)
 	exercise_ffm_fwu();

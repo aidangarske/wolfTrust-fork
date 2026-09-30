@@ -82,6 +82,7 @@ PORTS = {
             ("manifestneg", "Corrupted-manifest activation refused"),
             ("manifestneg2", "Level 2 manifest refused at boot"),
             ("gtzcneg", "NS MPU bypass cannot reach peer guest RAM"),
+            ("periphneg", "NS peripheral and DMA access to Secure resources"),
             ("spbudgetneg", "SP restart-budget exhaustion escalates"),
             ("revneg", "Engineering-sample silicon refused"),
             ("fpneg", "FP isolation (partition FP faults, contained)"),

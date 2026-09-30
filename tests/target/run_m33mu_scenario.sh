@@ -184,6 +184,8 @@ elif [ "$scenario" = "fwustage" ]; then
   guest_flags="WT_FWU_PROBE=1"
 elif [ "$scenario" = "gtzcneg" ]; then
   guest_flags="WT_MPU_BYPASS_PROBE=1"
+elif [ "$scenario" = "periphneg" ]; then
+  guest_flags="WT_PERIPH_NEG_PROBE=1"
 fi
 
 # Guest images per scenario: the vnet scenario swaps the Zephyr/FreeRTOS pair
@@ -371,7 +373,17 @@ refute_re()  { if grep -Eq "$2" "$log"; then check_fail "$1" "unexpected: $2"; \
                else check_pass "$1"; fi; }
 
 case "$scenario" in
-  positive|deputyneg|hsmpinneg)
+  positive|deputyneg|hsmpinneg|periphneg)
+    if [ "$scenario" = "periphneg" ]; then
+      # WT-FFM-0068: the guest reads and clears the SPM's RNG through its
+      # Non-secure alias, proves an NS-to-NS GPDMA copy works, then needs a
+      # transfer error with nothing landed for copies out of the Secure image
+      # and Secure SRAM; Secure entropy must still work.
+      refute_re "Secure peripheral and memory stay out of NS reach" \
+        'wolfTrust periph probe (LEAKED|INCONCLUSIVE)'
+      expect "NS RNG poke and NS DMA copies blocked" \
+        "wolfTrust periph probe blocked"
+    fi
     if [ "$scenario" = "deputyneg" ]; then
       # The probe is called unconditionally at vault entry and faults the
       # partition on any leak, so a clean positive lifecycle only proves the

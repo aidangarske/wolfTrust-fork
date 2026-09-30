@@ -334,6 +334,11 @@ The optional `gtzcneg` scenario must be selected explicitly. It verifies the
 GTZC peer-RAM curtain after a Non-secure MPU bypass; it does not establish peer
 flash confidentiality or adversarial peripheral and Non-secure NVIC ownership.
 
+`periphneg` has a privileged Non-secure guest read and clear the SPM's RNG
+through its Non-secure alias and run Non-secure GPDMA copies out of the Secure
+image and Secure SRAM. Nothing may be read or changed, and Secure entropy must
+still work before the normal lifecycle completes.
+
 For the hardened guest-flash configuration, explicitly forward the build flag
 into the container and repeat it for the host flash run:
 
