@@ -83,13 +83,16 @@ else
 	fi
 endif
 
-# Real STM32H563 hardware equivalence suite: positive lifecycle + restart
-# recovery + cross-domain isolation on a Nucleo-H563ZI, the on-silicon
-# counterpart of test-target. Needs the ST-Link + board (detect_h5.sh) and a
-# container toolchain for the build (WT_H5_DOCKER_IMAGE); skips otherwise so it
-# never silently passes. HARDWARE evidence — recorded separately from emulator.
+# Real hardware suite, the on-silicon counterpart of test-target: STM32H563 on a
+# Nucleo-H563ZI (detect_h5.sh; container toolchain via WT_H5_DOCKER_IMAGE), or
+# TARGET=mimxrt700 on the EVK from its probe host (detect_rt700.sh). Skips
+# without a board so it never silently passes.
 test-hardware:
+ifeq ($(TARGET),mimxrt700)
+	@tests/target/run_rt700_suite.sh
+else
 	@tests/target/run_h5_suite.sh
+endif
 
 test-compilers:
 	@$(MAKE) --no-print-directory -C tests/host test-compilers
