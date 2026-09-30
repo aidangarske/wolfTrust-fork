@@ -283,6 +283,50 @@ class GeneratorTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("partition interrupt", result.stderr)
 
+    def assert_rejected(self, manifest, message):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "manifest.json"
+            source.write_text(json.dumps(manifest), encoding="utf-8")
+            result = self.run_generator(source, root / "output")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+            self.assertFalse((root / "output").exists())
+
+    def test_partition_peripheral_is_rejected(self):
+        # WT-FFM-0068: with or without DEVICE, shared or not.
+        for attributes, share_id, message in (
+                (0x03, 0, "does not assign"),
+                (0x0B, 0, "does not assign"),
+                (0x2B, 5, "cannot be shared")):
+            manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+            manifest["profile_capabilities"][
+                "max_memory_resources_per_domain"] = 3
+            manifest["domains"][1]["memory_resources"].append({
+                "base": 0x40004800, "size": 0x400,
+                "attributes": attributes, "share_id": share_id})
+            self.assert_rejected(manifest, message)
+
+    def test_overlapping_partition_memory_is_rejected(self):
+        manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        manifest["profile_capabilities"]["max_memory_resources_per_domain"] = 3
+        manifest["domains"][2]["memory_resources"].append({
+            "base": 0x7000, "size": 0x400, "attributes": 0x03,
+            "share_id": 0})
+        self.assert_rejected(manifest, "overlap")
+
+    def test_duplicate_partition_interrupt_is_rejected(self):
+        manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        manifest["domains"][2]["interrupt_resources"][0]["interrupt"] = 21
+        manifest["partitions"][1]["interrupts"][0]["interrupt"] = 21
+        self.assert_rejected(manifest, "multiply owned")
+
+    def test_partition_interrupt_beyond_vector_table_is_rejected(self):
+        manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        manifest["domains"][1]["interrupt_resources"][0]["interrupt"] = 64
+        manifest["partitions"][0]["interrupts"][0]["interrupt"] = 64
+        self.assert_rejected(manifest, "beyond the Secure vector table")
+
     def test_isolation_levels_1_and_2_are_rejected(self):
         for level in (1, 2):
             with tempfile.TemporaryDirectory() as temporary:

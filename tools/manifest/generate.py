@@ -208,6 +208,16 @@ def name_valid(value):
     return re.fullmatch(r"[A-Z_][A-Z0-9_]*", value) is not None
 
 
+# External lines in the Armv8-M Secure vector table (WT_ARMV8M_SECURE_IRQS).
+SECURE_VECTOR_IRQS = 64
+
+
+def range_is_mmio(base, size):
+    """Armv8-M default map: Peripheral, Device, and System space."""
+    last = base + size - 1
+    return (base <= 0x5FFFFFFF and last >= 0x40000000) or last >= 0xA0000000
+
+
 def ranges_overlap(first_base, first_size, second_base, second_size):
     return (first_base < second_base + second_size and
             second_base < first_base + first_size)
@@ -418,6 +428,12 @@ def validate_policy(manifest, supported_features, word_max,
                 policy_error("private memory has a share identifier")
             if domain_class == 1 and attributes & 0x08 and attributes & 0x20:
                 policy_error("Secure Partition device memory cannot be shared")
+            # No port assigns a peripheral to a partition yet (WT-FFM-0068).
+            if domain_class == 1 and (attributes & 0x08 or
+                                      range_is_mmio(memory["base"],
+                                                    memory["size"])):
+                policy_error("Secure Partition maps a peripheral the port "
+                             "does not assign")
             for owner, other in all_memory:
                 if ranges_overlap(memory["base"], memory["size"],
                                   other["base"], other["size"]):
@@ -443,6 +459,9 @@ def validate_policy(manifest, supported_features, word_max,
                 policy_error("private interrupt has a share identifier")
             if domain_class == 1 and attributes & INTERRUPT_ATTR_SHARED:
                 policy_error("Secure Partition interrupts cannot be shared")
+            if domain_class == 1 and number >= SECURE_VECTOR_IRQS:
+                policy_error("Secure Partition interrupt is beyond the Secure "
+                             "vector table")
             if any(number == prior[1]["interrupt"]
                    for prior in all_interrupts if prior[0] == domain_id):
                 policy_error("domain interrupt is multiply owned")
