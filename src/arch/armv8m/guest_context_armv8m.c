@@ -30,6 +30,7 @@
 #include "wolftrust/arch/armv8m/core_regs.h"
 #include "wolftrust/spm_transport.h"
 #include "wolftrust/monitor.h"
+#include "wolftrust/platform.h"
 #include "wolftrust/static_assert.h"
 
 #include "memory_map.h"
@@ -104,8 +105,40 @@ static volatile uint32_t g_arriving_systick_inject;
 
 #define WT_SYST_LATCH_MAX_POLLS 100000U
 
+/* Secure FP is unsupported: retire any FP context the loader left active,
+ * deny CP10/CP11 in both worlds, lock the FP stacking policy against
+ * Non-secure writes, and halt unless every bit reads back as programmed. */
+static void wt_arch_fp_lockdown(void)
+{
+    const uint32_t fpccr_clear = WT_SCB_FPCCR_LSPEN | WT_SCB_FPCCR_ASPEN |
+                                 WT_SCB_FPCCR_TS | WT_SCB_FPCCR_LSPACT;
+    const uint32_t fpccr_set = WT_SCB_FPCCR_LSPENS | WT_SCB_FPCCR_CLRONRET |
+                               WT_SCB_FPCCR_CLRONRETS;
+    uint32_t control;
+
+    __asm__ volatile ("mrs %0, control" : "=r"(control));
+    control &= ~(WT_CONTROL_FPCA | WT_CONTROL_SFPA);
+    __asm__ volatile ("msr control, %0\nisb 0xF" : : "r"(control) : "memory");
+    WT_SCB_CPACR_S &= ~WT_SCB_CPACR_CP10_CP11;
+    WT_SCB_CPACR_NS &= ~WT_SCB_CPACR_CP10_CP11;
+    WT_SCB_NSACR &= ~WT_SCB_NSACR_CP10_CP11;
+    WT_SCB_FPCCR_S = (WT_SCB_FPCCR_S & ~fpccr_clear) | fpccr_set;
+    __asm__ volatile ("dsb 0xF\nisb 0xF" ::: "memory");
+
+    __asm__ volatile ("mrs %0, control" : "=r"(control));
+    if ((control & (WT_CONTROL_FPCA | WT_CONTROL_SFPA)) != 0u ||
+        (WT_SCB_CPACR_S & WT_SCB_CPACR_CP10_CP11) != 0u ||
+        (WT_SCB_CPACR_NS & WT_SCB_CPACR_CP10_CP11) != 0u ||
+        (WT_SCB_NSACR & WT_SCB_NSACR_CP10_CP11) != 0u ||
+        (WT_SCB_FPCCR_S & fpccr_clear) != 0u ||
+        (WT_SCB_FPCCR_S & fpccr_set) != fpccr_set) {
+        wt_platform_panic();
+    }
+}
+
 void wt_arch_init(void)
 {
+    wt_arch_fp_lockdown();
     /* Route MemManage and UsageFault to their own handlers (otherwise
      * they escalate to HardFault and we lose the fault-status registers
      * by the time we get the trap). STKOF on PSPLIM_S overflow surfaces
