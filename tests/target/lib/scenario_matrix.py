@@ -78,6 +78,7 @@ PORTS = {
             ("manifestneg", "Corrupted-manifest activation refused"),
             ("gtzcneg", "NS MPU bypass cannot reach peer guest RAM"),
             ("spbudgetneg", "SP restart-budget exhaustion escalates"),
+            ("revneg", "Engineering-sample silicon refused"),
         ),
     },
     "mimxrt700": {
