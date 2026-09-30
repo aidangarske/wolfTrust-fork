@@ -658,10 +658,10 @@ if [ "$mode" != "build" ]; then
       expect "guest1 alive after SP quarantined" "freertos_guest1: heartbeat"
       ;;
     keystoreneg)
-      # The ITS partition (a non-keystore SP) reads the shared keystore band on
-      # entry; its MPU domain does not grant the band, so the read faults and is
-      # gracefully quarantined. Proof is the captured fault address inside the
-      # keystore band and guest1 surviving.
+      # The ITS partition (a non-keystore SP) reads the vault's data band on
+      # entry; its MPU domain grants none of the keystore data bands, so the
+      # read faults and is gracefully quarantined. Proof is the captured fault
+      # address inside the keystore envelope and guest1 surviving.
       refute_re "keystore-band fault did not escalate to HardFault" \
         '^(\[HARDFLT\]|HardFault|SecureFault)'
       fault_cnt=$(read_secure_u32 g_tasklet_fault_count)

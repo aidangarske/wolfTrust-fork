@@ -27,6 +27,8 @@ scenario_secure_flags() {
         keystoreneg)      echo "WT_KEYSTORE_NEG_PROBE=1" ;;
         periphspneg)      echo "WT_PERIPH_SP_NEG_PROBE=1" ;;
         deputyneg)        echo "WT_DEPUTY_NEG_PROBE=1" ;;
+        bandneg[1-6])     echo "WT_BAND_NEG_PROBE=${1#bandneg}" ;;
+        restartneg[1-3])  echo "WT_RESTART_NEG_PROBE=${1#restartneg}" ;;
         hsmpinneg)        echo "WT_HSM_PIN_NEG_PROBE=1" ;;
         spfaultneg)       echo "WT_SP_FAULT_PROBE=1" ;;
         hsmfaultneg)      echo "WT_HSM_FAULT_PROBE=1" ;;
@@ -52,6 +54,7 @@ scenario_secure_flags() {
         busfaultneg)      echo "WT_BUSFAULT_NEG_PROBE=1" ;;
         xnneg)            echo "WT_XN_NEG_PROBE=1" ;;
         svcneg)           echo "WT_SVC_NEG_PROBE=1" ;;
+        manifestneg3)     echo "WT_MANIFEST_NEG_PROBE=3" ;;
         *)                echo "" ;;
     esac
 }
@@ -61,7 +64,7 @@ scenario_secure_flags() {
 scenario_end() {
     case "$1" in
         rollbackneg|spbudgetneg) echo "bkpt:0x7d" ;;
-        manifestneg|manifestneg2|sealbootneg) echo "bkpt:0x7e" ;;
+        manifestneg|manifestneg2|manifestneg3|sealbootneg) echo "bkpt:0x7e" ;;
         sealhaltneg)             echo "bkpt:0x6e" ;;
         remeasureneg)            echo "bkpt:0x6c" ;;
         *)                       echo "idle" ;;
@@ -87,7 +90,7 @@ scenario_assert_verdict() {
             expect "clean re-measure passed, then the in-flash tamper was caught before dispatch" \
                 "[BKPT] imm=0x6c"
             ;;
-        manifestneg|manifestneg2)
+        manifestneg|manifestneg2|manifestneg3)
             expect "boot halted on the production manifest-validation panic" \
                 "[BKPT] imm=0x7e"
             refute_re "no guest scheduled off the corrupted manifest" \
