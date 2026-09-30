@@ -68,6 +68,29 @@
 #define WT_SCB_CFSR_MMFSR_MMARVALID   (1u << 7)
 
 #define WT_SCB_CFSR_UFSR_STKOF        (1u << 20)  /* UFSR bit 4 lifted to CFSR bit 20 */
+#define WT_SCB_CFSR_UFSR_NOCP         (1u << 19)  /* UFSR bit 3: coprocessor disabled */
+#define WT_SCB_CFSR_UFSR_UNDEFINSTR   (1u << 16)  /* UFSR bit 0: undefined instruction */
+
+/* Coprocessor Access Control and the FP context/config registers. CPACR and
+ * FPCCR are banked; the Secure alias is written from the Secure world. */
+#define WT_SCB_CPACR_S           (*(volatile uint32_t*)0xE000ED88u)
+#define WT_SCB_CPACR_NS          (*(volatile uint32_t*)0xE002ED88u)
+#define WT_SCB_NSACR             (*(volatile uint32_t*)0xE000ED8Cu)
+#define WT_SCB_FPCCR_S           (*(volatile uint32_t*)0xE000EF34u)
+#define WT_SCB_CPACR_CP10_CP11   (0xFu << 20)     /* CP10/CP11 access field */
+#define WT_SCB_NSACR_CP10_CP11   (0x3u << 10)     /* NS access to CP10/CP11 */
+#define WT_SCB_FPCCR_LSPEN       (1u << 30)       /* lazy state preservation */
+#define WT_SCB_FPCCR_ASPEN       (1u << 31)       /* automatic state preservation */
+#define WT_SCB_FPCCR_TS          (1u << 26)       /* treat FP state as Secure */
+#define WT_SCB_FPCCR_CLRONRETS   (1u << 27)       /* lock CLRONRET against NS writes */
+#define WT_SCB_FPCCR_CLRONRET    (1u << 28)       /* clear FP caller regs on return */
+#define WT_SCB_FPCCR_LSPENS      (1u << 29)       /* lock LSPEN against NS writes */
+#define WT_SCB_FPCCR_LSPACT      (1u << 0)        /* lazy FP state pending */
+#define WT_CONTROL_FPCA          (1u << 2)        /* FP context active */
+#define WT_CONTROL_SFPA          (1u << 3)        /* Secure FP context active */
+
+/* Armv8-M Secure stack seal value, written twice at the top of a stack. */
+#define WT_ARMV8M_STACK_SEAL     0xFEF5EDA5u
 
 #define WT_MPU_S_TYPE            (*(volatile uint32_t*)0xE000ED90u)
 #define WT_MPU_S_CTRL            (*(volatile uint32_t*)0xE000ED94u)
