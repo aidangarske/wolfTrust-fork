@@ -406,8 +406,7 @@ ALL_SECURE_OBJS := $(strip \
 
 # LTO cannot safely rewrite objects whose symbols are consumed by inline
 # assembly or synthesized by the CMSE linker. Objects that own a
-# filename-selected isolation band (the vault, attestation, crypto, and VNET
-# partitions' state) retain their object identity.
+# filename-selected isolation band retain their object identity.
 ifeq ($(WT_LTO),1)
 WT_LTO_WOLFCRYPT_EXCLUDED_OBJS := \
     $(BUILD_DIR)/wc_sec_cryptocb.o \
@@ -423,28 +422,19 @@ WT_LTO_SECURE_EXCLUDED_OBJS := \
     $(BUILD_DIR)/wt_sec_guest_context_armv8m.o \
     $(BUILD_DIR)/wt_sec_sp_fault_armv8m.o \
     $(BUILD_DIR)/wt_sec_spm_svc.o
-WT_LTO_BAND_OBJS := $(filter \
-    $(BUILD_DIR)/wt_sec_crypto_native.o \
-    $(BUILD_DIR)/wt_sec_keyvault.o \
-    $(BUILD_DIR)/wt_sec_native_wire.o \
-    $(BUILD_DIR)/wt_sec_nvm_store.o \
-    $(BUILD_DIR)/wt_sec_nvm_client.o \
-    $(BUILD_DIR)/wt_sec_wt_hsm.o \
-    $(BUILD_DIR)/wt_sec_wt_hsm_vault.o \
-    $(BUILD_DIR)/wt_sec_wt_hsm_seal.o \
-    $(BUILD_DIR)/wt_sec_wt_hsm_lock.o \
-    $(BUILD_DIR)/wt_sec_hsm_relay_service.o \
-    $(BUILD_DIR)/wt_sec_vault_service.o \
-    $(BUILD_DIR)/wt_sec_attestation_service.o \
-    $(BUILD_DIR)/wt_sec_initial_attestation.o \
-    $(BUILD_DIR)/wt_sec_attestation_cose.o \
-    $(BUILD_DIR)/wt_sec_hsm_flash.o \
-    $(BUILD_DIR)/wt_sec_hsm_flash_ctx.o,$(ALL_SECURE_OBJS))
-WT_LTO_VNET_BAND_OBJS := $(filter \
-    $(BUILD_DIR)/wt_sec_vnet_%.o,$(ALL_SECURE_OBJS))
+# Every object the owner map gives to a partition or marks shared keeps its
+# identity, so tools/check_secure_layout.py can check where its state lands.
+WT_HASH := \#
+WT_LTO_OWNED_NAMES := $(shell awk '{sub(/$(WT_HASH).*/, "")} \
+    NF == 2 && $$2 != "spm" {sub(/\*$$/, "%", $$1); print $$1}' \
+    $(ROOT)/tools/secure_owners.txt)
+WT_LTO_OWNED_OBJS := $(filter \
+    $(addprefix $(BUILD_DIR)/,$(WT_LTO_OWNED_NAMES)),$(ALL_SECURE_OBJS))
 $(WT_LTO_WOLFCRYPT_EXCLUDED_OBJS): HSM_LIB_CFLAGS += -fno-lto
-$(WT_LTO_SECURE_EXCLUDED_OBJS) $(WT_LTO_BAND_OBJS) \
-        $(WT_LTO_VNET_BAND_OBJS): SECURE_CFLAGS += -fno-lto
+$(WT_LTO_SECURE_EXCLUDED_OBJS): SECURE_CFLAGS += -fno-lto
+$(WT_LTO_OWNED_OBJS): SECURE_CFLAGS += -fno-lto
+$(WT_LTO_OWNED_OBJS): HSM_LIB_CFLAGS += -fno-lto
+$(WT_LTO_OWNED_OBJS): HSM_WOLFHSM_CFLAGS += -fno-lto
 endif
 
 # Arm PSA-FF conformance partitions (P3a): the unmodified upstream server and
