@@ -107,6 +107,45 @@ static const wt_hsm_flash_config_t g_hsm_flash_cfg = {
 };
 
 static wt_hsm_flash_context_t g_hsm_flash_ctx;
+
+/* The keystore partitions run unprivileged and their flash context struct
+ * lives in partition-writable RAM, so its base/size cannot be trusted by the
+ * privileged flash primitives: a partition that rewrote them would redirect a
+ * privileged read/program/erase to any address. Geometry is resolved instead
+ * from the immutable .rodata config keyed by the context identity, and an
+ * unknown context is refused. */
+static const wt_hsm_flash_config_t g_fwu_flash_cfg;
+static wt_hsm_flash_context_t g_fwu_flash_ctx;
+#if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+static const wt_hsm_flash_config_t g_conf_nvm_cfg;
+static wt_hsm_flash_context_t g_conf_nvm_ctx;
+#endif
+#if defined(WT_REMEASURE_PROBE)
+static wt_hsm_flash_context_t g_remeasure_probe_ctx;
+static wt_hsm_flash_config_t g_remeasure_probe_cfg;
+#endif
+
+static const wt_hsm_flash_config_t *wt_flash_geometry(const void *context)
+{
+    if (context == (const void *)&g_hsm_flash_ctx) {
+        return &g_hsm_flash_cfg;
+    }
+    if (context == (const void *)&g_fwu_flash_ctx) {
+        return &g_fwu_flash_cfg;
+    }
+#if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+    if (context == (const void *)&g_conf_nvm_ctx) {
+        return &g_conf_nvm_cfg;
+    }
+#endif
+#if defined(WT_REMEASURE_PROBE)
+    if (context == (const void *)&g_remeasure_probe_ctx) {
+        return &g_remeasure_probe_cfg;
+    }
+#endif
+    return NULL;
+}
+
 /* Direct-path forensics (SWD-readable): count every program/erase attempt on
  * the NVM context and latch the first failure's sub-op, offset, and the raw
  * FLASH_SR error bits before they are cleared. */
@@ -207,16 +246,16 @@ static uintptr_t wt_flash_ns_addr(uintptr_t addr)
     return addr & ~0x04000000u;
 }
 
-static int wt_flash_range_ok(const wt_hsm_flash_context_t *ctx,
+static int wt_flash_range_ok(const wt_hsm_flash_config_t *geom,
                              uint32_t offset, uint32_t size)
 {
-    if (ctx == NULL || ctx->sector_size == 0u || ctx->program_unit == 0u) {
+    if (geom == NULL || geom->sector_size == 0u || geom->program_unit == 0u) {
         return 0;
     }
-    if (offset > ctx->size) {
+    if (offset > geom->size) {
         return 0;
     }
-    if (size > ctx->size - offset) {
+    if (size > geom->size - offset) {
         return 0;
     }
     return 1;
@@ -344,12 +383,12 @@ static int wt_hsm_flash_cleanup(void *context)
 
 static uint32_t wt_hsm_flash_partition_size(void *context)
 {
-    wt_hsm_flash_context_t *ctx = (wt_hsm_flash_context_t *)context;
+    const wt_hsm_flash_config_t *geom = wt_flash_geometry(context);
 
-    if (ctx == NULL) {
+    if (geom == NULL) {
         return 0u;
     }
-    return ctx->sector_size;
+    return geom->sector_size;
 }
 
 static int wt_hsm_flash_write_lock(void *context, uint32_t offset,
@@ -383,7 +422,7 @@ static int wt_hsm_flash_write_unlock(void *context, uint32_t offset,
 static int wt_hsm_flash_read(void *context, uint32_t offset, uint32_t size,
                              uint8_t *data)
 {
-    wt_hsm_flash_context_t *ctx = (wt_hsm_flash_context_t *)context;
+    const wt_hsm_flash_config_t *geom;
 
     if (data == NULL && size != 0u) {
         return WH_ERROR_BADARGS;
@@ -392,11 +431,12 @@ static int wt_hsm_flash_read(void *context, uint32_t offset, uint32_t size,
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_READ, offset, size,
                                  data);
     }
-    if (!wt_flash_range_ok(ctx, offset, size)) {
+    geom = wt_flash_geometry(context);
+    if (!wt_flash_range_ok(geom, offset, size)) {
         return WH_ERROR_BADARGS;
     }
     if (size != 0u) {
-        return wt_flash_read_checked((const uint8_t *)(ctx->base + offset),
+        return wt_flash_read_checked((const uint8_t *)(geom->base + offset),
                                      data, size);
     }
     return WH_ERROR_OK;
@@ -405,7 +445,8 @@ static int wt_hsm_flash_read(void *context, uint32_t offset, uint32_t size,
 static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
                                 const uint8_t *data)
 {
-    wt_hsm_flash_context_t *ctx = (wt_hsm_flash_context_t *)context;
+    const wt_hsm_flash_config_t *geom = wt_flash_geometry(context);
+    const wt_hsm_flash_context_t *ctx = (const wt_hsm_flash_context_t *)context;
     uint32_t written = 0u;
     int ret = WH_ERROR_OK;
 
@@ -416,18 +457,18 @@ static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_PROGRAM, offset,
                                  size, (void *)(uintptr_t)data);
     }
-    if (ctx == &g_hsm_flash_ctx) {
+    if (context == (const void *)&g_hsm_flash_ctx) {
         g_wt_flash_prog_calls++;
     }
-    if (!wt_flash_range_ok(ctx, offset, size)) {
+    if (!wt_flash_range_ok(geom, offset, size)) {
         if (g_wt_flash_first_err == 0u) {
             g_wt_flash_first_err = 0x01000000u | (uint32_t)(-WH_ERROR_BADARGS);
             g_wt_flash_first_err_off = offset;
         }
         return WH_ERROR_BADARGS;
     }
-    if ((offset % ctx->program_unit) != 0u ||
-        (size % ctx->program_unit) != 0u) {
+    if ((offset % geom->program_unit) != 0u ||
+        (size % geom->program_unit) != 0u) {
         if (g_wt_flash_first_err == 0u) {
             g_wt_flash_first_err = 0x02000000u | (uint32_t)(-WH_ERROR_BADARGS);
             g_wt_flash_first_err_off = offset;
@@ -446,7 +487,7 @@ static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
     wt_flash_clear_errors();
 
     while (written < size) {
-        uintptr_t dst = ctx->base + offset + written;
+        uintptr_t dst = geom->base + offset + written;
         uint32_t word[4];
         volatile uint32_t *flash_word = (volatile uint32_t *)dst;
 
@@ -478,7 +519,7 @@ static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
         if (ret != WH_ERROR_OK) {
             break;
         }
-        written += ctx->program_unit;
+        written += geom->program_unit;
     }
 
     WT_FLASH_CR &= ~WT_FLASH_CR_PG;
@@ -489,7 +530,8 @@ static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
 
 static int wt_hsm_flash_erase(void *context, uint32_t offset, uint32_t size)
 {
-    wt_hsm_flash_context_t *ctx = (wt_hsm_flash_context_t *)context;
+    const wt_hsm_flash_config_t *geom = wt_flash_geometry(context);
+    const wt_hsm_flash_context_t *ctx = (const wt_hsm_flash_context_t *)context;
     uint32_t start;
     uint32_t end;
 
@@ -497,14 +539,14 @@ static int wt_hsm_flash_erase(void *context, uint32_t offset, uint32_t size)
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_ERASE, offset, size,
                                  NULL);
     }
-    if (ctx == &g_hsm_flash_ctx) {
+    if (context == (const void *)&g_hsm_flash_ctx) {
         g_wt_flash_erase_calls++;
     }
-    if (!wt_flash_range_ok(ctx, offset, size)) {
+    if (!wt_flash_range_ok(geom, offset, size)) {
         return WH_ERROR_BADARGS;
     }
-    if ((offset % ctx->sector_size) != 0u ||
-        (size % ctx->sector_size) != 0u) {
+    if ((offset % geom->sector_size) != 0u ||
+        (size % geom->sector_size) != 0u) {
         return WH_ERROR_BADARGS;
     }
     if (size != 0u && ctx->write_locked) {
@@ -521,9 +563,9 @@ static int wt_hsm_flash_erase(void *context, uint32_t offset, uint32_t size)
     wt_flash_clear_errors();
 
     while (start < end) {
-        uintptr_t ns_addr = wt_flash_ns_addr(ctx->base + start);
+        uintptr_t ns_addr = wt_flash_ns_addr(geom->base + start);
         uint32_t sector = (uint32_t)((ns_addr - WT_FLASH_NS_BASE) /
-                                     ctx->sector_size);
+                                     geom->sector_size);
         uint32_t bank = 0u;
         uint32_t sector_in_bank = sector;
         uint32_t cr;
@@ -560,7 +602,7 @@ static int wt_hsm_flash_erase(void *context, uint32_t offset, uint32_t size)
             wt_flash_icache_invalidate();
             return WH_ERROR_ABORTED;
         }
-        start += ctx->sector_size;
+        start += geom->sector_size;
     }
 
     WT_FLASH_CR &= ~WT_FLASH_CR_SER;
@@ -572,7 +614,7 @@ static int wt_hsm_flash_erase(void *context, uint32_t offset, uint32_t size)
 static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
                                const uint8_t *data)
 {
-    wt_hsm_flash_context_t *ctx = (wt_hsm_flash_context_t *)context;
+    const wt_hsm_flash_config_t *geom = wt_flash_geometry(context);
     uint8_t flash_data[16];
     uint32_t checked = 0u;
     int ret;
@@ -584,7 +626,7 @@ static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_VERIFY, offset,
                                  size, (void *)(uintptr_t)data);
     }
-    if (!wt_flash_range_ok(ctx, offset, size)) {
+    if (!wt_flash_range_ok(geom, offset, size)) {
         return WH_ERROR_BADARGS;
     }
     while (checked < size) {
@@ -594,7 +636,7 @@ static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
             chunk = sizeof(flash_data);
         }
         ret = wt_flash_read_checked(
-                (const uint8_t *)(ctx->base + offset + checked), flash_data,
+                (const uint8_t *)(geom->base + offset + checked), flash_data,
                 chunk);
         if (ret != WH_ERROR_OK) {
             return ret;
@@ -610,7 +652,7 @@ static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
 static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
                                     uint32_t size)
 {
-    wt_hsm_flash_context_t *ctx = (wt_hsm_flash_context_t *)context;
+    const wt_hsm_flash_config_t *geom = wt_flash_geometry(context);
     uint8_t flash_data[16];
     uint32_t checked = 0u;
     uint32_t i;
@@ -620,7 +662,7 @@ static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
         return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_BLANKCHECK, offset,
                                  size, NULL);
     }
-    if (!wt_flash_range_ok(ctx, offset, size)) {
+    if (!wt_flash_range_ok(geom, offset, size)) {
         return WH_ERROR_BADARGS;
     }
     while (checked < size) {
@@ -630,7 +672,7 @@ static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
             chunk = sizeof(flash_data);
         }
         ret = wt_flash_read_checked(
-                (const uint8_t *)(ctx->base + offset + checked), flash_data,
+                (const uint8_t *)(geom->base + offset + checked), flash_data,
                 chunk);
         if (ret != WH_ERROR_OK) {
             return ret;
@@ -671,9 +713,9 @@ const void *wt_hsm_flash_config(void)
 int wt_hsm_flash_format(void)
 {
     /* Erase the whole vault NVM region so wh_Nvm_Init rebuilds a blank store.
-     * The context carries the geometry; the erase already honors sector
-     * alignment and the write-lock. Region size is a whole number of sectors. */
-    return wt_hsm_flash_erase(&g_hsm_flash_ctx, 0u, g_hsm_flash_ctx.size);
+     * The size comes from the immutable config, not the partition-writable
+     * context; the erase honors sector alignment and the write-lock. */
+    return wt_hsm_flash_erase(&g_hsm_flash_ctx, 0u, g_hsm_flash_cfg.size);
 }
 
 /* SERVICE_FWU staging into the wolfBoot update partition (WT-FWU-0002). The
@@ -862,20 +904,23 @@ const wt_fwu_backend_t wt_fwu_flash_backend = {
 #if defined(WT_REMEASURE_PROBE)
 int wt_hsm_flash_remeasure_tamper(uintptr_t secure_base)
 {
-    wt_hsm_flash_context_t ctx;
     uint8_t block[16];
 
-    ctx.base = secure_base;
-    ctx.size = WT_FLASH_SECTOR_SIZE;
-    ctx.sector_size = WT_FLASH_SECTOR_SIZE;
-    ctx.program_unit = 16u;
-    ctx.write_locked = false;
-    if (wt_hsm_flash_erase(&ctx, 0u, WT_FLASH_SECTOR_SIZE) != WH_ERROR_OK) {
+    /* Probe-only tamper of an arbitrary secure sector: the geometry is a
+     * privileged, file-scope descriptor the resolver recognises, so the
+     * primitives still refuse a partition-supplied context. */
+    g_remeasure_probe_cfg.base = secure_base;
+    g_remeasure_probe_cfg.size = WT_FLASH_SECTOR_SIZE;
+    g_remeasure_probe_cfg.sector_size = WT_FLASH_SECTOR_SIZE;
+    g_remeasure_probe_cfg.program_unit = 16u;
+    g_remeasure_probe_ctx.write_locked = false;
+    if (wt_hsm_flash_erase(&g_remeasure_probe_ctx, 0u, WT_FLASH_SECTOR_SIZE) !=
+            WH_ERROR_OK) {
         return -1;
     }
     (void)memset(block, 0x00, sizeof(block));
-    return (wt_hsm_flash_program(&ctx, 0u, sizeof(block), block) ==
-            WH_ERROR_OK) ? 0 : -1;
+    return (wt_hsm_flash_program(&g_remeasure_probe_ctx, 0u, sizeof(block),
+                                 block) == WH_ERROR_OK) ? 0 : -1;
 }
 #endif
 
@@ -916,3 +961,141 @@ int wt_conf_nvm_flash_sync(uint8_t *buf, uint32_t len, int store)
     return (ret == WH_ERROR_OK) ? 0 : -1;
 }
 #endif /* WT_CONFORMANCE */
+
+#if defined(WT_DEPUTY_NEG_PROBE) && (WT_DEPUTY_NEG_PROBE == 1)
+/* A primitive fed a forged out-of-range offset must reject it with exactly
+ * WH_ERROR_BADARGS through a delivered gate call, not a gate-level failure or
+ * any other backend error. Returns 1 only on that exact outcome. */
+static int wt_deputy_expect_badargs(int32_t sub_op, uint32_t offset,
+                                    uint32_t size, void *buf)
+{
+    wt_spm_call_t call;
+
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_KEYSTORE_FLASH;
+    call.call_type = sub_op;
+    call.vec_idx = offset;
+    call.num_bytes = size;
+    call.buffer = buf;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS) {
+        return 0;
+    }
+    return (call.ret_int == WH_ERROR_BADARGS) ? 1 : 0;
+}
+
+/* used + noinline so the link guard in the deputyneg runner can confirm the
+ * probe is present rather than inlined away under LTO. */
+__attribute__((used, noinline))
+int wt_platform_deputy_flash_probe(void)
+{
+    wt_spm_call_t call;
+    const wt_hsm_flash_config_t *geom;
+    uint8_t ref[16];
+    uint8_t leak[16];
+    uint32_t oor;
+    int ok = 1;
+
+    /* Offset whose base + offset lands in SPM-private RAM. */
+    oor = (uint32_t)((uintptr_t)WT_RAM_S_BASE - g_hsm_flash_cfg.base);
+
+    /* Reference: a legitimate in-range read of the real NVM region. */
+    g_hsm_flash_ctx.base = g_hsm_flash_cfg.base;
+    g_hsm_flash_ctx.size = g_hsm_flash_cfg.size;
+    (void)memset(ref, 0, sizeof(ref));
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_KEYSTORE_FLASH;
+    call.call_type = WT_SPM_KS_FLASH_READ;
+    call.vec_idx = 0u;
+    call.num_bytes = (uint32_t)sizeof(ref);
+    call.buffer = ref;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS || call.ret_int != WH_ERROR_OK) {
+        return 0;
+    }
+
+    /* Size vector: inflate the writable size so a bound check against it would
+     * pass, then confirm every primitive still refuses the SPM-targeting
+     * offset via the immutable geometry (exactly WH_ERROR_BADARGS). oor is
+     * sector-aligned, so the erase check rejects on range, not on alignment. */
+    g_hsm_flash_ctx.size = 0xFFFFFFFFu;
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_READ, oor, 16u, leak);
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_PROGRAM, oor, 16u, leak);
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_ERASE, oor,
+                                   g_hsm_flash_cfg.sector_size, NULL);
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_VERIFY, oor, 16u, leak);
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_BLANKCHECK, oor, 16u, NULL);
+
+    /* program_unit vector: forge a one-byte unit so a misaligned program would
+     * pass an alignment check against the context; the fixed primitive uses
+     * the immutable 16-byte unit and refuses. The offset stays in range, so
+     * the fixed path rejects on alignment without touching the store. */
+    g_hsm_flash_ctx.base = g_hsm_flash_cfg.base;
+    g_hsm_flash_ctx.size = g_hsm_flash_cfg.size;
+    g_hsm_flash_ctx.program_unit = 1u;
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_PROGRAM, 4u, 16u, leak);
+    g_hsm_flash_ctx.program_unit = g_hsm_flash_cfg.program_unit;
+
+    /* sector_size vector: forge a small sector so a sub-sector erase would pass
+     * an alignment check against the context; the fixed primitive uses the
+     * immutable sector size and refuses without erasing the store. */
+    g_hsm_flash_ctx.sector_size = 16u;
+    ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_ERASE, 0u, 16u, NULL);
+    g_hsm_flash_ctx.sector_size = g_hsm_flash_cfg.sector_size;
+
+    /* Resolver seam: every primitive selects its geometry through
+     * wt_flash_geometry(). With all four context fields forged, the resolver
+     * must still return the immutable config, so the base, size, sector size
+     * and program unit that program, erase, verify and blank-check use are
+     * never taken from partition-writable memory. This is the non-destructive
+     * proof for the mutating primitives, whose base cannot be substituted
+     * on-target without erasing the live store. */
+    g_hsm_flash_ctx.base = (uintptr_t)WT_RAM_S_BASE;
+    g_hsm_flash_ctx.size = 0xFFFFFFFFu;
+    g_hsm_flash_ctx.sector_size = 16u;
+    g_hsm_flash_ctx.program_unit = 1u;
+    geom = wt_flash_geometry(&g_hsm_flash_ctx);
+    if (geom == NULL || geom->base != g_hsm_flash_cfg.base ||
+            geom->size != g_hsm_flash_cfg.size ||
+            geom->sector_size != g_hsm_flash_cfg.sector_size ||
+            geom->program_unit != g_hsm_flash_cfg.program_unit) {
+        ok = 0;
+    }
+
+    /* Base vector (read and verify are non-destructive): point the writable
+     * base at SPM RAM with an in-range offset. The fixed read and verify
+     * resolve the base from the immutable config, so the read returns the NVM
+     * reference and the verify matches it; taking the base from the context
+     * would return or compare SPM bytes instead. */
+    g_hsm_flash_ctx.base = (uintptr_t)WT_RAM_S_BASE;
+    g_hsm_flash_ctx.size = 0xFFFFFFFFu;
+    (void)memset(leak, 0, sizeof(leak));
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_KEYSTORE_FLASH;
+    call.call_type = WT_SPM_KS_FLASH_READ;
+    call.vec_idx = 0u;
+    call.num_bytes = (uint32_t)sizeof(leak);
+    call.buffer = leak;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS || call.ret_int != WH_ERROR_OK) {
+        ok = 0;
+    }
+    else if (memcmp(leak, ref, sizeof(ref)) != 0) {
+        ok = 0;
+    }
+
+    (void)memset(&call, 0, sizeof(call));
+    call.op = WT_SPM_OP_KEYSTORE_FLASH;
+    call.call_type = WT_SPM_KS_FLASH_VERIFY;
+    call.vec_idx = 0u;
+    call.num_bytes = (uint32_t)sizeof(ref);
+    call.buffer = ref;
+    if (wt_arch_sp_trap(&call) != WT_FFM_SUCCESS || call.ret_int != WH_ERROR_OK) {
+        ok = 0;
+    }
+
+    /* Restore the full context for the vault's real operations. */
+    g_hsm_flash_ctx.base = g_hsm_flash_cfg.base;
+    g_hsm_flash_ctx.size = g_hsm_flash_cfg.size;
+    g_hsm_flash_ctx.sector_size = g_hsm_flash_cfg.sector_size;
+    g_hsm_flash_ctx.program_unit = g_hsm_flash_cfg.program_unit;
+    return ok;
+}
+#endif
