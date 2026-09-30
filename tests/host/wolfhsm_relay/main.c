@@ -61,6 +61,7 @@
 static int g_failures;
 static int32_t g_connect_error;
 static unsigned int g_connect_count;
+static unsigned int g_close_count;
 
 extern int (*test_wolfhsm_sys_init)(void);
 int wolfhsm_guest_init(void);
@@ -152,6 +153,7 @@ int32_t WolfTrust_FFM_Connect(uint32_t sid, uint32_t version)
 
 void WolfTrust_FFM_Close(int32_t handle)
 {
+    g_close_count++;
     (void)wt_ffm_close(&g_runtime, TEST_NS_CLIENT, handle);
 }
 
@@ -314,6 +316,7 @@ static void test_guest_init_retry(void)
     WC_RNG rng;
     uint8_t output[32];
     unsigned int connected_count;
+    unsigned int closed_count;
 
     (void)memset(&rng, 0, sizeof(rng));
     rng.devId = WH_DEV_ID;
@@ -337,6 +340,18 @@ static void test_guest_init_retry(void)
           "successful guest SYS_INIT does not duplicate callback registration");
     check(wc_CryptoCb_RandomBlock(&rng, output, sizeof(output)) == 0,
           "successful guest SYS_INIT serves crypto operations");
+    (void)wh_Client_Cleanup(wolfhsm_guest_client());
+
+    wt_hsm_relay_set_submit(NULL, NULL);
+    closed_count = g_close_count;
+    check(wolfhsm_guest_init() == WH_ERROR_ABORTED &&
+              g_close_count == closed_count + 1U &&
+              wc_CryptoCb_IsDeviceRegistered(WH_DEV_ID) == 0,
+          "WT-FFM-0054 failed COMM INIT closes the client connection");
+    wt_hsm_relay_set_submit(test_relay_submit, NULL);
+    check(wolfhsm_guest_init() == WH_ERROR_OK &&
+              wc_CryptoCb_RandomBlock(&rng, output, sizeof(output)) == 0,
+          "WT-FFM-0054 guest init recovers after failed COMM INIT");
     (void)wh_Client_Cleanup(wolfhsm_guest_client());
 }
 

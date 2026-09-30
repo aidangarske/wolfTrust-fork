@@ -151,6 +151,10 @@ size difference lives.
 
 ## wolfHSM engine
 
+Guest initialization completes wolfHSM's `COMM INIT` handshake before enabling
+crypto requests. A failed handshake releases the client transport. Transient
+connection failures use the existing initialization retry.
+
 The wolfHSM engine links the wolfHSM client/server protocol and creates one
 Secure server context for each configured guest. Guest wolfPSA calls use
 wolfCrypt's crypto-callback path, the wolfHSM client serializes the request,

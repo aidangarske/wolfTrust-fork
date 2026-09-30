@@ -20,6 +20,10 @@ equivalent Git URL rewrite before initializing them.
 git submodule update --init --recursive
 ```
 
+The wolfHSM pin is on upstream `main` and includes the 128-bit flash programming
+support merged in wolfHSM PR #524. Automatic release bumps require that merge
+commit so an older release cannot drop the STM32H563 flash support.
+
 The Zephyr guest build additionally uses a Python virtual environment, CMake,
 Ninja, and network access to create its v4.2.0 workspace. The FreeRTOS guest
 build uses the Arm cross-toolchain and network access; its default source
