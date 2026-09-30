@@ -21,8 +21,26 @@
 #ifndef WOLFTRUST_MIMXRT700_HSM_FLASH_H
 #define WOLFTRUST_MIMXRT700_HSM_FLASH_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "wolftrust/port_nvm.h"
+
+typedef struct wt_hsm_flash_config {
+    uintptr_t base;
+    uint32_t size;
+    uint32_t sector_size;
+    uint32_t program_unit;
+} wt_hsm_flash_config_t;
+
+typedef struct wt_hsm_flash_context {
+    bool write_locked;
+} wt_hsm_flash_context_t;
+
+/* The vault's own flash bookkeeping (hsm_flash_ctx.c, in the vault's data
+ * band). The driver's privileged state stays in hsm_flash.c, in SPM RAM. */
+extern wt_hsm_flash_context_t g_hsm_flash_ctx;
+extern volatile uint32_t g_wt_flash_gate_aborts;
+extern volatile uint32_t g_wt_flash_gate_abort_info;
 
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
 int wt_conf_nvm_flash_sync(uint8_t *buf, uint32_t len, int store);
