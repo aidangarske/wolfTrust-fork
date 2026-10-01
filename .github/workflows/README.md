@@ -5,10 +5,21 @@ analysis. M33MU runs a per-port smoke set on every pull request and the full
 matrix on labels, main pushes, and nightly.
 
 `codeql.yml` runs C security queries on pull requests, pushes to `main` and
-release branches, and weekly. `coverity.yml` scans on pushes to `main`, daily,
-or on manual dispatch from `wolfSSL/wolfTrust` only. Both trace host suite
-builds and secure-image builds for STM32H563 and MIMXRT700 with both crypto
-engines via `tools/ci-static-analysis-build.sh`.
+release branches, and weekly. `coverity.yml` submits builds weekly on Mondays
+at 00:00 UTC, or on manual dispatch from `wolfSSL/wolfTrust` only. Both trace
+host suite builds and secure-image builds for STM32H563 and MIMXRT700 with
+both crypto engines via `tools/ci-static-analysis-build.sh`.
+
+Before upload, Coverity removes compilation units whose primary source is
+under `lib/`, then recreates the archive. The scan covers wolfTrust runtime,
+ports, tests, and generated policy code. Dependency headers remain available
+to parse those sources. The job lists the retained units and refuses to upload
+an empty capture or one that still contains dependency source units.
+
+Coverity uploads must return HTTP 201 to pass. A refusal because an earlier
+build is still queued fails the submission step and shows the server response.
+An accepted upload is queued for server-side analysis; results appear on
+Coverity Scan after processing, with notifications sent to `COVERITY_SCAN_EMAIL`.
 
 ## At a glance
 
