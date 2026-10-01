@@ -450,16 +450,16 @@ WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
 Output on the EVK for Develop2:
 
 ```text
-ADVANCING the life cycle shadow to 0x07 (Develop2); regress or any reset undoes it
-halted in wolfBoot at 0x28004fb4; shadow LC_STATE=0x07 LC_STATE_RED=0x07
+ADVANCING the life cycle shadow to 0x07 (develop2); regress or any reset undoes it
+halted in wolfBoot at 0x28005910; shadow LC_STATE=0x07 LC_STATE_RED=0x07
 wolfTrust saw 0x00002000 (PSA_ROT_PROVISIONING)
-  [check] PASS  wolfTrust booted with the Develop2 life cycle
+  [check] PASS  wolfTrust booted with the develop2 life cycle
   [check] PASS  guests launched (verified=0x00000003 refused=0x00000000)
-  [check] PASS  the images on the part match the host build (d860e5ceca1d0693)
-rehearsal of 0x07 recorded; 'regress' completes it
-  [check] PASS  hardware reset reloaded the fused Develop life cycle
+  [check] PASS  the images on the part match the host build (8841d566395ee97b)
+rehearsal of develop2 (0x07) recorded; 'regress' completes it
+  [check] PASS  hardware reset reloaded the fused develop life cycle
   [check] PASS  wolfTrust booted ASSEMBLY_AND_TEST again
-  [check] PASS  rehearsal of 0x07 (Develop2) complete
+  [check] PASS  rehearsal of develop2 (0x07) complete
 ```
 
 How `advance` works:
@@ -475,7 +475,8 @@ How `advance` works:
    guests.
 5. Only then does it record the rehearsal. The record holds the fused state,
    the SHA-256 of those four images, whether the guest fence was armed, and
-   the time.
+   the time. `lock` accepts only a rehearsal with the fence armed, so rehearse
+   the fenced chain that `restore` flashes.
 
 Past Develop2, `advance` also requires a proven `regress`. That is a hardware
 reset through the board's reset line, which the debug port cannot block.
@@ -487,7 +488,7 @@ ship. Output on the EVK after `advance 0xCF`, the mock locked state:
 
 ```text
 $ tests/target/provisioning/provisioning_ctrl.sh status
-OTP life cycle   LC_STATE=0xcf (In Field Locked)  LC_STATE_RED=0xcf
+OTP life cycle   LC_STATE=0xcf (in-field-locked)  LC_STATE_RED=0xcf
 LOCK_CFG3        0x00000000 (LIFE_CYCLE_LOCK=0: 0 = shadow override and fuse burn both open)
 DAUTHSTATUS      0x000000ff
 XSPI SFP         MGC=0xa8000400 TG0MDAD=0xa000c000
@@ -496,9 +497,9 @@ wolfTrust saw    0x00005000 (RECOVERABLE_PSA_ROT_DEBUG)
 guest launches   verified=0x00000003 refused=0x00000000
 
 $ WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
-  [check] PASS  hardware reset reloaded the fused Develop life cycle
+  [check] PASS  hardware reset reloaded the fused develop life cycle
   [check] PASS  wolfTrust booted ASSEMBLY_AND_TEST again
-  [check] PASS  rehearsal of 0xCF (In Field Locked) complete
+  [check] PASS  rehearsal of in-field-locked (0xCF) complete
 ```
 
 Check four things:
@@ -565,7 +566,7 @@ See [how a production lock binds the software](Provisioning.md#how-a-production-
 
 | Command | Runs only when the fuses read | Burns | Also needs |
 | --- | --- | --- | --- |
-| `lock develop2` (`0x07`) | develop `0x03` | Develop2 | a fresh rehearsal of `0x07` with the current images; `WT_FIXTURE_BOUND=1` |
+| `lock develop2` (`0x07`) | develop `0x03` | Develop2 | a fresh rehearsal of `0x07` with the current images and the guest fence armed; `WT_FIXTURE_BOUND=1` |
 | `lock in-field` (`0x0F`) | develop2 `0x07` | In Field | **refused until ROM authentication** |
 | `lock in-field-locked` (`0xCF`) | in-field `0x0F` | In Field Locked (final) | **refused until ROM authentication** |
 | `lock in-field-return` (`0x1F`) | in-field `0x0F` | In Field Return (final) | **refused until ROM authentication** |
@@ -669,7 +670,7 @@ The steps below mix three kinds of output:
    and wolfTrust receiving `0x2000`:
 
    ```text
-   OTP life cycle   LC_STATE=0x07 (Develop2)  LC_STATE_RED=0x07
+   OTP life cycle   LC_STATE=0x07 (develop2)  LC_STATE_RED=0x07
    guest fence      armed FRAD2 acp=0x00000000 word3=0xa0000000
    wolfTrust saw    0x00002000 (PSA_ROT_PROVISIONING)
    guest launches   verified=0x00000003 refused=0x00000000
@@ -693,8 +694,7 @@ Refusals from the offline gate tests:
 
 ```text
 REFUSED: the life cycle fuses disagree (LC 0x00000003, RED 0x00000007).
-REFUSED: no rehearsal of 0x07 (Develop2) with these images: run 'discover', 'advance 0x07', and 'regress' first.
-REFUSED: the rehearsal of 0x07 is older than 3600s: rehearse this part again right before its burn.
+REFUSED: no rehearsal for develop2 (0x07) on this part with these images and credentials in the last 3600s: run 'advance 0x07' and 'regress' first.
 REFUSED: confirmation did not match; nothing was changed.
 ```
 

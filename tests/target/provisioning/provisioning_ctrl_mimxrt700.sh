@@ -361,6 +361,7 @@ port_record_ok() {
   local rfused
   rfused="$(field fused "$1")"
   [ -n "$rfused" ] && [ $((rfused & ~cur & 0xFF)) -eq 0 ] &&
+    [ "$(field fence "$1")" = "armed" ] &&
     [ "$(probe_uid || true)" = "$(field id "$1")" ]
 }
 port_ready() {

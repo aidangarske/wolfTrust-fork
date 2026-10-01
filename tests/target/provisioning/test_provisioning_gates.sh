@@ -246,15 +246,17 @@ fuse 0x25 0x07
 check "copies disagree"      2 "disagree" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
 fuse 0x25 0x03
 check "unrehearsed"          2 "no rehearsal for develop2" -- env "${ISP[@]}" "${RT[@]}" lock develop2
-rec 0x07 0x03 0000 open "$(now)"
+rec 0x07 0x03 0000 armed "$(now)"
 check "rehearsed other images" 2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
-rec 0x07 0x03 "$(edig)" open $(( $(now) - 7200 ))
+rec 0x07 0x03 "$(edig)" armed $(( $(now) - 7200 ))
 check "stale rehearsal"      2 "in the last 3600s" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
-rec 0x07 0x03 "$(edig)" open $(( $(now) + 600 ))
+rec 0x07 0x03 "$(edig)" armed $(( $(now) + 600 ))
 check "future-dated rehearsal" 2 "in the last 3600s" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
-rec 0x07 0x03 "$(edig)" open "$(now)" PROBEB
-check "rehearsed through another probe" 2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
 rec 0x07 0x03 "$(edig)" open "$(now)"
+check "rehearsed without the guest fence" 2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
+rec 0x07 0x03 "$(edig)" armed "$(now)" PROBEB
+check "rehearsed through another probe" 2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
+rec 0x07 0x03 "$(edig)" armed "$(now)"
 : > "$T/probe"
 check "no probe attached"    2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
 echo PROBEA > "$T/probe"
