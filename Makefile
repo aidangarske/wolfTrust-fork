@@ -21,7 +21,7 @@ include mk/common.mk
 
 .DEFAULT_GOAL := all
 
-.PHONY: all secure-image size-report test c99-check test-conformance test-target test-hardware fetch-psa-ff-tests \
+.PHONY: all secure-image size-report test test-provisioning c99-check test-conformance test-target test-hardware fetch-psa-ff-tests \
 		clean firmware-stm32h563 run-stm32h563 run-stm32h563-tui run-stm32h563-uarts \
 		test-domain-host test-domain-compilers test-domain-sanitize \
 		test-domain-valgrind test-manifest-host test-manifest-compilers \
@@ -41,6 +41,13 @@ all: $(ARCH_DEFAULT_GOALS)
 
 test:
 	@$(MAKE) --no-print-directory -C tests/host test
+	@$(MAKE) --no-print-directory test-provisioning
+
+# Production lock gates of both provisioning backends, against stub tools.
+test-provisioning:
+	@tests/target/test_provisioning_gates.sh > build/provisioning-gates.log 2>&1 \
+		|| { cat build/provisioning-gates.log; exit 1; }
+	@tail -1 build/provisioning-gates.log
 
 C99_CFLAGS := -std=c99 -pedantic-errors -Werror=vla \
 	-D_POSIX_C_SOURCE=200809L

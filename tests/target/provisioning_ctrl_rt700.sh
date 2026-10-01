@@ -22,11 +22,10 @@
 #                        In Field, 0xCF In Field Locked, 0x1F In Field Return
 #                        (GATED); with a following regress it rehearses a lock
 #   regress              hardware reset back to the fused life cycle (GATED)
-#   lock <hexstate> [fuses.yaml]
-#                        PERMANENT burn of the next life cycle state (0x07 from
-#                        Develop, 0x0F from Develop2, 0xCF or 0x1F from In
-#                        Field), optionally with a reviewed SPSDK fuse
-#                        configuration. Needs RT700_ISP and a rehearsal;
+#   lock <hexstate>      PERMANENT burn of the next life cycle state (0x07 from
+#                        Develop; 0x0F, 0xCF, 0x1F refused until ROM-authenticated
+#                        boot and a chip identity binding exist). Needs RT700_ISP
+#                        and a rehearsal;
 #                        previews without WT_LOCK_CONFIRM=1, burns only with
 #                        WT_PRODUCTION_LOCK=1 and a typed "I ACCEPT <state>"
 #   provision-da, burn   refused: fuses are burned only through 'lock'
@@ -409,7 +408,7 @@ PYEOF
     value="${2:-}"
     config="${3:-}"
     [[ "$value" =~ ^0[xX][0-9A-Fa-f]{1,2}$ ]] || \
-        refuse "lock takes the next life cycle state and an optional fuse configuration: lock <0x07|0x0F|0xCF|0x1F> [fuses.yaml]"
+        refuse "lock takes the next life cycle state: lock <0x07|0x0F|0xCF|0x1F>"
     value="$(lc_hex "$value")"
     case "$value" in
       0x07) ;;
@@ -417,7 +416,10 @@ PYEOF
         refuse "$(lc_name "$value") ($value) needs the BootROM to authenticate wolfBoot (a signed image under the fused root key hash), which this port does not build yet; see the MIMXRT700 Guide." ;;
       *) refuse "lock takes 0x07, 0x0F, 0xCF, or 0x1F (got $value)." ;;
     esac
-    [ -z "$config" ] || [ -s "$config" ] || refuse "no fuse configuration at $config."
+    # The burn runs over ISP, and no chip identity is documented that both the
+    # SWD rehearsal and ISP can read, so only the life cycle step is allowed.
+    [ -z "$config" ] || \
+        refuse "a fuse configuration (root key hash, debug root) cannot be burned yet: no chip identity binds the rehearsed part to the ISP target; see the MIMXRT700 Guide."
     [ -n "${RT700_ISP:-}" ] || \
         refuse "set RT700_ISP to the blhost ISP connection (for example '-u 0x1fc9,0x014f')."
     ensure_spsdk
@@ -453,16 +455,10 @@ PYEOF
 
     mkdir -p "$state_dir"
     script="$state_dir/rt700-lock-$value-$(date -u +%Y%m%dT%H%M%SZ).bls"
-    if [ -n "$config" ]; then
-        command -v shadowregs >/dev/null 2>&1 || PATH="$spsdk_venv/bin:$PATH"
-        shadowregs fuses-script -c "$config" -o "$script.raw" >/dev/null || \
-            fail "lock" "shadowregs fuses-script could not build the burn script"
-    else
-        printf 'efuse-program-once %s %08X --no-verify\nefuse-program-once %s %08X --no-verify\n' \
-            "$FUSE_LC_RED" "$((value))" "$FUSE_LC" "$((value))" > "$script.raw"
-    fi
-    # SPSDK 3.11 writes each command's --no-verify on its own line, which blhost
-    # batch would run as a separate command after the fuse before it burned.
+    printf 'efuse-program-once %s %08X --no-verify\nefuse-program-once %s %08X --no-verify\n' \
+        "$FUSE_LC_RED" "$((value))" "$FUSE_LC" "$((value))" > "$script.raw"
+    # The checks below also cover SPSDK fuses-script output (stray --no-verify
+    # lines, partial RKTH, lock words) for when fuse configurations return.
     rotkh="$("$spsdk_venv/bin/python" - "$script.raw" "$script" "$value" <<'PYEOF'
 import re
 import sys
@@ -550,9 +546,9 @@ PYEOF
     cat >&2 <<EOF
 REFUSED: '$cmd' programs OTP fuses, which is permanent on the MIMXRT700
 (LOCK_CFG3 is open on a development EVK, so nothing in silicon would stop it).
-A production station burns the root key hash, debug credential root, and life
-cycle with 'lock <fuses.yaml>', from a configuration already rehearsed in the
-shadow registers; see the MIMXRT700 Guide.
+'lock' burns only the life cycle, one rehearsed step at a time. Burning the
+root key hash and debug credential root waits for a chip identity that binds
+the rehearsed part to the ISP target; see the MIMXRT700 Guide.
 EOF
     exit 2
     ;;
@@ -567,5 +563,5 @@ EOF
     exit 2
     ;;
 
-  *) echo "usage: $0 status|discover|verify-wrp|restore|advance <hexstate>|regress|lock <hexstate> [fuses.yaml]" >&2; exit 2 ;;
+  *) echo "usage: $0 status|discover|verify-wrp|restore|advance <hexstate>|regress|lock <hexstate>" >&2; exit 2 ;;
 esac

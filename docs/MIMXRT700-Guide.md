@@ -554,7 +554,7 @@ through wolfBoot's signed update path. It is held in place by:
 
 See [how a production lock binds the software](Provisioning.md#how-a-production-lock-binds-the-software).
 
-> **Prerequisite not yet in the port, and enforced.** The reference chain boots
+> **Prerequisites not yet in the port, and enforced.** The reference chain boots
 > wolfBoot as a plain XIP image that the BootROM does not authenticate. Locking
 > the life cycle to In Field without ROM authentication would leave the first
 > stage replaceable. So `lock` refuses In Field, In Field Locked, and In Field
@@ -594,21 +594,10 @@ The steps below mix three kinds of output:
 - The burn has never been run on a wolfTrust board, so its output is marked
   as expected.
 
-1. **Write the fuse configuration once**, from SPSDK's template, and keep it
-   with the production records. It carries the RKTH, the debug settings, and
-   the life cycle:
-
-   ```sh
-   shadowregs get-template -f mimxrt798s -o production-fuses.yaml
-   ```
-
-   > **Warning:** every value in this file becomes permanent in every part it
-   > is burned into. Review it like a release.
-
-2. **Rehearse and validate the step on this part**, as in stages 2 and 3,
+1. **Rehearse and validate the step on this part**, as in stages 2 and 3,
    right before the burn.
 
-3. **Preview the burn.** Put the part in ISP mode. Without `WT_LOCK_CONFIRM=1`,
+2. **Preview the burn.** Put the part in ISP mode. Without `WT_LOCK_CONFIRM=1`,
    `lock` runs every check, prints the exact blhost script, and writes nothing:
 
    ```sh
@@ -626,28 +615,21 @@ The steps below mix three kinds of output:
 
    Read every line of the script: each one is a permanent fuse write.
 
-   Without a fuse configuration, `lock` burns only the two life cycle words.
-   With one (`lock 0x07 production-fuses.yaml`), `lock` builds the script with
-   `shadowregs fuses-script`, then checks the result before printing it:
-   - It rejoins the `--no-verify` flags that SPSDK 3.11 writes on their own
-     lines. Otherwise `blhost batch` would run each flag as a separate command
-     after the fuse before it had burned.
-   - It refuses any line that is not `efuse-program-once`.
-   - It refuses life cycle words that do not carry the requested state.
-   - It refuses a life cycle word locked before the final step.
-   - It refuses a configuration that programs only some of the 12 RKTH words.
-   - It refuses any life cycle word that is not exactly the requested state,
-     including upper bits.
-   - It refuses setting `LIFE_CYCLE_LOCK` (`LOCK_CFG3`) before the final step,
-     since it would stop every later life cycle step.
-   - It moves the two life cycle words after the other fuses, and the lock
-     words (`0x00`-`0x03`) after those, so nothing is locked before it is
-     written.
+   `lock` burns only the two life cycle words. Before printing them it checks
+   the script: only `efuse-program-once` lines, each life cycle word exactly
+   the requested state (upper bits included), no word locked before the final
+   step, no `LIFE_CYCLE_LOCK` before the final step, and the life cycle words
+   last. After the burn it requires the low byte of both words to be the new
+   state, with the upper bits unchanged.
 
-   After the burn, `lock` requires the low byte of both life cycle words to
-   be the new state, with the upper bits unchanged.
+   > **Not yet burnable: the root key hash and debug root.** `lock` refuses a
+   > fuse configuration file. The burn runs over the ISP USB link, and no chip
+   > identity is documented that both the SWD rehearsal and ISP can read, so
+   > nothing would stop such a file being burned into a different part than the
+   > one rehearsed. The life cycle step is bound by the probe and the
+   > rehearsal's freshness instead.
 
-4. **Burn it**, on the production station only:
+3. **Burn it**, on the production station only:
 
    > **Warning:** this step is permanent. After it, the part can never return
    > to Develop.
@@ -679,7 +661,7 @@ The steps below mix three kinds of output:
    between them leaves them disagreeing, which wolfBoot reports as UNKNOWN, so
    keep the station powered and the ISP link stable.
 
-5. **Verify.** Reset the part and run `status`. Expected: both life cycle
+4. **Verify.** Reset the part and run `status`. Expected: both life cycle
    copies at the burned value, the guest fence armed, both guests verified,
    and wolfTrust receiving `0x2000`:
 

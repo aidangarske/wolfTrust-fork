@@ -165,13 +165,23 @@ image_digest() {
     cat "$f"
   done | sha256 | cut -c1-64
 }
-# The flashed images read back over SWD match the host build.
+# The flashed images read back over SWD match the host build. The running
+# chain's protections hide guest flash from the debugger, so read under reset.
 images_on_device() {
-  local a f
+  local a f n=0 rc=0
+  local -a reads=()
   while read -r a f; do
-    "$CLI" -c port=SWD mode=HotPlug -u "$a" "$(wc -c < "$f" | tr -d ' ')" \
-      /tmp/wt-readback.bin >/dev/null 2>&1 && cmp -s /tmp/wt-readback.bin "$f" || return 1
+    reads+=(-u "$a" "$(wc -c < "$f" | tr -d ' ')" "/tmp/wt-readback.$n.bin")
+    n=$((n + 1))
   done < <(flashed_images)
+  "$CLI" -c port=SWD mode=UR "${reads[@]}" >/dev/null 2>&1 || rc=1
+  "$CLI" -c port=SWD mode=UR -rst >/dev/null 2>&1 || true
+  n=0
+  while read -r a f; do
+    [ "$rc" = 0 ] && cmp -s "/tmp/wt-readback.$n.bin" "$f" || rc=1
+    n=$((n + 1))
+  done < <(flashed_images)
+  return "$rc"
 }
 # Every DA input a regression used: key, certificate chain, OBK, and password.
 da_fingerprint() {
@@ -374,7 +384,6 @@ case "$cmd" in
       refuse "advance to $(ps_name "$state") runs only from Provisioning (0x17); state=${cur:-unreadable}."
     fi
     # Provisioning closes Secure debug, so the images are read back in Open.
-    readback=0
     if [ "$state" = "$PS_PROVISIONING" ]; then
       rm -f "$state_dir/h5-readback"
       ob="$(ob_snapshot || true)"
@@ -386,10 +395,13 @@ case "$cmd" in
         echo "could not read back the images, device UID, and option bytes; a closed-state rehearsal will refuse"
       fi
     else
+      # Closed states are reversible only through a provisioned DA chain.
+      disc="$(da_discovery)"
+      grep -q "0xeaeaeaea" <<<"$disc" && grep -q "Full Regression" <<<"$disc" || \
+        refuse "Debug Authentication is not provisioned (no intact OBK offering Full Regression): without it $(ps_name "$state") cannot be regressed. Run 'provision-da' and 'discover'."
       rb="$(cat "$state_dir/h5-readback" 2>/dev/null || true)"
       [ "$(field image "$rb")" = "$(image_digest)" ] && fresh "$(field time "$rb")" || \
         refuse "no recent read-back of these images: 'restore', then 'advance 0x17' from Open reads them back."
-      readback=1
     fi
     echo "ADVANCING product state ${cur:-?} -> $state (regress is the only way back)"
     uart_capture 12 /tmp/wt-advance.log
@@ -398,12 +410,13 @@ case "$cmd" in
     mkdir -p "$state_dir"
     echo "$state" > "$state_dir/h5-advanced"
     sleep 10
-    if booted /tmp/wt-advance.log; then
-      pass "wolfTrust chain boots in $(ps_name "$state")"
-      [ "$readback" != "1" ] ||
-        put "booted-$state" "image=$(field image "$rb") uid=$(field uid "$rb") ob=$(field ob "$rb") time=$(date +%s)"
-    elif [ "$state" = "$PS_PROVISIONING" ]; then
+    # The read-back above resets the part, so only a closed state's capture,
+    # with nothing resetting it before the write, proves the boot.
+    if [ "$state" = "$PS_PROVISIONING" ]; then
       echo "Provisioning does not run the wolfTrust chain; a closed-state rehearsal proves the boot"
+    elif booted /tmp/wt-advance.log; then
+      pass "wolfTrust chain boots in $(ps_name "$state")"
+      put "booted-$state" "image=$(field image "$rb") uid=$(field uid "$rb") ob=$(field ob "$rb") time=$(date +%s)"
     else
       echo "no wolfTrust boot markers on $SERIAL after the write; the rehearsal needs them"
     fi
@@ -441,14 +454,18 @@ case "$cmd" in
       uid="$(device_uid)" || refuse "cannot read the device UID over SWD."
       [ "$uid" = "$R_UID" ] || \
         refuse "this part (UID $uid) is not the one rehearsed (UID $R_UID): rehearse this part."
+      images_on_device || \
+        refuse "the images on this part differ from the rehearsed build: 'restore' it first."
     else
       sess="$(cat "$state_dir/h5-session" 2>/dev/null || true)"
       uid="$(field uid "$sess")"
-      [ -n "$uid" ] && [ "$uid" = "$R_UID" ] && fresh "$(field time "$sess")" || \
+      [ -n "$uid" ] && [ "$uid" = "$R_UID" ] && fresh "$(field time "$sess")" &&
+        [ "$(field image "$sess")" = "$(image_digest)" ] || \
         refuse "no recent 'lock 0x17' of the rehearsed part (UID $R_UID) on this station."
     fi
     digest="$(image_digest)"
     checked="order, rehearsal of $(ps_name "$rehearse") with images ${digest:0:16} on device $uid, same option bytes"
+    [ "$target" != "0x17" ] || checked="$checked, images read back"
     if [ "$target" != "0x17" ]; then
       wrp="$("$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
         | grep -iE "WRPSGn1" | grep -oE "0x[0-9A-Fa-f]+" | head -1 || true)"
@@ -489,7 +506,7 @@ case "$cmd" in
     "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$target" 2>&1 | strip | tail -4 || true
     sleep 10
     booted_ok=0
-    if booted /tmp/wt-lock.log; then
+    if [ "$target" != "0x17" ] && booted /tmp/wt-lock.log; then
       booted_ok=1
       pass "wolfTrust chain boots in $(ps_name "$target")"
     fi
@@ -506,7 +523,7 @@ case "$cmd" in
     fi
     pass "product state is $(ps_name "$target") ($target)"
     if [ "$target" = "0x17" ]; then
-      put session "uid=$uid time=$(date +%s)"
+      put session "uid=$uid image=$digest time=$(date +%s)"
     else
       rm -f "$state_dir"/h5-booted-* "$state_dir"/h5-regressed-* \
         "$state_dir/h5-session" "$state_dir/h5-readback"

@@ -263,7 +263,8 @@ now: ST_LIFECYCLE_CLOSED
 
 > **Warning:** only close the part when discovery shows integrity
 > `0xeaeaeaea` and Full Regression. Without them, Closed cannot be regressed
-> and the part is closed for good.
+> and the part is closed for good. `advance` checks this itself and refuses a
+> closed state without them.
 
 `advance 0x17` reads the four images back over SWD while the part is still
 Open: Provisioning closes Secure debug, so this is the last point where the
@@ -306,7 +307,8 @@ PASS: wolfTrust restored and booting
 
 The rehearsal binds to one physical part:
 - `advance 0x17` runs in Open and reads several things back: the four images
-  over SWD, the 96-bit device UID (`UID_BASE`, `0x08FFF800`, readable only in
+  over SWD with the core held in reset (the running chain hides guest flash
+  from the debugger), the 96-bit device UID (`UID_BASE`, `0x08FFF800`, readable only in
   Open), and the values of the perimeter and guest WRP option bytes. A
   closing `advance` requires that read-back for the current images, from the
   last hour.
@@ -395,9 +397,11 @@ checks more on this port:
     `WT_PRODUCTION_LOCK=1`.
 
 It also binds the step to the rehearsed part:
-- **`lock 0x17`** runs in Open, so it reads the UID and the option bytes live
-  and requires both to match the rehearsal. When the write succeeds, it opens
-  a session for that UID.
+- **`lock 0x17`** runs in Open, so it reads the UID, the option bytes, and the
+  four images live, and requires all of them to match the rehearsal. The
+  rehearsal's regression erased the part, so this read-back is what proves the
+  restored images are the rehearsed ones. When the write succeeds, it opens a
+  session for that UID and those images.
 - **Provisioning masks the UID** (it reads as zeros), so `lock 0xC6`,
   `lock 0x72`, and `lock 0x5C` instead require that session for the same UID,
   from the last hour (`WT_REHEARSAL_MAX_AGE`, default `3600` seconds). They

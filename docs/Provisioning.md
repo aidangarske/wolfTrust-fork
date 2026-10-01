@@ -15,10 +15,13 @@ with real output:
 - [STM32H5 Guide: Provisioning and product state](STM32H5-Guide.md#provisioning-and-product-state)
 - [MIMXRT700 Guide: Provisioning and life cycle](MIMXRT700-Guide.md#provisioning-and-life-cycle)
 
-> **Production locks are permanent.** Everything on this page up to `lock` is
-> reversible and safe on a development board. `lock` is not: run it only on a
-> production station, on a part you intend to ship. Never run it on a
-> development board.
+> **Production locks are permanent.** `lock` is never reversible: run it only
+> on a production station, on a part you intend to ship, and never on a
+> development board. The steps before it are reversible with one condition.
+> On the MIMXRT700, `advance` changes only shadow registers, which any reset
+> undoes. On the STM32H5, a closed-state `advance` is undone only by a Debug
+> Authentication regression, so `advance` refuses a closed state unless DA
+> discovery shows an intact OBK offering Full Regression.
 
 ## The flow: rehearse, validate, then lock
 
@@ -145,6 +148,15 @@ These follow the pattern of the vendors' own provisioning tools:
 
 `lock` adds the one-step-at-a-time check, the rehearsal requirement, and a
 typed acceptance instead of a single keypress.
+
+## Offline gate tests
+
+`make test` also runs `make test-provisioning`: the gates of both backends
+exercised against stub `STM32_Programmer_CLI`, `blhost`, and `pyocd`. It
+covers refusal paths, device and image binding, DA credential checks,
+rehearsal records and their expiry, read-back after a write, the burn script
+rules, and the typed acceptance. Nothing touches a board. The typed-acceptance
+cases need `expect`, and skip without it.
 
 ## What a production lock does to the firmware
 
