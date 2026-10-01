@@ -24,7 +24,7 @@
 # shellcheck disable=SC2015  # result lines are "cond && pass || fail" on purpose
 set -u
 SRC="$(cd "$(dirname "$0")/../../.." && pwd)"
-T="$(mktemp -d)"
+T="$(mktemp -d)" && [ -n "$T" ] && [ -d "$T" ] || { echo "cannot create a temporary directory" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 R="$T/repo"
 mkdir -p "$R/build" "$R/wolfBoot" "$R/tests/firmware/zephyr-stm32h5/build/guest0_psa/zephyr" \
@@ -262,6 +262,9 @@ rec() { mkdir -p "$RS"; echo "state=$1 run=r id=${6:-PROBEA} image=$3 fused=$2 f
 now() { date +%s; }
 rm -f "$T"/fuse.*; fuse 0x8F 0x03; fuse 0x25 0x03
 check "help lists the port's states" 0 "in-field-locked" -- "${RT[@]}" help
+for m in 0 0x0 0x4 0x7 junk; do
+  check "RT700_GUEST_MASK=$m refused" 2 "RT700_GUEST_MASK must be" -- env RT700_GUEST_MASK="$m" WT_LOCK_CONFIRM=1 "${RT[@]}" advance 0x07
+done
 # sfp <MGC> <FRAD2 last> <FRAD2 word3> [extra descriptor line]
 sfp() {
   printf '50184900:  a000c000\n50184920:  %s\n' "$1"

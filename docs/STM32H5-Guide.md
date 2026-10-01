@@ -402,7 +402,9 @@ On top of [the shared gates](Provisioning.md#the-lock-gates), this port checks:
   must be the same four the rehearsal regressed with. The script carries the
   SHA-256 of every file in ST's NUCLEO-H563ZI sample DA material, so a renamed
   copy is caught. DA discovery must show an intact OBK offering Full
-  Regression.
+  Regression. The sample check only catches ST's published files: it cannot
+  prove a credential is private. Generate the production DA keys yourself and
+  keep the private key off the station once the parts are provisioned.
 - **The DA this script installed.** A regression wipes the DA, so step 3 below
   is required: `lock` needs a record that `provision-da` installed these four
   files after the rehearsal. Discovery cannot authenticate the OBK on the

@@ -34,6 +34,10 @@ target_dir="$here/.."
 pyocd_target="${RT700_TARGET:-mimxrt798sgfob}"
 spsdk_venv="${RT700_SPSDK_VENV:-$HOME/spsdk-venv}"
 guest_mask="${RT700_GUEST_MASK:-0x3}"
+case "$guest_mask" in
+  0x1|0x2|0x3|1|2|3) ;;
+  *) refuse "RT700_GUEST_MASK must be 0x1, 0x2, or 0x3 (both guests), not '$guest_mask'." ;;
+esac
 elf="$repo/build/wolftrust.elf"
 
 # OTP shadow words (fuse index * 4 from 0x50018000, both silicon revisions).
@@ -276,13 +280,16 @@ port_advance_check() {
 # Halt inside wolfBoot, after the ROM loaded the shadows and before wolfBoot
 # reads them, write both life cycle copies, and resume.
 port_advance() {
-  local entry
+  local entry vm rf
   ensure_spsdk
+  vm="$(elf_sym g_wt_launch_verified_mask)"; rf="$(elf_sym g_wt_launch_refused_mask)"
+  [ -n "$vm" ] && [ -n "$rf" ] || fail "advance" "launch masks not found in $elf"
   entry="$(read_words 0x28004004)"
   [ -n "$entry" ] && [ "$entry" != "00000000" ] && [ "$entry" != "ffffffff" ] ||
     fail "advance" "no wolfBoot reset vector at 0x28004004 (flash the chain first)"
   echo "ADVANCING the life cycle shadow to $1 ($(state_name "$1")); regress or any reset undoes it"
-  "$spsdk_venv/bin/python" - "0x$entry" "$1" "$LC_STATE" "$LC_STATE_RED" "$pyocd_target" <<'PYEOF'
+  "$spsdk_venv/bin/python" - "0x$entry" "$1" "$LC_STATE" "$LC_STATE_RED" "$pyocd_target" \
+    "$vm" "$rf" 0x30180000 <<'PYEOF'
 import sys
 import time
 from pyocd.core.helpers import ConnectHelper
@@ -312,6 +319,12 @@ with ConnectHelper.session_with_chosen_probe(
     t.write32(lc, value)
     t.write32(lc_red, value)
     got = (t.read32(lc) & 0xFF, t.read32(lc_red) & 0xFF)
+    # SRAM survives the reset: clear the launch masks and the handoff magic so
+    # only this boot's wolfBoot and wolfTrust can set them.
+    for a in sys.argv[6:9]:
+        t.write32(int(a, 0), 0)
+        if t.read32(int(a, 0)) != 0:
+            sys.exit("could not clear the boot evidence at %s" % a)
     t.resume()
 print("halted in wolfBoot at 0x%08x; shadow LC_STATE=0x%02x LC_STATE_RED=0x%02x"
       % (pc, got[0], got[1]))
@@ -323,7 +336,8 @@ PYEOF
 # verified, the fence, the images read back, and the one attached probe.
 port_booted() {
   local hl want vm rf fence digest probe
-  hl="$(handoff_lifecycle)" || { echo "no readable boot handoff after the advance"; return 1; }
+  # advance cleared the handoff and the launch masks, so both are this boot's.
+  hl="$(handoff_lifecycle)" || { echo "no boot handoff written after the advance"; return 1; }
   echo "wolfTrust saw 0x$hl ($(psa_name "$hl"))"
   case " $(expect_psa "$1") " in
     *" $hl "*) pass "wolfTrust booted with the $(state_name "$1") life cycle" ;;
