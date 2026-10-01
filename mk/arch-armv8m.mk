@@ -8,6 +8,7 @@ ARCH_CFLAGS := -mcmse -DWT_TARGET_BUILD=1
 # build must carry exactly its one deliberate FP instruction and no other.
 WT_FP_NEG_PROBE ?= 0
 WT_SEAL_NEG_PROBE ?= 0
+WT_MSP_OVF_PROBE ?= 0
 ARCH_FP_SCAN_FLAGS :=
 ifeq ($(WT_FP_NEG_PROBE),1)
 ARCH_CFLAGS += -DWT_FP_NEG_PROBE=1
@@ -15,6 +16,9 @@ ARCH_FP_SCAN_FLAGS := --allow-probe
 endif
 ifneq ($(filter 1 2 3 4,$(WT_SEAL_NEG_PROBE)),)
 ARCH_CFLAGS += -DWT_SEAL_NEG_PROBE=$(WT_SEAL_NEG_PROBE)
+endif
+ifeq ($(WT_MSP_OVF_PROBE),1)
+ARCH_CFLAGS += -DWT_MSP_OVF_PROBE=1
 endif
 WT_WOLFCRYPT_SP_ASM ?= 1
 WT_WOLFCRYPT_ARMASM ?= 1

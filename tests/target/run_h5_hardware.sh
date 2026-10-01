@@ -42,7 +42,7 @@ set -o pipefail
 mode="${1:-all}"
 scenario="${2:-positive}"
 case "$mode" in build|flash|all) ;; *) echo "usage: $0 build|flash|all [scenario]" >&2; exit 2 ;; esac
-case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg" >&2; exit 2 ;; esac
+case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
@@ -171,6 +171,7 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "fpneg" ] && secure_flags="WT_SP_FAULT_PROBE=1 WT_FP_NEG_PROBE=1"
   [ "$scenario" = "sealneg" ] && secure_flags="WT_SEAL_NEG_PROBE=1"
   [ "$scenario" = "sealpivotneg" ] && secure_flags="WT_SEAL_NEG_PROBE=4"
+  [ "$scenario" = "mspovfneg" ] && secure_flags="WT_MSP_OVF_PROBE=1"
   [ "$scenario" = "vnet" ] && secure_flags="CONFIG_VNET=y"
   [ "$scenario" = "vnetneg" ] && secure_flags="CONFIG_VNET=y WT_VNET_NEG_PROBE=1"
   # WT_CONF_DIAG_TRAP=0: the emulator-only hang-probe fault would become a
@@ -880,6 +881,19 @@ if [ "$mode" != "build" ]; then
         check_fail "recovery" "lifecycle 0x${lc:-none} after the FP fault, expected 0xFF"
       fi
       expect "guest1 alive through the FP fault" "freertos_guest1: heartbeat"
+      ;;
+    mspovfneg)
+      # The reset path pushes on the main stack until MSPLIM_S raises STKOF;
+      # the stackless halt latches the CFSR (bit 20) before the production
+      # panic, and no partition or guest ever runs.
+      cfsr=$(read_secure_u32 g_wt_spm_fault_cfsr)
+      if [ -n "$cfsr" ] && [ $(( (0x$cfsr >> 20) & 0x1 )) -eq 1 ]; then
+        check_pass "main-stack overflow raised STKOF against MSPLIM_S (CFSR=0x$cfsr)"
+      else
+        check_fail "STKOF" "CFSR 0x${cfsr:-none} lacks STKOF"
+      fi
+      refute_re "no guest ran after the halt" \
+        '(guest0_psa alive|freertos_guest1: heartbeat)'
       ;;
     sealneg|sealpivotneg)
       # Software check only: the partition overwrites its own stack-top seal

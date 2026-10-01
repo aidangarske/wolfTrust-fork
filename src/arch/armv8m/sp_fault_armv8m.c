@@ -256,7 +256,19 @@ __attribute__((naked)) void MemManage_Handler(void)
     __asm volatile("b wt_armv8m_tasklet_fault_entry \n");
 }
 
+/* STKOF on the main stack is the SPM overflowing its own stack: halt before
+ * anything is pushed, since MSP is already at MSPLIM_S. */
 __attribute__((naked)) void UsageFault_Handler(void)
 {
-    __asm volatile("b wt_armv8m_tasklet_fault_entry \n");
+    __asm volatile(
+        "ldr   r0, =0xE000ED28                 \n"
+        "ldr   r1, [r0]                        \n"
+        "tst   r1, #0x00100000                 \n"
+        "beq   1f                              \n"
+        "tst   lr, #4                          \n"
+        "bne   1f                              \n"
+        "b     wt_armv8m_spm_fault_halt        \n"
+        "1:                                    \n"
+        "b     wt_armv8m_tasklet_fault_entry   \n"
+    );
 }

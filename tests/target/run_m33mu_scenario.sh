@@ -296,6 +296,12 @@ elif [ "$scenario" = "sealbootneg" ]; then
   # The reset path refuses the damaged main-stack seal before any partition.
   expect_bkpt=0x7e
   timeout_s=40
+elif [ "$scenario" = "mspovfneg" ]; then
+  # The reset path overflows the main stack on purpose; MSPLIM_S raises STKOF
+  # and the SPM halts on the production panic. Do not quit on the fault.
+  quit_flag=""
+  expect_bkpt=0x7e
+  timeout_s=40
 elif [ "$scenario" = "spfaultneg" ] || [ "$scenario" = "panicneg" ] ||
      [ "$scenario" = "vnetneg" ] || [ "$scenario" = "sealneg" ] ||
      [ "$scenario" = "sealpivotneg" ]; then
@@ -1003,6 +1009,21 @@ case "$scenario" in
     expect "unrelated guest kept running" "freertos_guest1: alive"
     expect "run reached the clean scenario end" "[EXPECT BKPT] Success"
     echo "PASS: target/sealpivotneg"
+    ;;
+  mspovfneg)
+    # The SPM pushes on its own stack until MSPLIM_S raises STKOF (CFSR bit
+    # 20, no partition frame to blame); the stackless halt must land on the
+    # production panic before any partition or guest runs.
+    if grep -Eq '\[USGFLT\].*CFSR=0x00[1-9a-f][0-9a-f]0000' "$log"; then
+      check_pass "main-stack overflow raised STKOF against MSPLIM_S"
+    else
+      check_fail "STKOF" "expected a STKOF UsageFault (CFSR bit 20), none seen"
+    fi
+    expect "SPM overflow halted the platform fail-closed" "[BKPT] imm=0x7e"
+    expect "the emulator stopped on that halt" "[EXPECT BKPT] Success"
+    refute_re "no partition or guest ran after the halt" \
+      '(guest0_psa alive|freertos_guest1:|vnet-guest|\[BKPT\] imm=0x7f)'
+    echo "PASS: target/mspovfneg"
     ;;
   sealhaltneg)
     # The dedicated BKPT 0x6e separates the seal halt from an unrelated boot

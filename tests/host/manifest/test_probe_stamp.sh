@@ -34,10 +34,11 @@ mkdir -p "$build"
 gen
 cp "$stamp" "$build/default.stamp"
 if grep -q '^WT_FP_NEG_PROBE=0$' "$stamp" &&
-   grep -q '^WT_SEAL_NEG_PROBE=0$' "$stamp"; then st=0; else st=1; fi
-check $st "default stamp records both probes off"
+   grep -q '^WT_SEAL_NEG_PROBE=0$' "$stamp" &&
+   grep -q '^WT_MSP_OVF_PROBE=0$' "$stamp"; then st=0; else st=1; fi
+check $st "default stamp records every probe off"
 
-for probe in WT_FP_NEG_PROBE WT_SEAL_NEG_PROBE; do
+for probe in WT_FP_NEG_PROBE WT_SEAL_NEG_PROBE WT_MSP_OVF_PROBE; do
     gen "$probe=1"
     if grep -q "^$probe=1\$" "$stamp" &&
        ! cmp -s "$stamp" "$build/default.stamp"; then st=0; else st=1; fi

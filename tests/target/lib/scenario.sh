@@ -48,6 +48,7 @@ scenario_secure_flags() {
         sealhaltneg)      echo "WT_SEAL_NEG_PROBE=2" ;;
         sealbootneg)      echo "WT_SEAL_NEG_PROBE=3" ;;
         sealpivotneg)     echo "WT_SEAL_NEG_PROBE=4" ;;
+        mspovfneg)        echo "WT_MSP_OVF_PROBE=1" ;;
         *)                echo "" ;;
     esac
 }
@@ -57,7 +58,7 @@ scenario_secure_flags() {
 scenario_end() {
     case "$1" in
         rollbackneg|spbudgetneg) echo "bkpt:0x7d" ;;
-        manifestneg|manifestneg2|sealbootneg) echo "bkpt:0x7e" ;;
+        manifestneg|manifestneg2|sealbootneg|mspovfneg) echo "bkpt:0x7e" ;;
         sealhaltneg)             echo "bkpt:0x6e" ;;
         remeasureneg)            echo "bkpt:0x6c" ;;
         *)                       echo "idle" ;;
@@ -100,6 +101,14 @@ scenario_assert_verdict() {
                 "[BKPT] imm=0x7d"
             refute_re "the mandatory service never completed a guest lifecycle" \
                 "$GUEST_DONE_RE"
+            ;;
+        mspovfneg)
+            expect_re "main-stack overflow raised STKOF against MSPLIM_S" \
+                '\[USGFLT\].*CFSR=0x00[1-9a-f][0-9a-f]0000'
+            expect "SPM overflow halted the platform fail-closed" \
+                "[BKPT] imm=0x7e"
+            refute_re "no guest scheduled after the refused boot" \
+                "$GUEST_STARTED_RE"
             ;;
         *)
             fail "scenario_assert_verdict: no verdict table for '$1'"

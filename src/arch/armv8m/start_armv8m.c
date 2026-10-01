@@ -138,5 +138,9 @@ static void wt_reset_main(void)
         wt_platform_panic();
     }
 
+#if defined(WT_MSP_OVF_PROBE) && (WT_MSP_OVF_PROBE == 1)
+    /* mspovfneg: push on the main stack until MSPLIM_S raises STKOF. */
+    __asm__ volatile ("1: push {r0-r7}\n b 1b");
+#endif
     wt_boot_run();
 }
