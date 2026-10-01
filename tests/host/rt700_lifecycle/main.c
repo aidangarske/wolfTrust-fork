@@ -123,6 +123,12 @@ static void test_debug_refinement(void)
               IMX_RT7XX_LC_IN_FIELD, 0x20u), 0x0000u);
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
               IMX_RT7XX_LC_IN_FIELD, 0x03u), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, 0xA3u), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, 0xF8u), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD_LOCKED,
+              IMX_RT7XX_LC_IN_FIELD_LOCKED, 0x3Bu), 0x0000u);
 
     /* Debug state never refines an open, provisioning, or returned part. */
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_DEVELOP,
