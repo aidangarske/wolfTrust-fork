@@ -1,8 +1,14 @@
 # wolfTrust CI
 
-Two lanes, modeled on wolfProvider's CI: a fast per-PR host lane, and the
-M33MU emulator matrix, tiered: a per-port smoke set on every pull request,
-the full matrix on labels, main pushes, and nightly.
+CI has a fast per-PR host lane, the tiered M33MU emulator matrix, and static
+analysis. M33MU runs a per-port smoke set on every pull request and the full
+matrix on labels, main pushes, and nightly.
+
+`codeql.yml` runs C security queries on pull requests, pushes to `main` and
+release branches, and weekly. `coverity.yml` scans on pushes to `main`, daily,
+or on manual dispatch from `wolfSSL/wolfTrust` only. Both trace host suite
+builds and secure-image builds for STM32H563 and MIMXRT700 with both crypto
+engines via `tools/ci-static-analysis-build.sh`.
 
 ## At a glance
 

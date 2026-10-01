@@ -1,0 +1,46 @@
+name: Coverity Scan
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  coverity:
+    name: Coverity Scan
+    if: github.repository == 'wolfSSL/wolfTrust'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize dependencies
+        run: |
+          git config --global url."https://github.com/".insteadOf git@github.com:
+          git submodule update --init --recursive --depth 1 --jobs 4
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Check Coverity configuration
+        env:
+          COVERITY_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
+          COVERITY_EMAIL: ${{ secrets.COVERITY_SCAN_EMAIL }}
+        run: |
+          if [ -z "$COVERITY_TOKEN" ] || [ -z "$COVERITY_EMAIL" ]; then
+            echo 'Register wolfTrust on Coverity Scan and configure COVERITY_SCAN_TOKEN and COVERITY_SCAN_EMAIL.' >&2
+            exit 1
+          fi
+      - name: Run Coverity Scan
+        uses: vapier/coverity-scan-action@1b6fd4eaba6651aa354c9ea7f48caa1710b4e12e # v1
+        with:
+          project: wolfTrust
+          token: ${{ secrets.COVERITY_SCAN_TOKEN }}
+          email: ${{ secrets.COVERITY_SCAN_EMAIL }}
+          command: sh tools/ci-static-analysis-build.sh
