@@ -104,6 +104,16 @@ static void test_redundancy(void)
               0x0000u);
     EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x00030007u, 0x00030007u),
               0x0000u);
+
+    /* Bits 8-15 and 24-31 are reserved on every revision. */
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x0000010Fu, 0x0000000Fu),
+              0x0000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x0000000Fu, 0x0000800Fu),
+              0x0000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x0100000Fu, 0x0100000Fu),
+              0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(0x800F000Fu, 0x000F000Fu,
+              DAUTH_CLOSED), 0x0000u);
 }
 
 static void test_debug_refinement(void)

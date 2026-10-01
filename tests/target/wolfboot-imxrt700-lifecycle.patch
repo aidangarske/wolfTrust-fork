@@ -41,7 +41,7 @@ new file mode 100644
 index 00000000..c6a99736
 --- /dev/null
 +++ b/hal/imx_rt7xx_lifecycle.h
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,144 @@
 +/* imx_rt7xx_lifecycle.h
 + *
 + * Copyright (C) 2026 wolfSSL Inc.
@@ -75,6 +75,8 @@ index 00000000..c6a99736
 +#define IMX_RT7XX_OTP_LC_STATE_MASK        0xFFu
 +/* A0/A1 only: a bit-protection copy of each byte in bits 16-23; B0 reads 0. */
 +#define IMX_RT7XX_OTP_BP_LC_STATE_SHIFT    16u
++/* No revision defines anything else in these words. */
++#define IMX_RT7XX_OTP_LC_RESERVED_MASK     0xFF00FF00u
 +
 +#define IMX_RT7XX_LC_DEVELOP               0x03u
 +#define IMX_RT7XX_LC_DEVELOP2              0x07u
@@ -102,7 +104,9 @@ index 00000000..c6a99736
 +    uint32_t bpRed = (lcStateRed >> IMX_RT7XX_OTP_BP_LC_STATE_SHIFT) &
 +        IMX_RT7XX_OTP_LC_STATE_MASK;
 +
-+    if (lc != lcRed || (bp == 0u) != (bpRed == 0u) ||
++    if ((lcState & IMX_RT7XX_OTP_LC_RESERVED_MASK) != 0u ||
++            (lcStateRed & IMX_RT7XX_OTP_LC_RESERVED_MASK) != 0u ||
++            lc != lcRed || (bp == 0u) != (bpRed == 0u) ||
 +            (bp != 0u && (bp != lc || bpRed != lcRed))) {
 +        return 0x0000u; /* PSA_LIFECYCLE_UNKNOWN */
 +    }
