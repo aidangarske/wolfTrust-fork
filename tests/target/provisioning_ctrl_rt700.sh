@@ -486,9 +486,9 @@ print(len({int(c.split()[1], 0) for c in cmds if 0x58 <= int(c.split()[1], 0) <=
 PYEOF
 )" || fail "lock" "the burn script is not safe to run as is"
 
+    [ "$rotkh" -eq 0 ] || [ "$rotkh" -eq "$ROTKH_WORDS" ] || \
+        refuse "the fuse configuration programs $rotkh of the $ROTKH_WORDS root key hash words."
     if [ "$value" = "0x0F" ] || [ "$value" = "0xCF" ]; then
-        [ "$rotkh" -eq 0 ] || [ "$rotkh" -eq "$ROTKH_WORDS" ] || \
-            refuse "the fuse configuration programs $rotkh of the $ROTKH_WORDS root key hash words."
         if [ "$rotkh" -eq 0 ]; then
             n=0
             while [ "$n" -lt "$ROTKH_WORDS" ]; do

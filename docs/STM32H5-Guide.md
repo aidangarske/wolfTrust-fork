@@ -382,8 +382,11 @@ checks more on this port:
 - For TrustZone Closed and Closed:
   - a live DA discovery showing an intact OBK that offers Full Regression;
   - a production DA credential: `WT_DA_OBK`, `WT_DA_KEY`, and `WT_DA_CERT`
-    set explicitly, none matching ST's sample. `provision-da` refuses the
-    sample too when `WT_PRODUCTION_LOCK=1`.
+    set explicitly, and none of the four DA inputs matching ST's sample. The
+    script carries the SHA-256 of every file in ST's NUCLEO-H563ZI sample DA
+    material, so a renamed copy is caught even where the sample tree is not
+    installed. `provision-da` refuses the sample too when
+    `WT_PRODUCTION_LOCK=1`.
 
 After the write, it confirms the new state through DA discovery. For
 TrustZone Closed, Closed, and Locked it also requires the wolfTrust boot on

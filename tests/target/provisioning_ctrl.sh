@@ -54,6 +54,24 @@ state_dir="${WT_PROVISION_STATE:-$HOME/.cache/wolftrust}"
 # DA_ConfigWithPassword.obk. Override once a wolfTrust-owned certificate chain
 # replaces ST's sample.
 DA_SAMPLE_DIR="$HOME/st-rot-h5/Projects/NUCLEO-H563ZI/ROT_Provisioning/DA"
+# SHA-256 of every file in ST's public NUCLEO-H563ZI sample DA material
+# (Binary, Keys, Certificates), so a renamed copy is caught without the tree.
+DA_SAMPLE_SHA256="
+2cafcf533300aebe1ebaaa2b6bd6e99c3502ef88acd668b2d41f910515527862
+f4d40b1b669a635e15719eaf0f6fd9f7b5494e3616a6337d2c350eca7f2d4547
+774e73f4c0ec7f9617da41405b0eb02d560ea498af8717de91b411203d1af499
+32227fc98010224ab39dd8fb5bb3b917820047fb52a1be91551e9c7e6e424590
+ef86c2ea01df5fdf526fb7a68fb4876436131f575093b3bc90f7428e677e72b2
+b00d6ad78f9d8a5b1a9299bc618fd651b7637ed0873fb9104a674edd5a19569b
+d21811a12f5533f474901f2bec27ae4c85c76a4968394e221edc55f4c291ac0a
+1c343faca2e1c81c913afe520aa0de26b8b01a71c0ab2d7796a356cd4d127a59
+67ba2294171501a8df9864da5d18ecee386b69f1f197138cb3452ed4aed8d854
+d4ac966902c0129bd311a23794d5430d4e4ecb75071195135adfd64373c56d19
+10ef8afae7bad8608cb01d803347dfc396210c65eaa2f808ce1b52b757a3ea3d
+9c6c7589abc052671f107a5b3cc7e9437865b342ed5909d8fef73c3f5771b560
+d8617a54b88c6061f310d75b66d6319e9b87212a8f53401f039067f9aa520894
+9a77fd6ab8533715976bc83dc72182c3c1cb568f30fc3630e911eb1c64a33e59
+"
 DA_DIR="${WT_DA_DIR:-$DA_SAMPLE_DIR}"
 DA_OBK="${WT_DA_OBK:-$DA_DIR/Binary/DA_Config.obk}"
 DA_PWD="${WT_DA_PWD:-$DA_DIR/Binary/password.bin}"
@@ -160,17 +178,25 @@ da_fingerprint() {
   for f in "$DA_KEY" "$DA_CERT" "$DA_OBK" "$DA_PWD"; do [ -s "$f" ] || return 1; done
   for f in "$DA_KEY" "$DA_CERT" "$DA_OBK" "$DA_PWD"; do sha256 < "$f"; done | sha256 | cut -c1-64
 }
+# da_is_sample <file>: the file is one of ST's sample DA files, by content.
+da_is_sample() {
+  local h s
+  h="$(sha256 < "$1" | cut -c1-64)"
+  case "$DA_SAMPLE_SHA256" in *"$h"*) return 0 ;; esac
+  if [ -d "$DA_SAMPLE_DIR" ]; then
+    while IFS= read -r s; do
+      [ "$(sha256 < "$s" | cut -c1-64)" != "$h" ] || return 0
+    done < <(find "$DA_SAMPLE_DIR" -type f)
+  fi
+  return 1
+}
 # A production part must not carry ST's public sample DA credential.
 da_production_ready() {
-  local pair f s
+  local f
   [ -n "${WT_DA_OBK:-}" ] && [ -n "${WT_DA_KEY:-}" ] && [ -n "${WT_DA_CERT:-}" ] || return 1
-  for pair in "$DA_OBK|Binary/DA_Config.obk" "$DA_KEY|Keys/key_3_leaf.pem" \
-              "$DA_CERT|Certificates/cert_leaf_chain.b64" "$DA_PWD|Binary/password.bin"; do
-    f="${pair%%|*}"; s="$DA_SAMPLE_DIR/${pair#*|}"
+  for f in "$DA_OBK" "$DA_KEY" "$DA_CERT" "$DA_PWD"; do
     [ -s "$f" ] || return 1
-    if [ -s "$s" ] && [ "$(sha256 < "$f")" = "$(sha256 < "$s")" ]; then
-      return 1
-    fi
+    ! da_is_sample "$f" || return 1
   done
 }
 record() {
