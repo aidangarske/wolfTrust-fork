@@ -25,11 +25,11 @@
 #   discover               prove the DA credential authenticates (non-destructive)
 #   advance <hexstate>     set PRODUCT_STATE (GATED; Locked refused); rehearses it
 #   regress                DA-authenticate + full regression back to Open (GATED)
-#   lock <hexstate>        production step: 0x17 from Open; 0xC6, 0x72, or 0x5C
-#                          (PERMANENT) from Provisioning. Needs a rehearsal of that
-#                          state with these images; previews without
-#                          WT_LOCK_CONFIRM=1, writes only with WT_PRODUCTION_LOCK=1
-#                          and a typed "I ACCEPT <state>"
+#   lock <hexstate>        production step from Open: 0x17, or 0xC6/0x72/0x5C
+#                          (0x5C PERMANENT) through Provisioning and DA in one run.
+#                          Needs a rehearsal of that state on this part; previews
+#                          without WT_LOCK_CONFIRM=1, writes only with
+#                          WT_PRODUCTION_LOCK=1 and a typed "I ACCEPT <state>"
 #
 # TARGET=mimxrt700 runs the MIMXRT700 backend (provisioning_ctrl_rt700.sh).
 set -euo pipefail
@@ -204,7 +204,8 @@ da_is_sample() {
 # A production part must not carry ST's public sample DA credential.
 da_production_ready() {
   local f
-  [ -n "${WT_DA_OBK:-}" ] && [ -n "${WT_DA_KEY:-}" ] && [ -n "${WT_DA_CERT:-}" ] || return 1
+  [ -n "${WT_DA_OBK:-}" ] && [ -n "${WT_DA_KEY:-}" ] && [ -n "${WT_DA_CERT:-}" ] &&
+    [ -n "${WT_DA_PWD:-}" ] || return 1
   for f in "$DA_OBK" "$DA_KEY" "$DA_CERT" "$DA_PWD"; do
     [ -s "$f" ] || return 1
     ! da_is_sample "$f" || return 1
@@ -354,7 +355,7 @@ case "$cmd" in
     confirm
     [ -s "$DA_OBK" ] || fail "provision-da" "DA OBK not found: $DA_OBK"
     [ "${WT_PRODUCTION_LOCK:-0}" != "1" ] || da_production_ready || \
-      refuse "a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, and WT_DA_CERT, not ST's sample."
+      refuse "a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, WT_DA_CERT, and WT_DA_PWD, not ST's sample."
     [ "$(product_state)" = "$PS_PROVISIONING" ] || \
       fail "provision-da" "must be in Provisioning ($PS_PROVISIONING); state=$(product_state)"
     echo "Provisioning DA OBK (ST obk_provisioning.sh order): $DA_OBK"
@@ -425,48 +426,37 @@ case "$cmd" in
     ;;
 
   lock)
-    # One production step at a time, and only after 'advance' and 'regress'
-    # rehearsed that state with these images. ST's rule: the closed states are
-    # written from Provisioning, while the debug link can still write them.
-    # Without WT_LOCK_CONFIRM=1 this is a read-only preview.
+    # A production step for the part rehearsed with these images, checked live
+    # in Open. Provisioning masks the UID, so a closed state is reached from
+    # Open in this one run (Provisioning, DA, then the state), as ST's
+    # provisioning.sh does. Without WT_LOCK_CONFIRM=1 this is a preview.
     [[ "${2:-}" =~ ^0[xX][0-9A-Fa-f]{2}$ ]] || \
-      refuse "lock takes the next product state: 0x17, 0xC6, 0x72, or 0x5C."
+      refuse "lock takes a product state: 0x17, 0xC6, 0x72, or 0x5C."
     target="$(hexstate "$2")"
     case "$target" in
-      0x17) from="$PS_OPEN"; rehearse=0x17 ;;
-      0xC6) from="$PS_PROVISIONING"; rehearse=0xC6 ;;
-      0x72) from="$PS_PROVISIONING"; rehearse=0x72 ;;
-      0x5C) from="$PS_PROVISIONING"; rehearse=0x72 ;;
-      *) refuse "lock takes the next product state: 0x17, 0xC6, 0x72, or 0x5C (got $target)." ;;
+      0x17|0xC6) rehearse="$target" ;;
+      0x72|0x5C) rehearse=0x72 ;;
+      *) refuse "lock takes a product state: 0x17, 0xC6, 0x72, or 0x5C (got $target)." ;;
     esac
     cur="$(product_state || true)"
     [ -n "$cur" ] || refuse "cannot read the product state over SWD."
     cur="$(hexstate "$cur")"
-    [ "$cur" = "$from" ] || \
-      refuse "the part is $(ps_name "$cur") ($cur); lock $target runs only from $(ps_name "$from") ($from)."
+    [ "$cur" = "$PS_OPEN" ] || \
+      refuse "the part is $(ps_name "$cur") ($cur); lock runs from Open (0xED), where the device UID can be verified."
     rehearsed "$rehearse" || \
       refuse "no rehearsal of $(ps_name "$rehearse") ($rehearse) with these images and DA certificate: run 'advance $rehearse' and 'regress' first."
     ob="$(ob_snapshot)" || refuse "cannot read the option bytes over SWD."
     [ "$ob" = "$R_OB" ] || \
       refuse "the perimeter or guest WRP option bytes differ from the rehearsal."
-    # Provisioning hides the UID, so it is checked when the part enters it.
-    if [ "$target" = "0x17" ]; then
-      uid="$(device_uid)" || refuse "cannot read the device UID over SWD."
-      [ "$uid" = "$R_UID" ] || \
-        refuse "this part (UID $uid) is not the one rehearsed (UID $R_UID): rehearse this part."
-      images_on_device || \
-        refuse "the images on this part differ from the rehearsed build: 'restore' it first."
-    else
-      sess="$(cat "$state_dir/h5-session" 2>/dev/null || true)"
-      uid="$(field uid "$sess")"
-      [ -n "$uid" ] && [ "$uid" = "$R_UID" ] && fresh "$(field time "$sess")" &&
-        [ "$(field image "$sess")" = "$(image_digest)" ] || \
-        refuse "no recent 'lock 0x17' of the rehearsed part (UID $R_UID) on this station."
-    fi
+    uid="$(device_uid)" || refuse "cannot read the device UID over SWD."
+    [ "$uid" = "$R_UID" ] || \
+      refuse "this part (UID $uid) is not the one rehearsed (UID $R_UID): rehearse this part."
+    images_on_device || \
+      refuse "the images on this part differ from the rehearsed build: 'restore' it first."
     digest="$(image_digest)"
-    checked="order, rehearsal of $(ps_name "$rehearse") with images ${digest:0:16} on device $uid, same option bytes"
-    [ "$target" != "0x17" ] || checked="$checked, images read back"
-    if [ "$target" != "0x17" ]; then
+    checked="rehearsal of $(ps_name "$rehearse") with images ${digest:0:16} on device $uid, same option bytes, images read back"
+    steps="$CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=$PS_PROVISIONING"
+    if [ "$target" != "$PS_PROVISIONING" ]; then
       wrp="$("$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
         | grep -iE "WRPSGn1" | grep -oE "0x[0-9A-Fa-f]+" | head -1 || true)"
       [ -n "$wrp" ] && [ $((wrp)) -eq $((WRP_GUEST)) ] || \
@@ -474,60 +464,67 @@ case "$cmd" in
       checked="$checked, guest WRP"
     fi
     if [ "$target" = "0xC6" ] || [ "$target" = "0x72" ]; then
+      [ -s "$DA_OBK" ] || refuse "DA OBK not found: $DA_OBK"
       if da_production_ready; then
         checked="$checked, production DA credential"
       else
         [ "${WT_PRODUCTION_LOCK:-0}" != "1" ] || \
-          refuse "a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, and WT_DA_CERT, not ST's sample."
+          refuse "a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, WT_DA_CERT, and WT_DA_PWD, not ST's sample."
         checked="$checked, DA credential is ST's sample or unset (a production lock refuses it)"
       fi
-      disc="$(da_discovery)"
-      grep -q "0xeaeaeaea" <<<"$disc" && grep -q "Full Regression" <<<"$disc" || \
-        refuse "Debug Authentication is not provisioned (no intact OBK offering Full Regression): run 'provision-da' and 'discover'."
-      checked="$checked, DA provisioned"
+      steps="$steps|$CLI $DA_CONN -sdp $DA_OBK, then DA discovery must offer Full Regression"
     fi
-    echo "Lock step: $(ps_name "$cur") ($cur) -> $(ps_name "$target") ($target)"
+    [ "$target" = "$PS_PROVISIONING" ] || \
+      steps="$steps|$CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=$target"
+    echo "Lock step: Open (0xED) -> $(ps_name "$target") ($target)"
     echo "  checked: $checked"
-    echo "  will run: $CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=$target"
+    tr '|' '\n' <<<"$steps" | sed 's/^/  will run: /'
     [ "${WT_LOCK_CONFIRM:-0}" = "1" ] || \
         refuse "preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1."
     # shellcheck source=lib/lock_confirm.sh disable=SC1091
     . "$(dirname "$0")/lib/lock_confirm.sh"
     if [ "$target" = "$PS_LOCKED" ]; then
       lock_confirm "I ACCEPT $target" \
-        "Locking this STM32H563: product state $cur -> $target (Locked)" \
+        "Locking this STM32H563: Open -> Provisioning -> Locked ($target)" \
         "This is IRREVERSIBLE: debug closes for good, no regression or mass erase, and only a wolfBoot-signed update can change the firmware." || exit 2
     else
       lock_confirm "I ACCEPT $target" \
         "Moving this STM32H563 to $(ps_name "$target") ($target)" \
         "Only a DA regression, which mass-erases the part, returns it to Open." || exit 2
     fi
+    "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$PS_PROVISIONING" 2>&1 | strip | tail -4 || true
+    now="$(product_state || true)"
+    [ -n "$now" ] && [ "$(hexstate "$now")" = "$PS_PROVISIONING" ] || \
+      fail "lock" "product state reads ${now:-unreadable} after the Provisioning write"
+    pass "product state is Provisioning ($PS_PROVISIONING)"
+    if [ "$target" = "$PS_PROVISIONING" ]; then
+      rm -f "$state_dir"/h5-booted-* "$state_dir"/h5-regressed-* "$state_dir/h5-readback"
+      exit 0
+    fi
+    if [ "$target" = "0xC6" ] || [ "$target" = "0x72" ]; then
+      "$CLI" $DA_CONN_RST >/dev/null 2>&1 || true
+      "$CLI" $DA_CONN -sdp "$DA_OBK" 2>&1 | strip | tail -2
+      "$CLI" $DA_CONN_RST >/dev/null 2>&1 || true
+      disc="$(da_discovery)"
+      grep -q "0xeaeaeaea" <<<"$disc" && grep -q "Full Regression" <<<"$disc" || \
+        fail "lock" "DA did not verify after provisioning; the part stays in Provisioning (Non-secure debug only), not closed"
+      pass "DA provisioned and offering Full Regression"
+    fi
     uart_capture 12 /tmp/wt-lock.log
     "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$target" 2>&1 | strip | tail -4 || true
     sleep 10
     booted_ok=0
-    if [ "$target" != "0x17" ] && booted /tmp/wt-lock.log; then
+    if booted /tmp/wt-lock.log; then
       booted_ok=1
       pass "wolfTrust chain boots in $(ps_name "$target")"
     fi
-    if [ "$target" = "0x17" ]; then
-      now="$(product_state || true)"
-      [ -n "$now" ] && [ "$(hexstate "$now")" = "$target" ] || \
-        fail "lock" "product state reads ${now:-unreadable} after the write, expected $target"
-    else
-      now="$(da_lifecycle || true)"
-      [ "$now" = "$(st_lifecycle "$target")" ] || \
-        fail "lock" "DA discovery reports ${now:-nothing} after the write, expected $(st_lifecycle "$target"); the write may still have landed, so do not repeat it"
-      [ "$booted_ok" = "1" ] || \
-        fail "lock" "the part is $(ps_name "$target") but wolfTrust did not boot on $SERIAL; do not ship it"
-    fi
+    now="$(da_lifecycle || true)"
+    [ "$now" = "$(st_lifecycle "$target")" ] || \
+      fail "lock" "DA discovery reports ${now:-nothing} after the write, expected $(st_lifecycle "$target"); the write may still have landed, so do not repeat it"
+    [ "$booted_ok" = "1" ] || \
+      fail "lock" "the part is $(ps_name "$target") but wolfTrust did not boot on $SERIAL; do not ship it"
     pass "product state is $(ps_name "$target") ($target)"
-    if [ "$target" = "0x17" ]; then
-      put session "uid=$uid image=$digest time=$(date +%s)"
-    else
-      rm -f "$state_dir"/h5-booted-* "$state_dir"/h5-regressed-* \
-        "$state_dir/h5-session" "$state_dir/h5-readback"
-    fi
+    rm -f "$state_dir"/h5-booted-* "$state_dir"/h5-regressed-* "$state_dir/h5-readback"
     ;;
 
   regress)

@@ -45,9 +45,10 @@ test:
 
 # Production lock gates of both provisioning backends, against stub tools.
 test-provisioning:
-	@tests/target/test_provisioning_gates.sh > build/provisioning-gates.log 2>&1 \
-		|| { cat build/provisioning-gates.log; exit 1; }
-	@tail -1 build/provisioning-gates.log
+	@mkdir -p $(BUILD_DIR)
+	@tests/target/test_provisioning_gates.sh > $(BUILD_DIR)/provisioning-gates.log 2>&1 \
+		|| { cat $(BUILD_DIR)/provisioning-gates.log; exit 1; }
+	@tail -1 $(BUILD_DIR)/provisioning-gates.log
 
 C99_CFLAGS := -std=c99 -pedantic-errors -Werror=vla \
 	-D_POSIX_C_SOURCE=200809L

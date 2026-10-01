@@ -626,8 +626,13 @@ The steps below mix three kinds of output:
    > fuse configuration file. The burn runs over the ISP USB link, and no chip
    > identity is documented that both the SWD rehearsal and ISP can read, so
    > nothing would stop such a file being burned into a different part than the
-   > one rehearsed. The life cycle step is bound by the probe and the
-   > rehearsal's freshness instead.
+   > one rehearsed.
+
+   > **Fixture required for the burn.** The same gap applies to the life
+   > cycle step: the rehearsal is bound to the debug probe, but the burn goes
+   > over ISP USB. `lock` therefore burns only with `RT700_FIXTURE_BOUND=1`,
+   > which a station sets only on a fixture whose single socket wires both the
+   > probe and ISP USB to the part. Without it, `lock` stops after the preview.
 
 3. **Burn it**, on the production station only:
 
@@ -635,7 +640,7 @@ The steps below mix three kinds of output:
    > to Develop.
 
    ```sh
-   export WT_PRODUCTION_LOCK=1 RT700_ISP='-u 0x1fc9,0x014f'
+   export WT_PRODUCTION_LOCK=1 RT700_FIXTURE_BOUND=1 RT700_ISP='-u 0x1fc9,0x014f'
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x07
    ```
 

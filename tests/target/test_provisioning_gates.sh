@@ -52,6 +52,7 @@ for a in "\$@"; do
            echo "discovery: ST provisioning integrity status:\$(cat $T/da)"
            [ "\$(cat $T/da)" = 0xeaeaeaea ] && echo "discovery: permission if authorized........:(a/14) ==> Full Regression"; true ;;
     debugauth=1) echo 0xED > $T/ps; echo "Debug Authentication Success" ;;
+    -sdp) echo 0xeaeaeaea > $T/da; echo "OBKey Provisioned successfully" ;;
     PRODUCT_STATE=*) echo "\$a" >> $T/writes; echo "\${a#PRODUCT_STATE=}" > $T/ps; echo "Error: failed to reconnect after reset !"; exit 1 ;;
   esac
 done
@@ -112,10 +113,10 @@ dig() {
 PROD=(WT_DA_OBK="$T/prodda/obk" WT_DA_KEY="$T/prodda/key" WT_DA_CERT="$T/prodda/cert" WT_DA_PWD="$T/prodda/pwd")
 : > "$T/writes"; echo 0xED > "$T/ps"; echo 0x000FFFFF > "$T/wrp"; echo 0xB4 > "$T/tzen"; echo "00210045 33325112 38363236" > "$T/uid"
 echo "== H5"
-check "no state"             2 "lock takes the next"   -- "${H5[@]}" lock
-check "unknown state"        2 "lock takes the next"   -- "${H5[@]}" lock 0x99
-check "Locked from Open"     2 "runs only from Provisioning" -- "${H5[@]}" lock 0x5C
-check "Closed from Open"     2 "runs only from Provisioning" -- "${H5[@]}" lock 0x72
+check "no state"             2 "lock takes a product state" -- "${H5[@]}" lock
+check "unknown state"        2 "lock takes a product state" -- "${H5[@]}" lock 0x99
+check "Locked unrehearsed"   2 "no rehearsal of Closed" -- "${H5[@]}" lock 0x5C
+check "Closed unrehearsed (Open)" 2 "no rehearsal of Closed" -- "${H5[@]}" lock 0x72
 check "Provisioning unrehearsed" 2 "no rehearsal of Provisioning" -- "${H5[@]}" lock 0x17
 check "advance Closed from Open" 2 "runs only from Provisioning" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 nowrite
@@ -127,7 +128,7 @@ echo 0xf5f5f5f5 > "$T/da"
 echo wt > "$R/build/wolftrust_v1_signed.bin"; echo 0xED > "$T/ps"; : > "$T/writes"
 check "advance 0x17 reads back images and UID in Open" 0 "the images on device 002100453332511238363236 match" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x17
 : > "$T/writes"
-check "Closed unrehearsed"   2 "no rehearsal of Closed" -- "${H5[@]}" lock 0x72
+check "lock from Provisioning" 2 "lock runs from Open" -- "${H5[@]}" lock 0x72
 check "closed advance without DA" 2 "cannot be regressed" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 nowrite
 echo 0xeaeaeaea > "$T/da"
@@ -136,45 +137,37 @@ check "advance Closed, boot captured, DA readback" 0 "now: ST_LIFECYCLE_CLOSED" 
 check "lock while Closed (link down)" 2 "cannot read the product state" -- "${H5[@]}" lock 0x72
 check "regress records the device" 0 "regression of device 002100453332511238363236 from Closed recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" regress
 grep -q "da=$SFP uid=002100453332511238363236" "$T/st/h5-regressed-0x72" && { pass=$((pass+1)); echo "ok   regression record binds DA inputs and UID"; } || { failn=$((failn+1)); echo "FAIL regressed record: $(cat "$T/st/h5-regressed-0x72")"; }
-check "lock 0x17 preview on the rehearsed part" 2 "on device 002100453332511238363236, same option bytes" -- "${H5[@]}" lock 0x17
+check "lock 0x17 preview on the rehearsed part" 2 "on device 002100453332511238363236, same option bytes, images read back" -- "${H5[@]}" lock 0x17
 echo "11111111 22222222 33333333" > "$T/uid"
-check "lock 0x17 on another part" 2 "is not the one rehearsed" -- "${H5[@]}" lock 0x17
+check "lock on another part" 2 "is not the one rehearsed" -- "${H5[@]}" lock 0x72
 echo "00210045 33325112 38363236" > "$T/uid"
 echo bad > "$T/flash/0x080A0000"
-check "lock 0x17 with different flash" 2 "differ from the rehearsed build" -- "${H5[@]}" lock 0x17
+check "lock with different flash" 2 "differ from the rehearsed build" -- "${H5[@]}" lock 0x72
 flashsync
 echo 0xC3 > "$T/tzen"
-check "option bytes changed since the rehearsal" 2 "option bytes differ from the rehearsal" -- "${H5[@]}" lock 0x17
+check "option bytes changed since the rehearsal" 2 "option bytes differ from the rehearsal" -- "${H5[@]}" lock 0x72
 echo 0xB4 > "$T/tzen"
 cp "$T/st/h5-regressed-0x72" "$T/regressed.keep"
 subst "time=[0-9]*" "time=$(( $(date +%s) - 7200 ))" "$T/st/h5-regressed-0x72"
-check "expired rehearsal"    2 "no rehearsal of Provisioning" -- "${H5[@]}" lock 0x17
+check "expired rehearsal"    2 "no rehearsal of Closed" -- "${H5[@]}" lock 0x72
 cp "$T/regressed.keep" "$T/st/h5-regressed-0x72"
-nowrite
-H5X="env HOME=$T/home PATH=$T/bin:$PATH STM32_CLI=$T/bin/stcli H5_SERIAL=$T/uart WT_PROVISION_STATE=$T/st WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 $R/tests/target/provisioning_ctrl.sh"
-if [ "$have_expect" = 1 ]; then
-out="$(expect -c "set timeout 30; spawn $H5X lock 0x17; expect \"to continue: \"; send \"I ACCEPT 0x17\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
-rc=$?; [ $rc = 0 ] && [ "$(cat "$T/ps")" = 0x17 ] && grep -q "uid=002100453332511238363236" "$T/st/h5-session" && { pass=$((pass+1)); echo "ok   lock 0x17 (stub) opens a session for the verified UID"; } || { failn=$((failn+1)); echo "FAIL lock 0x17 rc=$rc"; echo "$out" | tail -4; }
-else
-  echo "skip typed lock 0x17 (no expect); simulating its session"
-  echo "uid=002100453332511238363236 image=$(dig) time=$(date +%s)" > "$T/st/h5-session"; echo 0x17 > "$T/ps"
-fi
-: > "$T/writes"; echo 0xf5f5f5f5 > "$T/da"
-check "Closed without DA"    2 "Debug Authentication is not provisioned" -- "${H5[@]}" lock 0x72
-echo 0xeaeaeaea > "$T/da"
+echo 0x17 > "$T/ps"
+check "closing lock from Provisioning (UID masked)" 2 "lock runs from Open" -- "${H5[@]}" lock 0x72
+check "production provision-da with sample" 2 "needs its own DA credential" -- env WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" provision-da
+echo 0xED > "$T/ps"
 check "Closed preview with sample DA" 2 "DA credential is ST's sample" -- "${H5[@]}" lock 0x72
-check "Locked preview from Provisioning" 2 "Provisioning (0x17) -> Locked (0x5C)" -- "${H5[@]}" lock 0x5C
+check "Closed preview runs Provisioning, DA, Closed" 2 "will run: .*-sdp" -- "${H5[@]}" lock 0x72
+check "Locked preview from Open" 2 "Open (0xED) -> Locked (0x5C)" -- "${H5[@]}" lock 0x5C
 check "no production opt-in" 2 "Only a production station" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" lock 0x72
 check "production lock with ST sample DA" 2 "needs its own DA credential" -- env WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" lock 0x72
-check "production DA set to sample copies" 2 "needs its own DA credential" -- env WT_DA_OBK="$SD/Binary/DA_Config.obk" WT_DA_KEY="$SD/Keys/key_3_leaf.pem" WT_DA_CERT="$SD/Certificates/cert_leaf_chain.b64" WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" lock 0x72
-check "production provision-da with sample" 2 "needs its own DA credential" -- env WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" provision-da
+check "production DA set to sample copies" 2 "needs its own DA credential" -- env WT_DA_OBK="$SD/Binary/DA_Config.obk" WT_DA_KEY="$SD/Keys/key_3_leaf.pem" WT_DA_CERT="$SD/Certificates/cert_leaf_chain.b64" WT_DA_PWD="$SD/Binary/password.bin" WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" lock 0x72
 check "rehearsed with sample, locking with production DA" 2 "no rehearsal of Closed" -- env "${PROD[@]}" "${H5[@]}" lock 0x72
-subst "da=$SFP" "da=$PFP" "$T/st/h5-regressed-0x72"
+MFP="$(dafp "$T/prodda/key" "$T/prodda/cert" "$T/prodda/obk" "$SD/Binary/password.bin")"
+subst "da=$SFP" "da=$MFP" "$T/st/h5-regressed-0x72"
+check "production DA without WT_DA_PWD" 2 "needs its own DA credential" -- env WT_DA_OBK="$T/prodda/obk" WT_DA_KEY="$T/prodda/key" WT_DA_CERT="$T/prodda/cert" WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" lock 0x72
+subst "da=$MFP" "da=$PFP" "$T/st/h5-regressed-0x72"
 check "DA key swapped after the rehearsal" 2 "no rehearsal of Closed" -- env "${PROD[@]}" WT_DA_KEY="$T/prodda/key2" "${H5[@]}" lock 0x72
 check "production DA preview" 2 "production DA credential" -- env "${PROD[@]}" "${H5[@]}" lock 0x72
-mv "$T/st/h5-session" "$T/session.keep"
-check "closing lock without a session" 2 "no recent 'lock 0x17'" -- env "${PROD[@]}" "${H5[@]}" lock 0x72
-mv "$T/session.keep" "$T/st/h5-session"
 check "piped confirmation"   2 "interactive terminal"   -- env "${PROD[@]}" WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" lock 0x72
 check "TZ-Closed unrehearsed" 2 "no rehearsal of TZ-Closed" -- env "${PROD[@]}" "${H5[@]}" lock 0xC6
 echo x >> "$R/build/wolftrust_v1_signed.bin"
@@ -188,12 +181,12 @@ for phrase in "yes" "LOCK 0x72" "I ACCEPT 0x5C" "i accept 0x72"; do
   rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && { pass=$((pass+1)); echo "ok   wrong phrase '$phrase' refused"; } || { failn=$((failn+1)); echo "FAIL phrase '$phrase' rc=$rc"; }
 done
 mv "$T/uart" "$T/uart.ok"; : > "$T/uart"
-out="$(expect -c "set timeout 30; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 1 ] && grep -q "wolfTrust did not boot" <<<"$out" && [ -e "$T/st/h5-regressed-0x72" ] && { pass=$((pass+1)); echo "ok   Closed write without a boot fails and keeps the records"; } || { failn=$((failn+1)); echo "FAIL no-boot lock rc=$rc"; echo "$out" | tail -4; }
-mv "$T/uart.ok" "$T/uart"; : > "$T/writes"; echo 0x17 > "$T/ps"
-out="$(expect -c "set timeout 30; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
-rc=$?; [ $rc = 0 ] && grep -q "PRODUCT_STATE=0x72" "$T/writes" && grep -q "product state is Closed" <<<"$out" && ! ls "$T"/st/h5-regressed-* >/dev/null 2>&1 && [ ! -e "$T/st/h5-session" ] && { pass=$((pass+1)); echo "ok   exact phrase writes 0x72 (stub) and consumes the rehearsal"; } || { failn=$((failn+1)); echo "FAIL exact phrase rc=$rc"; echo "$out" | tail -5; }
-: > "$T/writes"; echo 0x17 > "$T/ps"
+mv "$T/uart.ok" "$T/uart"; : > "$T/writes"; echo 0xED > "$T/ps"; echo 0xf5f5f5f5 > "$T/da"
+out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+rc=$?; [ $rc = 0 ] && [ "$(tr '\n' ' ' < "$T/writes")" = "PRODUCT_STATE=0x17 PRODUCT_STATE=0x72 " ] && grep -q "DA provisioned and offering Full Regression" <<<"$out" && grep -q "product state is Closed" <<<"$out" && ! ls "$T"/st/h5-regressed-* >/dev/null 2>&1 && { pass=$((pass+1)); echo "ok   one run: Provisioning, DA, Closed (stub), rehearsal consumed"; } || { failn=$((failn+1)); echo "FAIL exact phrase rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -5; }
+: > "$T/writes"; echo 0xED > "$T/ps"
 else
   echo "skip typed confirmation tests (no expect)"
   rm -f "$T"/st/h5-regressed-* "$T"/st/h5-booted-*
@@ -242,13 +235,14 @@ check "two probes attached"  2 "attach exactly one debug probe" -- env "${ISP[@]
 echo PROBEA > "$T/probe"
 check "Develop2 preview"     2 "efuse-program-once 0x8F 00000007" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
 check "preview names the probe" 2 "through probe PROBEA" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
-check "no production opt-in" 2 "Only a production station" -- env WT_LOCK_CONFIRM=1 "${ISP[@]}" "${RT[@]}" lock 0x07
-check "piped confirmation"   2 "interactive terminal"   -- env WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${ISP[@]}" "${RT[@]}" lock 0x07
+check "no production opt-in" 2 "Only a production station" -- env RT700_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 "${ISP[@]}" "${RT[@]}" lock 0x07
+check "burn without a bound fixture" 2 "set RT700_FIXTURE_BOUND=1" -- env WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${ISP[@]}" "${RT[@]}" lock 0x07
+check "piped confirmation"   2 "interactive terminal"   -- env RT700_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${ISP[@]}" "${RT[@]}" lock 0x07
 nowrite
 check "fuse configuration refused" 2 "cannot be burned yet" -- env "${ISP[@]}" "${RT[@]}" lock 0x07 "$T/fuses.yaml"
 nowrite
 if [ "$have_expect" = 1 ]; then
-RTX="env TARGET=mimxrt700 RT700_SPSDK_VENV=$T/venv RT700_PROVISION_STATE=$T/st PATH=$T/venv/bin:$PATH RT700_ISP=-u0x1fc9,0x014f WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 $R/tests/target/provisioning_ctrl.sh"
+RTX="env RT700_FIXTURE_BOUND=1 TARGET=mimxrt700 RT700_SPSDK_VENV=$T/venv RT700_PROVISION_STATE=$T/st PATH=$T/venv/bin:$PATH RT700_ISP=-u0x1fc9,0x014f WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 $R/tests/target/provisioning_ctrl.sh"
 expect -c "set timeout 5; spawn $RTX lock 0x07; expect \"to continue: \"; send \"BURN 0x07\r\"; expect eof; catch wait r; exit [lindex \$r 3]" >/dev/null
 rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && { pass=$((pass+1)); echo "ok   old phrase refused"; } || { failn=$((failn+1)); echo "FAIL old phrase rc=$rc"; }
 expect -c "set timeout 5; spawn $RTX lock 0x07; expect \"to continue: \"; send \"I ACCEPT 0x07\r\"; expect eof; catch wait r; exit [lindex \$r 3]" >/dev/null

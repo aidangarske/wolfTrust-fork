@@ -523,6 +523,11 @@ PYEOF
     sed 's/^/    /' "$script"
     [ "${WT_LOCK_CONFIRM:-0}" = "1" ] || \
         refuse "preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1."
+    # The rehearsal ran over SWD, the burn runs over ISP USB, and no chip
+    # identity is documented that both can read: only a fixture wiring both to
+    # one socket ties them together.
+    [ "${RT700_FIXTURE_BOUND:-0}" = "1" ] || \
+        refuse "the burn goes over ISP USB, which nothing ties to the rehearsed part: burn only on a fixture that wires the debug probe and ISP USB to one socket, and set RT700_FIXTURE_BOUND=1 there."
     # shellcheck source=lib/lock_confirm.sh disable=SC1091
     . "$here/lib/lock_confirm.sh"
     lock_confirm "I ACCEPT $value" \
