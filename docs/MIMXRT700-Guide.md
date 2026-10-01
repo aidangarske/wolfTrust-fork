@@ -60,7 +60,7 @@ wolfBoot; the Secure runtime changes live in wolfTrust.
 | `config/examples/imx-rt700-mldsa.config` | ML-DSA-87 image signatures for a CNSA 2.0 boot chain. |
 | Boot-region protection | Before handoff, wolfBoot programs and locks the XSPI Secure Flash Protection descriptors so the bootloader region is read-only to the application, and refuses to continue if the protection cannot be read back. |
 | Guest flash fence | Carried as `tests/target/wolfboot-imxrt700-guest-fence.patch`: with `XSPI_GUEST_FENCE_START`/`END` defined, a further locked descriptor makes both guest windows read-only to every initiator until the next reset. |
-| Life cycle | Carried as `tests/target/wolfboot-imxrt700-lifecycle.patch`: `hal_attestation_get_lifecycle()` reads the OTP `LC_STATE` shadow, its redundant copy, and `DAUTHSTATUS`, and maps them to the PSA life cycle in the handoff. |
+| Life cycle | Carried as `tests/target/wolfboot-imxrt700-lifecycle.patch`: `hal_attestation_get_lifecycle()` reads the OTP `LC_STATE` shadow, its redundant copy, and `DAUTHSTATUS`, and maps them to the PSA life cycle in the handoff. In Field reports SECURED only when every `DAUTHSTATUS` field reads implemented and disabled (`0xAA`); an enabled field lowers it to `0x5000` or `0x4000`, and any other encoding reports UNKNOWN. |
 
 The loader satisfies the [Porting](Porting.md) bootloader contract: it
 authenticates the Secure image, provides `wt_boot_handoff_t` (SHA-256
@@ -380,7 +380,7 @@ state therefore has two commands:
 | --- | --- | --- | --- |
 | `0x03` | Develop (as the EVK ships) | Open | `0x1000` ASSEMBLY_AND_TEST |
 | `0x07` | Develop2 | Provisioning | `0x2000` PSA_ROT_PROVISIONING |
-| `0x0F` | In Field | Closed | `0x3000` SECURED, or `0x5000`/`0x4000` while debug is open |
+| `0x0F` | In Field | Closed | `0x3000` SECURED with `DAUTHSTATUS` `0xAA`; `0x5000`/`0x4000` while debug is open; `0x0000` for any other encoding |
 | `0xCF` | In Field Locked | Locked | as In Field |
 | `0x1F` | In Field Return | none | `0x6000` DECOMMISSIONED |
 | other, or copies disagree | NXP Blank, Fab, FA, Dev, Bricked, or corrupt | none | `0x0000` UNKNOWN |

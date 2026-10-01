@@ -433,8 +433,9 @@ PYEOF
         [[ "$rec" == *" image=$digest "* ]] || \
         refuse "no rehearsal of $value ($(lc_name "$value")) with these images: run 'discover', 'advance $value', and 'regress' first."
     # No silicon UID is documented to bind the record to, so it must be fresh.
-    [ -n "$rtime" ] && [ $(($(date +%s) - rtime)) -le "$rehearsal_max_age" ] || \
-        refuse "the rehearsal of $value is older than ${rehearsal_max_age}s: rehearse this part again right before its burn."
+    age=$(($(date +%s) - ${rtime:-0}))
+    [ -n "$rtime" ] && [ "$age" -ge 0 ] && [ "$age" -le "$rehearsal_max_age" ] || \
+        refuse "the rehearsal of $value is not from the last ${rehearsal_max_age}s: rehearse this part again right before its burn."
     [ "$value" = "0x07" ] || [[ "$rec" == *" fence=armed "* ]] || \
         refuse "the rehearsal of $value ran without the guest fence: 'restore' the fenced chain and rehearse again."
 
@@ -500,7 +501,7 @@ PYEOF
     fi
 
     echo "Lock step: fused $(lc_name "$cur") ($cur) -> $(lc_name "$value") ($value)"
-    checked="order, rehearsal of $value with images ${digest:0:16} ($(($(date +%s) - rtime))s ago)"
+    checked="order, rehearsal of $value with images ${digest:0:16} (${age}s ago)"
     [ "$value" = "0x07" ] || checked="$checked, guest fence, root key hash"
     echo "  checked: $checked"
     echo "  will run: blhost $RT700_ISP batch $script"

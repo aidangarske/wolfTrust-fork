@@ -42,12 +42,12 @@ static int failures;
         } \
     } while (0)
 
-/* DAUTHSTATUS encodings: each 2-bit field is 3 when that debug is enabled. */
-#define DAUTH_NONE      0x00u
-#define DAUTH_NS_ONLY   (0x3u << IMX_RT7XX_DAUTHSTATUS_NSID_SHIFT)
-#define DAUTH_NSNID     (0x3u << IMX_RT7XX_DAUTHSTATUS_NSNID_SHIFT)
-#define DAUTH_SECURE    (0x3u << IMX_RT7XX_DAUTHSTATUS_SID_SHIFT)
-#define DAUTH_SNID      (0x3u << IMX_RT7XX_DAUTHSTATUS_SNID_SHIFT)
+/* DAUTHSTATUS: each 2-bit field is 0b11 enabled, 0b10 implemented and disabled. */
+#define DAUTH_CLOSED    0xAAu
+#define DAUTH_NS_ONLY   0xABu
+#define DAUTH_NSNID     0xAEu
+#define DAUTH_SECURE    0xBAu
+#define DAUTH_SNID      0xEAu
 #define DAUTH_ALL       0xFFu
 
 static void test_state_table(void)
@@ -85,16 +85,16 @@ static void test_redundancy(void)
     EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(IMX_RT7XX_LC_DEVELOP,
               IMX_RT7XX_LC_IN_FIELD), 0x0000u);
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
-              0x00u, DAUTH_NONE), 0x0000u);
+              0x00u, DAUTH_CLOSED), 0x0000u);
 }
 
 static void test_debug_refinement(void)
 {
     /* A secured part with debug closed attests SECURED. */
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
-              IMX_RT7XX_LC_IN_FIELD, DAUTH_NONE), 0x3000u);
+              IMX_RT7XX_LC_IN_FIELD, DAUTH_CLOSED), 0x3000u);
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD_LOCKED,
-              IMX_RT7XX_LC_IN_FIELD_LOCKED, DAUTH_NONE), 0x3000u);
+              IMX_RT7XX_LC_IN_FIELD_LOCKED, DAUTH_CLOSED), 0x3000u);
 
     /* Any Secure debug open downgrades to recoverable PSA RoT debug. */
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
@@ -110,10 +110,19 @@ static void test_debug_refinement(void)
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
               IMX_RT7XX_LC_IN_FIELD, DAUTH_NSNID), 0x4000u);
 
-    /* A partially enabled field (value 2) is not enabled. */
+    /* Not implemented, reserved, or mixed encodings never prove debug closed. */
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
-              IMX_RT7XX_LC_IN_FIELD,
-              0x2u << IMX_RT7XX_DAUTHSTATUS_SID_SHIFT), 0x3000u);
+              IMX_RT7XX_LC_IN_FIELD, 0x00u), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, 0x55u), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, 0x9Au), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, 0xA0u), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, 0x20u), 0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
+              IMX_RT7XX_LC_IN_FIELD, 0x03u), 0x0000u);
 
     /* Debug state never refines an open, provisioning, or returned part. */
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_DEVELOP,

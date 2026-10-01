@@ -243,6 +243,7 @@ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x72
 ```
 
 ```text
+  [check] PASS  the images on the part match the host build (c1f89defe6238bcc)
 ADVANCING product state 0xED -> 0x17 (regress is the only way back)
 Option Bytes successfully programmed
 Provisioning does not run the wolfTrust chain; a closed-state rehearsal proves the boot
@@ -264,7 +265,11 @@ now: ST_LIFECYCLE_CLOSED
 > `0xeaeaeaea` and Full Regression. Without them, Closed cannot be regressed
 > and the part is closed for good.
 
-`advance` captures the UART across the reset that the write causes. The
+`advance 0x17` reads the four images back over SWD while the part is still
+Open: Provisioning closes Secure debug, so this is the last point where the
+Secure images can be read. A closing `advance` requires that read-back for the
+current images, and `flash` or `regress` discards it. `advance` also captures
+the UART across the reset that the write causes. The
 `[check]` line proves the images booted in Closed, with debug closed. That is
 what records the Closed rehearsal.
 
@@ -299,13 +304,16 @@ state after regression: 0xED
 PASS: wolfTrust restored and booting
 ```
 
-The rehearsal records hold the SHA-256 of the four images. The regression
-record also holds the SHA-256 of the DA certificate chain it authenticated
-with (first 16 hex digits of each shown):
+The rehearsal records hold the SHA-256 of the four images with their
+addresses and sizes. Before any closing write, `advance` reads those images
+back off the part and refuses if they differ from the host build. The
+regression record also holds a fingerprint of every DA input the regression
+used: key, certificate chain, OBK, and password. The first 16 hex digits of
+each are shown:
 
 ```text
-h5-booted-0x72: 78ec12f957707ed0...
-h5-regressed-0x72: 78ec12f957707ed0... d21811a12f5533f4...
+h5-booted-0x72: c1f89defe6238bcc...
+h5-regressed-0x72: c1f89defe6238bcc... 0b5e16e7754c68c1...
 ```
 
 > **Warning:** rehearse with the production DA chain (`WT_DA_OBK`,

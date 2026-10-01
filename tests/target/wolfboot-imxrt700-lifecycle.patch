@@ -41,7 +41,7 @@ new file mode 100644
 index 00000000..c6a99736
 --- /dev/null
 +++ b/hal/imx_rt7xx_lifecycle.h
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,130 @@
 +/* imx_rt7xx_lifecycle.h
 + *
 + * Copyright (C) 2026 wolfSSL Inc.
@@ -87,6 +87,7 @@ index 00000000..c6a99736
 +#define IMX_RT7XX_DAUTHSTATUS_SNID_SHIFT   6u
 +#define IMX_RT7XX_DAUTHSTATUS_FIELD_MASK   0x3u
 +#define IMX_RT7XX_DAUTHSTATUS_ENABLED      0x3u
++#define IMX_RT7XX_DAUTHSTATUS_DISABLED     0x2u
 +
 +static inline uint32_t imx_rt7xx_lc_to_psa_lifecycle(uint32_t lcState,
 +    uint32_t lcStateRed)
@@ -117,12 +118,19 @@ index 00000000..c6a99736
 +    return lifecycle;
 +}
 +
-+static inline int imx_rt7xx_debug_status_field_enabled(
-+    uint32_t debugAuthStatus, uint32_t shift)
++static inline int imx_rt7xx_debug_status_field_is(uint32_t debugAuthStatus,
++    uint32_t shift, uint32_t value)
 +{
 +    return (((debugAuthStatus >> shift) &
-+        IMX_RT7XX_DAUTHSTATUS_FIELD_MASK) ==
-+        IMX_RT7XX_DAUTHSTATUS_ENABLED);
++        IMX_RT7XX_DAUTHSTATUS_FIELD_MASK) == value);
++}
++
++/* 1 when both fields read value; Arm encodes 0b11 enabled, 0b10 disabled. */
++static inline int imx_rt7xx_debug_status_pair_is(uint32_t debugAuthStatus,
++    uint32_t shiftA, uint32_t shiftB, uint32_t value)
++{
++    return imx_rt7xx_debug_status_field_is(debugAuthStatus, shiftA, value) &&
++        imx_rt7xx_debug_status_field_is(debugAuthStatus, shiftB, value);
 +}
 +
 +static inline uint32_t imx_rt7xx_attestation_lifecycle(uint32_t lcState,
@@ -131,17 +139,33 @@ index 00000000..c6a99736
 +    uint32_t lifecycle = imx_rt7xx_lc_to_psa_lifecycle(lcState, lcStateRed);
 +
 +    if (lifecycle == 0x3000u) {
-+        if (imx_rt7xx_debug_status_field_enabled(debugAuthStatus,
-+                IMX_RT7XX_DAUTHSTATUS_SID_SHIFT) ||
-+                imx_rt7xx_debug_status_field_enabled(debugAuthStatus,
-+                IMX_RT7XX_DAUTHSTATUS_SNID_SHIFT)) {
++        if (imx_rt7xx_debug_status_field_is(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_SID_SHIFT,
++                IMX_RT7XX_DAUTHSTATUS_ENABLED) ||
++                imx_rt7xx_debug_status_field_is(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_SNID_SHIFT,
++                IMX_RT7XX_DAUTHSTATUS_ENABLED)) {
 +            lifecycle = 0x5000u; /* PSA_LIFECYCLE_RECOVERABLE_PSA_ROT_DEBUG */
 +        }
-+        else if (imx_rt7xx_debug_status_field_enabled(debugAuthStatus,
-+                IMX_RT7XX_DAUTHSTATUS_NSID_SHIFT) ||
-+                imx_rt7xx_debug_status_field_enabled(debugAuthStatus,
-+                IMX_RT7XX_DAUTHSTATUS_NSNID_SHIFT)) {
++        else if (!imx_rt7xx_debug_status_pair_is(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_SID_SHIFT,
++                IMX_RT7XX_DAUTHSTATUS_SNID_SHIFT,
++                IMX_RT7XX_DAUTHSTATUS_DISABLED)) {
++            lifecycle = 0x0000u; /* PSA_LIFECYCLE_UNKNOWN */
++        }
++        else if (imx_rt7xx_debug_status_field_is(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_NSID_SHIFT,
++                IMX_RT7XX_DAUTHSTATUS_ENABLED) ||
++                imx_rt7xx_debug_status_field_is(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_NSNID_SHIFT,
++                IMX_RT7XX_DAUTHSTATUS_ENABLED)) {
 +            lifecycle = 0x4000u; /* PSA_LIFECYCLE_NON_PSA_ROT_DEBUG */
++        }
++        else if (!imx_rt7xx_debug_status_pair_is(debugAuthStatus,
++                IMX_RT7XX_DAUTHSTATUS_NSID_SHIFT,
++                IMX_RT7XX_DAUTHSTATUS_NSNID_SHIFT,
++                IMX_RT7XX_DAUTHSTATUS_DISABLED)) {
++            lifecycle = 0x0000u; /* PSA_LIFECYCLE_UNKNOWN */
 +        }
 +    }
 +    return lifecycle;

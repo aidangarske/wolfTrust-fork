@@ -93,9 +93,18 @@ pass()  { printf '  [check] PASS  %s\n' "$1"; }
 fail()  { printf '  [check] FAIL  %s  (%s)\n' "$1" "$2"; exit 1; }
 confirm() { [ "${WT_LOCK_CONFIRM:-0}" = "1" ] || {
     echo "REFUSED: '$cmd' writes to the board. Re-run with WT_LOCK_CONFIRM=1." >&2; exit 2; }; }
+# A read right after a reset can return garbage, so only a known code counts.
 product_state() {
-  "$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
-    | grep -iE "PRODUCT_STATE" | grep -oE "0x[0-9A-Fa-f]+" | head -1
+  local v
+  for _ in 1 2 3; do
+    v="$("$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
+      | grep -iE "PRODUCT_STATE" | grep -oE "0x[0-9A-Fa-f]+" | head -1 || true)"
+    case "$(printf '0x%02X' "$(( ${v:-0x100} ))")" in
+      0xED|0x17|0x2E|0xC6|0x72|0x5C) echo "$v"; return 0 ;;
+    esac
+    sleep 2
+  done
+  return 1
 }
 hexstate() { printf '0x%02X' "$(( $1 ))"; }
 ps_name() {
@@ -126,19 +135,37 @@ sha256() {
 }
 # Rehearsal records hold the digest of the images they proved, so a rebuild
 # needs a fresh rehearsal before any lock step.
-image_digest() {
-  local f
-  for f in "$wb" "$wt" "$g0" "$g1"; do [ -s "$f" ] || return 1; done
-  cat "$wb" "$wt" "$g0" "$g1" | sha256 | cut -c1-64
+flashed_images() {
+  printf '%s %s\n' "$WOLFBOOT" "$wb" "$WOLFTRUST" "$wt" "$GUEST0" "$g0" "$GUEST1" "$g1"
 }
-# The DA certificate chain a regression authenticated with.
-da_fingerprint() { [ -s "$DA_CERT" ] && sha256 < "$DA_CERT" | cut -c1-64; }
+image_digest() {
+  local a f
+  while read -r a f; do [ -s "$f" ] || return 1; done < <(flashed_images)
+  flashed_images | while read -r a f; do
+    printf '%s %s\n' "$a" "$(wc -c < "$f" | tr -d ' ')"
+    cat "$f"
+  done | sha256 | cut -c1-64
+}
+# The flashed images read back over SWD match the host build.
+images_on_device() {
+  local a f
+  while read -r a f; do
+    "$CLI" -c port=SWD mode=HotPlug -u "$a" "$(wc -c < "$f" | tr -d ' ')" \
+      /tmp/wt-readback.bin >/dev/null 2>&1 && cmp -s /tmp/wt-readback.bin "$f" || return 1
+  done < <(flashed_images)
+}
+# Every DA input a regression used: key, certificate chain, OBK, and password.
+da_fingerprint() {
+  local f
+  for f in "$DA_KEY" "$DA_CERT" "$DA_OBK" "$DA_PWD"; do [ -s "$f" ] || return 1; done
+  for f in "$DA_KEY" "$DA_CERT" "$DA_OBK" "$DA_PWD"; do sha256 < "$f"; done | sha256 | cut -c1-64
+}
 # A production part must not carry ST's public sample DA credential.
 da_production_ready() {
   local pair f s
   [ -n "${WT_DA_OBK:-}" ] && [ -n "${WT_DA_KEY:-}" ] && [ -n "${WT_DA_CERT:-}" ] || return 1
   for pair in "$DA_OBK|Binary/DA_Config.obk" "$DA_KEY|Keys/key_3_leaf.pem" \
-              "$DA_CERT|Certificates/cert_leaf_chain.b64"; do
+              "$DA_CERT|Certificates/cert_leaf_chain.b64" "$DA_PWD|Binary/password.bin"; do
     f="${pair%%|*}"; s="$DA_SAMPLE_DIR/${pair#*|}"
     [ -s "$f" ] || return 1
     if [ -s "$s" ] && [ "$(sha256 < "$f")" = "$(sha256 < "$s")" ]; then
@@ -208,6 +235,7 @@ case "$cmd" in
 
   flash)
     confirm
+    rm -f "$state_dir/h5-readback"
     for f in "$wb" "$wt" "$g0" "$g1"; do
       [ -s "$f" ] || fail "flash" "missing image: $f (build first)"; done
     "$CLI" -c port=SWD mode=UR \
@@ -222,9 +250,6 @@ case "$cmd" in
     sleep 7
     if booted /tmp/wt-verify.log; then
       pass "wolfTrust chain boots on silicon"
-      ps="$(product_state || true)"
-      [ -n "$ps" ] || ps="$(cat "$state_dir/h5-advanced" 2>/dev/null || true)"
-      [ -z "$ps" ] || record "booted-$(hexstate "$ps")"
     else
       fail "verify" "no wolfTrust boot markers on $SERIAL"
     fi
@@ -273,6 +298,21 @@ case "$cmd" in
        { [ -z "$cur" ] || [ "$(hexstate "$cur")" != "$PS_PROVISIONING" ]; }; then
       refuse "advance to $(ps_name "$state") runs only from Provisioning (0x17); state=${cur:-unreadable}."
     fi
+    # Provisioning closes Secure debug, so the images are read back in Open.
+    readback=0
+    if [ "$state" = "$PS_PROVISIONING" ]; then
+      rm -f "$state_dir/h5-readback"
+      if images_on_device; then
+        record readback
+        pass "the images on the part match the host build ($(image_digest | cut -c1-16))"
+      else
+        echo "the images on the part differ from the host build; a closed-state rehearsal will refuse"
+      fi
+    elif [ "$(cat "$state_dir/h5-readback" 2>/dev/null)" = "$(image_digest)" ]; then
+      readback=1
+    else
+      refuse "no read-back of these images: 'restore', then 'advance 0x17' from Open reads them back."
+    fi
     echo "ADVANCING product state ${cur:-?} -> $state (regress is the only way back)"
     uart_capture 12 /tmp/wt-advance.log
     # The CLI fails its post-write reconnect once debug closes; the read-back decides.
@@ -282,7 +322,7 @@ case "$cmd" in
     sleep 10
     if booted /tmp/wt-advance.log; then
       pass "wolfTrust chain boots in $(ps_name "$state")"
-      record "booted-$state"
+      [ "$readback" != "1" ] || record "booted-$state"
     elif [ "$state" = "$PS_PROVISIONING" ]; then
       echo "Provisioning does not run the wolfTrust chain; a closed-state rehearsal proves the boot"
     else
@@ -384,6 +424,7 @@ case "$cmd" in
     # answers) with the key+cert; CubeProgrammer selects the certificate because
     # TZEN is enabled and the RSS mass-erases the device back to Open.
     advanced="$(cat "$state_dir/h5-advanced" 2>/dev/null || true)"
+    rm -f "$state_dir/h5-readback"
     echo "DA certificate Full Regression -> Open (mass-erase):"
     "$CLI" -c port=SWD mode=HotPlug -rst 2>&1 | strip | tail -1 || true
     "$CLI" -c port=SWD per=a key="$DA_KEY" cert="$DA_CERT" pwd="$DA_PWD" \

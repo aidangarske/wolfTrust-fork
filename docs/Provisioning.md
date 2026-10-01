@@ -107,7 +107,9 @@ fails, with exit status 2 and nothing written:
    SHA-256 of the images that are flashed, so a rebuild invalidates it. On the
    MIMXRT700 the rehearsal also read those images back off the part, required
    every guest to launch verified, and must be at most an hour old. On the
-   STM32H5 it also holds the DA certificate the regression used.
+   STM32H5 `advance` first reads the four images back off the part before a
+   closing write, and the regression record holds a fingerprint of every DA
+   input it used: key, certificate chain, OBK, and password.
 4. **The part is provisioned first**:
    - on the MIMXRT700, the guest fence and all 12 root key hash words, and a
      first stage the BootROM authenticates (until the port builds one, `lock`
@@ -199,7 +201,7 @@ is still open therefore attests `0x5000`, not `0x3000`.
 (override with `WT_PROVISION_STATE` or `RT700_PROVISION_STATE`). Each record
 holds the SHA-256 of the images it proved:
 
-- On the STM32H5, a record is kept until the images or the DA certificate
+- On the STM32H5, a record is kept until the images or any DA input
   change, because each rehearsal of a closed state mass-erases the sample.
 - On the MIMXRT700, each burn uses its record up, and a record expires after
   an hour, so every part is rehearsed at the station right before its own
