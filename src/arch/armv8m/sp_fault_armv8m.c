@@ -48,6 +48,63 @@ static volatile uint32_t g_tasklet_fault_icsr;
 static volatile uint32_t g_tasklet_fault_co;
 static volatile uint32_t g_tasklet_fault_co_sp;
 
+/* SPM-origin fault latch, read over SWD after the halt: a HardFault, a main
+ * stack overflow, or a Secure fault with no partition to blame. */
+volatile uint32_t g_wt_spm_fault_cfsr __attribute__((used));
+volatile uint32_t g_wt_spm_fault_hfsr __attribute__((used));
+volatile uint32_t g_wt_spm_fault_mmfar __attribute__((used));
+volatile uint32_t g_wt_spm_fault_bfar __attribute__((used));
+volatile uint32_t g_wt_spm_fault_pc __attribute__((used));
+volatile uint32_t g_wt_spm_fault_exc_return __attribute__((used));
+
+/* Stackless: a main-stack overflow or HardFault may arrive with MSP at or
+ * under its limit, so the latch is written in asm and the halt tail-called. */
+__attribute__((naked, noreturn, used))
+void wt_armv8m_spm_fault_halt(void)
+{
+    __asm volatile(
+        "ldr   r0, =0xE000ED28                 \n"
+        "ldr   r1, [r0, #0]                    \n"
+        "ldr   r2, =g_wt_spm_fault_cfsr        \n"
+        "str   r1, [r2]                        \n"
+        "ldr   r1, [r0, #4]                    \n"
+        "ldr   r2, =g_wt_spm_fault_hfsr        \n"
+        "str   r1, [r2]                        \n"
+        "ldr   r1, [r0, #12]                   \n"
+        "ldr   r2, =g_wt_spm_fault_mmfar       \n"
+        "str   r1, [r2]                        \n"
+        "ldr   r1, [r0, #16]                   \n"
+        "ldr   r2, =g_wt_spm_fault_bfar        \n"
+        "str   r1, [r2]                        \n"
+        "ldr   r2, =g_wt_spm_fault_exc_return  \n"
+        "str   lr, [r2]                        \n"
+        /* The stacked PC is read only from a Secure frame that was
+         * written: STKOF, MSTKERR or STKERR means there is no frame. */
+        "ldr   r1, [r0, #0]                    \n"
+        "ldr   r2, =0x00101010                 \n"
+        "tst   r1, r2                          \n"
+        "movs  r1, #0                          \n"
+        "bne   1f                              \n"
+        "tst   lr, #0x40                       \n"
+        "beq   1f                              \n"
+        "tst   lr, #4                          \n"
+        "ite   eq                              \n"
+        "mrseq r0, msp                         \n"
+        "mrsne r0, psp                         \n"
+        "ldr   r1, [r0, #24]                   \n"
+        "1:                                    \n"
+        "ldr   r2, =g_wt_spm_fault_pc          \n"
+        "str   r1, [r2]                        \n"
+        "b     wt_platform_panic               \n"
+    );
+}
+
+/* Every escalated fault halts here instead of the vector table's mute spin. */
+__attribute__((naked)) void HardFault_Handler(void)
+{
+    __asm volatile("b wt_armv8m_spm_fault_halt \n");
+}
+
 /* -----------------------------------------------------------------------
  * Secure-side tasklet fault path.
  *

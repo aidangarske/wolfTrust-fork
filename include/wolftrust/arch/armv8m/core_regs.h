@@ -34,6 +34,7 @@
 #define WT_SCB_SHPR3_S           (*(volatile uint32_t*)0xE000ED20u)
 #define WT_SCB_SHCSR_S           (*(volatile uint32_t*)0xE000ED24u)
 #define WT_SCB_CFSR_S            (*(volatile uint32_t*)0xE000ED28u)
+#define WT_SCB_HFSR_S            (*(volatile uint32_t*)0xE000ED2Cu)
 #define WT_SCB_MMFAR_S           (*(volatile uint32_t*)0xE000ED34u)
 #define WT_SCB_BFAR_S            (*(volatile uint32_t*)0xE000ED38u)
 #define WT_SCB_ICSR_S            (*(volatile uint32_t*)0xE000ED04u)
@@ -66,6 +67,16 @@
 #define WT_SCB_CFSR_MMFSR_MSTKERR     (1u << 4)
 #define WT_SCB_CFSR_MMFSR_MLSPERR     (1u << 5)
 #define WT_SCB_CFSR_MMFSR_MMARVALID   (1u << 7)
+
+#define WT_SCB_CFSR_BFSR_IBUSERR      (1u << 8)
+#define WT_SCB_CFSR_BFSR_PRECISERR    (1u << 9)
+#define WT_SCB_CFSR_BFSR_IMPRECISERR  (1u << 10)
+#define WT_SCB_CFSR_BFSR_UNSTKERR     (1u << 11)
+#define WT_SCB_CFSR_BFSR_STKERR       (1u << 12)
+#define WT_SCB_CFSR_BFSR_LSPERR       (1u << 13)
+#define WT_SCB_CFSR_BFSR_BFARVALID    (1u << 15)
+
+#define WT_SCB_HFSR_FORCED            (1u << 30)
 
 #define WT_SCB_CFSR_UFSR_STKOF        (1u << 20)  /* UFSR bit 4 lifted to CFSR bit 20 */
 #define WT_SCB_CFSR_UFSR_NOCP         (1u << 19)  /* UFSR bit 3: coprocessor disabled */
