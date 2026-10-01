@@ -36,7 +36,7 @@ Overrides:
 Read the product state and Secure watermarks:
 
 ```sh
-tests/target/provisioning_ctrl.sh status
+tests/target/provisioning/provisioning_ctrl.sh status
 tests/target/h5_lock_preflight.sh
 ```
 
@@ -69,7 +69,7 @@ the build and flash addresses stay paired.
 
 ## TrustZone perimeter
 
-`tests/target/provisioning_ctrl.sh set-perimeter` programs the
+`tests/target/provisioning/provisioning_ctrl.sh set-perimeter` programs the
 reference option bytes:
 
 | Option | Value | Purpose |
@@ -86,7 +86,7 @@ Changing `TZEN` can mass-erase the device. The command requires an
 explicit write confirmation:
 
 ```sh
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh set-perimeter
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh set-perimeter
 ```
 
 Do not copy these values to another STM32H5 part without checking its reference
@@ -107,7 +107,7 @@ TZ-Closed, Closed, and Locked, and RM0481 separately defines the
 them:
 
 ```sh
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh set-wrp
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh set-wrp
 ```
 
 Read back the live value:
@@ -125,7 +125,7 @@ To reflash with the supported helper workflow, keep the device Open and clear
 WRP:
 
 ```sh
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh clear-wrp
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh clear-wrp
 ```
 
 Then flash and reapply WRP before allowing a hardened image to launch. The
@@ -213,8 +213,8 @@ Build the production images with production signing keys and
 verify. `restore` does all four:
 
 ```sh
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh restore
-tests/target/provisioning_ctrl.sh status
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh restore
+tests/target/provisioning/provisioning_ctrl.sh status
 ```
 
 ```text
@@ -236,10 +236,10 @@ Enter Provisioning, provision the DA certificate, confirm discovery offers
 Full Regression, then close the part:
 
 ```sh
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x17
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh provision-da
-tests/target/provisioning_ctrl.sh discover
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x72
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0x17
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh provision-da
+tests/target/provisioning/provisioning_ctrl.sh discover
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0x72
 ```
 
 ```text
@@ -284,7 +284,7 @@ In Closed, check the part behaves like the product:
 `status` cannot read a closed part, and `lock` refuses one:
 
 ```text
-$ tests/target/provisioning_ctrl.sh lock 0x5C
+$ tests/target/provisioning/provisioning_ctrl.sh lock 0x5C
 REFUSED: cannot read the product state over SWD.
 ```
 
@@ -292,8 +292,8 @@ Then regress, which mass-erases the part back to Open and completes the
 rehearsal, and restore the chain:
 
 ```sh
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh restore
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh restore
 ```
 
 ```text
@@ -336,9 +336,9 @@ One Closed rehearsal covers `lock 0x17`, `lock 0x72`, and `lock 0x5C`. For
 Refused commands change nothing and exit with status 2:
 
 ```text
-$ tests/target/provisioning_ctrl.sh lock 0x72
+$ tests/target/provisioning/provisioning_ctrl.sh lock 0x72
 REFUSED: the part is Open (0xED); lock 0x72 runs only from Provisioning (0x17).
-$ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x72
+$ WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0x72
 REFUSED: advance to Closed runs only from Provisioning (0x17); state=0xED.
 ```
 
@@ -377,149 +377,134 @@ place by:
 
 See [how a production lock binds the software](Provisioning.md#how-a-production-lock-binds-the-software).
 
-| Command | Runs from | Writes, in one run | Also needs |
+| Command | Runs from | Writes | Also needs |
 | --- | --- | --- | --- |
-| `lock 0x17` | Open `0xED` | Provisioning | a DA regression rehearsed from Provisioning or a closed state |
-| `lock 0xC6` | Open `0xED` | Provisioning, the DA OBK, TrustZone Closed | a rehearsal of `0xC6` with the production DA chain; guest WRP |
-| `lock 0x72` | Open `0xED` | Provisioning, the DA OBK, Closed | a rehearsal of `0x72` with the production DA chain; guest WRP |
-| `lock 0x5C` | Open `0xED` | Provisioning, Locked (final) | a rehearsal of `0x72`; guest WRP |
+| `lock provisioning` (`0x17`) | open `0xED` | Provisioning | a rehearsal of Provisioning or a closed state on this part |
+| `lock tz-closed` (`0xC6`) | provisioning `0x17` | TrustZone Closed | a rehearsal of `0xC6`; guest WRP; production DA, provisioned; `WT_FIXTURE_BOUND=1` |
+| `lock closed` (`0x72`) | provisioning `0x17` | Closed | a rehearsal of `0x72`; guest WRP; production DA, provisioned; `WT_FIXTURE_BOUND=1` |
+| `lock locked` (`0x5C`) | provisioning `0x17` | Locked (final) | a rehearsal of `0x72`; guest WRP; `WT_FIXTURE_BOUND=1` |
 
-Every `lock` runs from Open, because only Open lets the script prove it is
-talking to the rehearsed part. Provisioning masks the device UID, so a closed
-state is reached from Open in the same run, with no second command in between.
-ST's own `provisioning.sh` works the same way. `lock` checks the following,
-all live in Open, before it writes anything:
+On top of [the shared gates](Provisioning.md#the-lock-gates), this port checks:
 
-- **The part:** the 96-bit device UID matches the rehearsal.
-- **The images:** the four images read back under reset match the rehearsed
-  build. The rehearsal's regression erased the part, so this proves the
-  restored images are the rehearsed ones.
-- **The option bytes:** the perimeter and guest WRP values match the
-  rehearsal, and `WRPSGn1=0x000FFFFF` for every closed state.
-- **The DA credential**, for TrustZone Closed and Closed: `WT_DA_OBK`,
-  `WT_DA_KEY`, `WT_DA_CERT`, and `WT_DA_PWD` set explicitly, none matching
-  ST's sample, and the same four the rehearsal regressed with. The script
-  carries the SHA-256 of every file in ST's NUCLEO-H563ZI sample DA material,
-  so a renamed copy is caught even where the sample tree is not installed.
-  `provision-da` refuses the sample too when `WT_PRODUCTION_LOCK=1`.
-- **The rehearsal:** at most an hour old (`WT_REHEARSAL_MAX_AGE`, default
-  `3600` seconds).
+- **The same part.** In Open, `lock` reads the 96-bit UID live and requires
+  the rehearsed one, and reads the four images back under reset. Provisioning
+  masks the UID, so a closed state's `lock` needs `WT_FIXTURE_BOUND=1`: the
+  station asserts the fixture holds the part it rehearsed and moved to
+  Provisioning.
+- **Safe option bytes.** The perimeter values must be wolfTrust's (TZEN,
+  BOOT_UBE, SWAP_BANK, SECWM1 and SECWM2), with the guest WRP
+  (`WRPSGn1=0x000FFFFF`) for a closed state, and must match the rehearsal.
+- **Production DA,** for TrustZone Closed and Closed. `WT_DA_OBK`, `WT_DA_KEY`,
+  `WT_DA_CERT`, and `WT_DA_PWD` must be set, must not match ST's sample, and
+  must be the same four the rehearsal regressed with. The script carries the
+  SHA-256 of every file in ST's NUCLEO-H563ZI sample DA material, so a renamed
+  copy is caught. DA discovery must show an intact OBK offering Full
+  Regression.
+- **Read-back.** After a closed state's write, DA discovery must report it and
+  the wolfTrust boot must show on the UART, or `lock` fails without repeating
+  the write.
 
-During the run it confirms each step before the next. It reads back
-Provisioning, and for TrustZone Closed and Closed it provisions the DA OBK and
-requires discovery to offer Full Regression. If that fails, the part stays in
-Provisioning, not closed. After the closing write it confirms the state
-through DA discovery and requires the wolfTrust boot on the UART, failing
-without repeating the write if either is missing. A completed run consumes the
-rehearsal, so the next part is rehearsed on its own.
+The steps, one manual command each. The preview output is from the board.
 
 1. **Flash the production part** as in stage 1, with the images you rehearsed.
-   A rebuild invalidates the rehearsal.
 
-2. **Preview.** Without `WT_LOCK_CONFIRM=1`, `lock` runs every check, prints
-   each write of the run, and writes nothing. From the board, after the
-   rehearsal and `restore`:
+2. **Preview and lock Provisioning:**
 
    ```text
-   $ tests/target/provisioning_ctrl.sh lock 0x72
-   Lock step: Open (0xED) -> Closed (0x72)
-     checked: rehearsal of Closed with images c1f89defe6238bcc on device 002100453332511238363236, same option bytes, images read back, guest WRP, DA credential is ST's sample or unset (a production lock refuses it)
+   $ tests/target/provisioning/provisioning_ctrl.sh lock provisioning
+   Lock step: open (0xED) -> provisioning (0x17)
+     checked: next state, rehearsal of closed (0x72) with images c1f89defe6238bcc (26s ago), same part 002100453332511238363236, images read back, perimeter values
      will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x17
-     will run: STM32_Programmer_CLI -c port=SWD speed=fast ap=1 mode=Hotplug -sdp .../DA/Binary/DA_Config.obk, then DA discovery must offer Full Regression
-     will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x72
-   REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
-   $ tests/target/provisioning_ctrl.sh lock 0x5C
-   Lock step: Open (0xED) -> Locked (0x5C)
-     checked: rehearsal of Closed with images c1f89defe6238bcc on device 002100453332511238363236, same option bytes, images read back, guest WRP
-     will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x17
-     will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x5C
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    ```
-
-   This board carries ST's sample DA credential, so the preview notes that a
-   production lock refuses it, and the production gate does:
-
-   ```text
-   $ WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 tests/target/provisioning_ctrl.sh lock 0x72
-   REFUSED: a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, WT_DA_CERT, and WT_DA_PWD, not ST's sample.
-   ```
-
-3. **Close the part**, on the production station only. A Closed part still
-   regresses with your certificate chain, so this is the step to stop at if
-   field regression is wanted:
 
    ```sh
    export WT_PRODUCTION_LOCK=1
-   export WT_DA_OBK=production/DA_Config.obk WT_DA_KEY=production/leaf.pem \
-          WT_DA_CERT=production/leaf_chain.b64 WT_DA_PWD=production/password.bin
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x72
+   WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh lock provisioning
    ```
 
-   After the same preview it asks, and only a person at a terminal typing the
-   acceptance exactly continues:
+   ```text
+   !!! Moving this STM32H563 to provisioning (0x17)
+   !!! Only a DA regression, which mass-erases the part, returns it to Open.
+   !!! Are you sure? Type "I ACCEPT 0x17" to continue:
+   ```
+
+3. **Provision the production DA chain** and check it:
+
+   ```sh
+   export WT_DA_OBK=production/DA_Config.obk WT_DA_KEY=production/leaf.pem \
+          WT_DA_CERT=production/leaf_chain.b64 WT_DA_PWD=production/password.bin
+   WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh provision-da
+   tests/target/provisioning/provisioning_ctrl.sh discover
+   ```
+
+   > **Warning:** only continue when discovery shows integrity `0xeaeaeaea`
+   > and Full Regression; without them a closed part cannot come back.
+
+4. **Close the part**, on the fixture that held it since the rehearsal.
+   A Closed part still regresses with your certificate chain, so stop here if
+   field regression is wanted:
+
+   ```sh
+   WT_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh lock closed
+   ```
 
    ```text
-   !!! Moving this STM32H563 to Closed (0x72)
+   !!! Moving this STM32H563 to closed (0x72)
    !!! Only a DA regression, which mass-erases the part, returns it to Open.
    !!! Are you sure? Type "I ACCEPT 0x72" to continue: I ACCEPT 0x72
    ```
 
-   Expected output, matching the rehearsal above:
+   Expected output, as in the rehearsal:
 
    ```text
-     [check] PASS  product state is Provisioning (0x17)
-     [check] PASS  DA provisioned and offering Full Regression
    Error: Unable to reconnect after setting the Option Bytes
-     [check] PASS  wolfTrust chain boots in Closed
-     [check] PASS  product state is Closed (0x72)
+     [check] PASS  wolfTrust chain boots in closed (0x72)
+     [check] PASS  STM32H563 is closed (0x72)
    ```
 
-4. **Or lock for good**, only when field regression is not wanted. Run it in
-   place of step 3, from Open:
+5. **Or lock for good** in place of step 4, only when field regression is not
+   wanted:
 
-   > **Warning:** this is IRREVERSIBLE. After it, debug never opens again, the
-   > part cannot be regressed or reflashed, and wolfBoot and its key are fixed
-   > for the life of the part.
+   > **Warning:** this is IRREVERSIBLE. Debug never opens again, the part
+   > cannot be regressed or reflashed, and wolfBoot and its key are fixed for
+   > the life of the part.
 
    ```sh
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x5C
+   WT_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh lock locked
    ```
 
    ```text
-   !!! Locking this STM32H563: Open -> Provisioning -> Locked (0x5C)
+   !!! Moving this STM32H563 to locked (0x5C)
    !!! This is IRREVERSIBLE: debug closes for good, no regression or mass erase, and only a wolfBoot-signed update can change the firmware.
    !!! Are you sure? Type "I ACCEPT 0x5C" to continue:
    ```
 
-   `lock` confirms Locked through DA discovery. If discovery no longer
-   answers, `lock` fails with "the write may still have landed, so do not
-   repeat it". Confirm the state from the attestation token instead.
-
-5. **Verify** from the firmware: the attestation token must report `0x3000`
+6. **Verify** from the firmware: the attestation token must report `0x3000`
    SECURED, and the production scenarios must pass.
 
-The production gates, as refused on the board without writing anything:
+Refusals from the board, none of which wrote anything:
 
 ```text
-$ WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 tests/target/provisioning_ctrl.sh provision-da
-REFUSED: a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, WT_DA_CERT, and WT_DA_PWD, not ST's sample.
-$ echo "I ACCEPT 0x5C" | WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 tests/target/provisioning_ctrl.sh lock 0x5C
+$ tests/target/provisioning/provisioning_ctrl.sh lock closed
+REFUSED: the part is open (0xED); lock 0x72 runs only from provisioning (0x17)
+$ WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 tests/target/provisioning/provisioning_ctrl.sh lock provisioning </dev/null
 REFUSED: a production lock needs an interactive terminal, not a pipe or script.
 ```
 
 Refusals from `make test-provisioning`:
 
 ```text
-REFUSED: this part (UID 111111112222222233333333) is not the one rehearsed (UID 002100453332511238363236): rehearse this part.
+REFUSED: this part (111111112222222233333333) is not the one rehearsed (002100453332511238363236): rehearse this part.
 REFUSED: the images on this part differ from the rehearsed build: 'restore' it first.
-REFUSED: the perimeter or guest WRP option bytes differ from the rehearsal.
-REFUSED: the part is Provisioning (0x17); lock runs from Open (0xED), where the device UID can be verified.
-REFUSED: no rehearsal of Closed (0x72) with these images and DA certificate: run 'advance 0x72' and 'regress' first.
+REFUSED: the perimeter or guest WRP option bytes are not wolfTrust's: run 'set-perimeter' and 'set-wrp' in Open.
+REFUSED: the part's identity cannot be read in this state, so nothing proves it is the rehearsed one: run this only on a fixture that holds one part from rehearsal to lock, and set WT_FIXTURE_BOUND=1 there.
+REFUSED: a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, WT_DA_CERT, and WT_DA_PWD, not ST's sample.
 REFUSED: confirmation did not match; nothing was changed.
 ```
 
-`advance 0x5C` stays refused. The `lock` writes have never been run on a
-wolfTrust board.
+`advance locked` is refused: Locked has no mock. No `lock` write has been run
+on a wolfTrust board.
 
 ### Verified on the NUCLEO-H563ZI
 

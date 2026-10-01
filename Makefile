@@ -46,7 +46,7 @@ test:
 # Production lock gates of both provisioning backends, against stub tools.
 test-provisioning:
 	@mkdir -p $(BUILD_DIR)
-	@tests/target/test_provisioning_gates.sh > $(BUILD_DIR)/provisioning-gates.log 2>&1 \
+	@tests/target/provisioning/test_provisioning_gates.sh > $(BUILD_DIR)/provisioning-gates.log 2>&1 \
 		|| { cat $(BUILD_DIR)/provisioning-gates.log; exit 1; }
 	@tail -1 $(BUILD_DIR)/provisioning-gates.log
 

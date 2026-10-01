@@ -1,233 +1,211 @@
 # Provisioning
 
-Provisioning takes a board from development to production. You flash the
-production images, set the protections the part will ship with, and move the
-device life cycle forward until debug is closed and the part can no longer be
-reflashed from outside. The last step, the production lock, is permanent.
+Provisioning takes a wolfTrust part from development to production. You flash
+the production images, set the protections the part ships with, and move its
+life cycle forward until debug is closed and the part can no longer be
+reflashed from outside. The last steps are permanent.
 
-wolfTrust drives both reference ports through one script,
-`tests/target/provisioning_ctrl.sh`. `TARGET` selects the backend:
-`stm32h563` (the default) or `mimxrt700`. This page covers what the two ports
-share: the flow, the commands, the gates, and what a lock does to the part.
-Each port guide has the board-specific states, quirks, and a full walkthrough
-with real output:
+One script does this on every port, with the same commands:
+
+```sh
+TARGET=<port> tests/target/provisioning/provisioning_ctrl.sh <command> [state]
+```
+
+`TARGET` is `stm32h563` (the default) or `mimxrt700`. `help` lists the
+commands and the port's states. Only the state codes and a few device commands
+differ between ports. This page covers the shared flow; each port guide covers
+its states, quirks, and a walkthrough with real output:
 
 - [STM32H5 Guide: Provisioning and product state](STM32H5-Guide.md#provisioning-and-product-state)
 - [MIMXRT700 Guide: Provisioning and life cycle](MIMXRT700-Guide.md#provisioning-and-life-cycle)
 
-> **Production locks are permanent.** `lock` is never reversible: run it only
-> on a production station, on a part you intend to ship, and never on a
-> development board. The steps before it are reversible with one condition.
-> On the MIMXRT700, `advance` changes only shadow registers, which any reset
-> undoes. On the STM32H5, a closed-state `advance` is undone only by a Debug
-> Authentication regression, so `advance` refuses a closed state unless DA
-> discovery shows an intact OBK offering Full Regression.
+> **Production locks are permanent.** `lock` is for a production station and a
+> part you intend to ship, never a development board. Every step before it is
+> reversible: a mock that a reset or a regression undoes.
 
-## The flow: rehearse, validate, then lock
+## The flow
 
-A production lock is never the first time a state is tried. Every state is
-first entered as a mock, checked, and backed out of. Only then is the same
-step made real:
+Every port follows the same four stages, one manual command at a time:
 
-```text
- 1. Prepare         2. Rehearse (mock)      3. Validate            4. Lock (real)
- ------------       ------------------      -----------            --------------
- restore / flash    advance <state>         status                 lock <state>
- production    -->  (reversible)       -->  attestation       -->    preview, no write
- images             regress                 guests, fence            then with gates +
-                    (back to start)                                  typed I ACCEPT
-                                                                     (permanent)
+| Stage | Command | What it does |
+| --- | --- | --- |
+| 1. Prepare | `restore`, `status`, `discover` | flash the production images, read the part, run the preflight |
+| 2. Rehearse | `advance <state>`, then `regress` | enter the state as a reversible mock, record the rehearsal, return |
+| 3. Validate | `status` while in the mock state | check the part behaves like the product you will ship |
+| 4. Lock | `lock <state>` | make that one state permanent, after a preview and a typed acceptance |
+
+A state is given by its code or its name: `lock 0x72` or `lock closed` on the
+STM32H5, `lock 0x07` or `lock develop2` on the MIMXRT700.
+
+### 1. Prepare
+
+```sh
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh restore
+tests/target/provisioning/provisioning_ctrl.sh status
+tests/target/provisioning/provisioning_ctrl.sh discover
 ```
 
-1. **Prepare.** Flash the production images with production signing keys and
-   the guest flash protection enabled (`WT_GUEST_FLASH_WRP=1`).
-2. **Rehearse.** `advance <state>` puts the part into the target state in a
-   way that can be undone. On the MIMXRT700 that means the OTP shadow
-   registers, which any reset reloads. On the STM32H5 it means the product
-   state, which a Debug Authentication regression undoes. `advance` records a
-   rehearsal only if wolfTrust booted in that state, with the life cycle it
-   should see. The one exception is STM32H5 Provisioning, where the chain does
-   not run; closed states prove the boot there. `regress` takes the part back
-   and completes the record.
-3. **Validate.** While the part is in the rehearsed state, check that it
-   behaves like the product you intend to ship:
-   - `status` shows the life cycle and the guest protection;
-   - the guests launch verified;
-   - the attestation token reports the expected life cycle.
+Build the production images first, with production signing keys and the guest
+flash protection on (`WT_GUEST_FLASH_WRP=1`). Every command that writes to the
+board needs `WT_LOCK_CONFIRM=1`.
 
-   What the part does in the rehearsal is what it will do once the step is
-   made permanent.
-4. **Lock.** `lock <state>` first runs as a preview. It checks everything,
-   prints the exact write, and changes nothing. On a production station, the
-   same command with the production gates set, followed by a typed acceptance,
-   makes the step permanent.
+### 2. Rehearse (the mock lock)
 
-Repeat stages 2 to 4 for each further state the product needs.
+```sh
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance <state>
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
+```
 
-## Commands
+`advance` puts the part in `<state>` in a way that can be undone. It records a
+rehearsal only if the part shows the evidence the port asks for: the firmware
+booted in that state, the images read back match the build, and the part's
+identity. `regress` takes the part back and completes the rehearsal. A
+rehearsal is bound to the part, the images, any credentials it used, and the
+hour it was made in; `lock` refuses without one.
 
-Every command runs through `tests/target/provisioning_ctrl.sh`. Commands that
-write to the board refuse without `WT_LOCK_CONFIRM=1`.
+### 3. Validate
 
-| Command | What it does | Kind | STM32H5 | MIMXRT700 |
-| --- | --- | --- | --- | --- |
-| `status` | life cycle, debug, and protection state | read-only | yes | yes |
-| `discover` | preflight: STM32H5 Debug Authentication discovery; MIMXRT700 fused-state and shadow-override check | read-only | yes | yes |
-| `verify` | reset and check the chain boots | read-only | yes | use `restore` |
-| `verify-wrp` | the running guest fence is armed | read-only | no | yes |
-| `set-perimeter`, `flash`, `set-wrp`, `clear-wrp` | set option bytes, flash images, guest WRP | reversible write | yes | no persistent form |
-| `restore` | put the production chain back and verify it | reversible write | yes | yes |
-| `provision-da` | provision the Debug Authentication certificate | reversible write (Provisioning only) | yes | refused, see `lock` |
-| `advance <state>` | enter a state as a mock and record a rehearsal | reversible write | yes | yes |
-| `regress` | return to the start state and complete the rehearsal | reversible write | yes, mass erase | yes, hardware reset |
-| `lock <state>` | preview, then make one step permanent | **permanent write** | yes | yes |
+While the part is in the mock state, check it is the product you intend to
+ship: `status`, the guests running, and the attestation token's life cycle.
+What the part does here is what it will do once the state is permanent.
 
-## Environment
+### 4. Lock
 
-| Variable | Meaning |
-| --- | --- |
-| `TARGET` | `stm32h563` (default) or `mimxrt700` |
-| `WT_LOCK_CONFIRM=1` | allow a board write; without it `lock` only previews |
-| `WT_PRODUCTION_LOCK=1` | marks a production station; `lock` never writes without it |
-| `WT_PROVISION_STATE`, `RT700_PROVISION_STATE` | where rehearsal records are kept (default `~/.cache/wolftrust`) |
-| `RT700_ISP` | MIMXRT700 blhost ISP connection, for example `-u 0x1fc9,0x014f` |
-| `RT700_FIXTURE_BOUND=1` | set only on a fixture that wires the debug probe and ISP USB to one socket; a MIMXRT700 burn refuses without it |
-| `RT700_GUEST_MASK` | guests a MIMXRT700 rehearsal must launch verified (default `0x3`) |
-| `RT700_REHEARSAL_MAX_AGE` | seconds a MIMXRT700 rehearsal stays valid (default `3600`) |
-| `WT_REHEARSAL_MAX_AGE` | seconds a STM32H5 rehearsal stays valid (default `3600`) |
-| `STM32_CLI`, `H5_SERIAL` | STM32CubeProgrammer CLI path and the board UART |
-| `WT_DA_*` | STM32H5 Debug Authentication key, certificate, and OBK; a production lock requires all three, and not ST's sample |
+```sh
+tests/target/provisioning/provisioning_ctrl.sh lock <state>
+```
 
-## Gates on a real lock
+Without `WT_LOCK_CONFIRM=1`, `lock` is a preview: it runs every check, prints
+the exact write, and changes nothing. On a production station:
 
-`lock <state>` runs these checks in order and stops at the first one that
-fails, with exit status 2 and nothing written:
+```sh
+export WT_PRODUCTION_LOCK=1
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh lock <state>
+```
 
-1. **The state is known** and is the next step the port allows.
-2. **The part is in the state just before it.** `lock` reads the real state:
-   the burned fuses over ISP on the MIMXRT700, the product state over SWD on
-   the STM32H5. The silicon would accept some skips, for example MIMXRT700
-   Develop straight to In Field Locked. `lock` refuses them.
-3. **A rehearsal of that state exists for the current images.** It holds the
-   SHA-256 of the images that are flashed, so a rebuild invalidates it. On the
-   MIMXRT700 the rehearsal also read those images back off the part, required
-   every guest to launch verified, and must have run through the same single
-   debug probe, at most an hour ago. On the
-   STM32H5 the rehearsal is bound to the part's 96-bit device UID and its
-   perimeter option-byte values, read in Open together with the four images.
-   The regression record holds a fingerprint of every DA input it used: key,
-   certificate chain, OBK, and password. Because Provisioning masks the UID,
-   every STM32H5 `lock` starts from Open, verifies the UID and images live, and
-   reaches a closed state in that same run.
-4. **The part is provisioned first**:
-   - on the MIMXRT700, the guest fence and all 12 root key hash words, and a
-     first stage the BootROM authenticates (until the port builds one, `lock`
-     refuses In Field and later);
-   - on the STM32H5, the guest WRP and a working Debug Authentication chain
-     that is your own, never ST's sample.
+It previews again, then asks:
 
-   The life cycle is always written last.
-5. **Preview.** `lock` prints the exact write. Without `WT_LOCK_CONFIRM=1` it
-   stops here.
-6. **Production station.** `WT_PRODUCTION_LOCK=1` must be set.
-7. **A person at a terminal.** A pipe or script is refused.
-8. **Typed acceptance.** Only the exact phrase `I ACCEPT <state>` continues;
-   anything else changes nothing.
-9. **Read back.** After the write, `lock` reads the state back and fails
-   unless it moved. On the STM32H5 it also fails if wolfTrust did not boot in
-   a closed state.
+```text
+!!! Moving this <PORT> to <state>
+!!! This is IRREVERSIBLE: <what this port loses for good>
+!!! Are you sure? Type "I ACCEPT <code>" to continue:
+```
 
-These follow the pattern of the vendors' own provisioning tools:
-- NXP's MCUXpresso Secure Provisioning tool offers a "Test life cycle" mode
-  and shows a confirmation dialog listing each irreversible operation. SPSDK's
-  `nxpfuses write` requires `--yes`.
+Only a person at a terminal typing the acceptance exactly continues. Each
+`lock` writes one state; run it again for the next state.
+
+## The lock gates
+
+Every port runs the same gates, in this order, from one place in
+`provisioning_ctrl.sh`. A failed gate exits with status 2 and writes nothing.
+
+1. **Next state only.** `lock` reads the part's real state (fuses or option
+   bytes, never the mock) and refuses anything but the next state.
+2. **A rehearsal of this state** on this part, with these images and
+   credentials, completed in the last hour (`WT_REHEARSAL_MAX_AGE`).
+3. **The same part.** If the port can read the part's identity in this state,
+   it must match the rehearsal. If it cannot, the step runs only with
+   `WT_FIXTURE_BOUND=1`, which a station sets only on a fixture that holds one
+   part from the rehearsal to the lock.
+4. **Provisioned first.** The port's own checks, such as safe perimeter
+   values, guest flash protection, and production credentials.
+5. **Preview** of the exact write.
+6. **`WT_LOCK_CONFIRM=1`** and **`WT_PRODUCTION_LOCK=1`**.
+7. **An interactive terminal**, never a pipe or script.
+8. **The typed acceptance**, `I ACCEPT <code>`.
+9. **Read-back.** After the write, the new state must read back, or `lock`
+   fails and says what state the part is in.
+
+These follow the vendors' own provisioning tools:
+- NXP's Secure Provisioning tool offers a "Test life cycle" mode and lists
+  each irreversible operation before it writes.
 - ST's `ROT_Provisioning` scripts provision keys and Debug Authentication
-  first and set the product state last, pausing with "Press any key to
-  continue".
-- TF-M advances its PSA life cycle in firmware, only once provisioning is
-  complete.
+  before the product state.
+- TF-M advances its PSA life cycle only once provisioning is complete.
 
-`lock` adds the one-step-at-a-time check, the rehearsal requirement, and a
-typed acceptance instead of a single keypress.
-
-## Offline gate tests
-
-`make test` also runs `make test-provisioning`: the gates of both backends
-exercised against stub `STM32_Programmer_CLI`, `blhost`, and `pyocd`. It
-covers refusal paths, device and image binding, DA credential checks,
-rehearsal records and their expiry, read-back after a write, the burn script
-rules, and the typed acceptance. Nothing touches a board. The typed-acceptance
-cases need `expect`, and skip without it.
+`provisioning_ctrl.sh` adds the one-step rule, the bound rehearsal, and a
+typed acceptance instead of a keypress.
 
 ## What a production lock does to the firmware
 
-The boot chain passes the device life cycle to wolfTrust as a PSA life cycle
-value. Once it is past `0x2000` PSA_ROT_PROVISIONING, wolfTrust stops treating
-the part as a development board:
+wolfBoot passes the life cycle to wolfTrust as a PSA life cycle value. Past
+`0x2000` PSA_ROT_PROVISIONING, wolfTrust stops treating the part as a
+development board:
 
-- **Rollback floors are enforced.** A guest image older than the floor
-  recorded for it is refused at launch. In `0x1000` and `0x2000` the floors
-  are not enforced, so development images can move backwards.
-- **The vault is never reformatted.** In development, a store written by an
-  older firmware generation, or a corrupt one, is reformatted so the board
-  keeps booting. On a closed part the sealed device key and write-once storage
-  are never wiped: a damaged store stops boot provisioning instead.
-- **Attestation reports the new life cycle**, so a relying party can tell a
+- **Rollback floors are enforced.** A guest image older than its recorded
+  floor is refused at launch.
+- **The vault is never reformatted.** The sealed device key and write-once
+  storage survive; a damaged store stops boot provisioning instead of being
+  wiped.
+- **Attestation reports the life cycle,** so a relying party can tell a
   production part from a development one: `0x3000` SECURED once debug is
-  closed, `0x4000` or `0x5000` while some debug remains open.
-- **Guest flash protection stays in force** at every launch when the image
-  was built with `WT_GUEST_FLASH_WRP=1`. That is the STM32H5 WRP, and the
-  MIMXRT700 XSPI fence.
+  closed, `0x4000` or `0x5000` while some debug is open.
+- **Guest flash protection stays in force** at every launch: the STM32H5 WRP,
+  the MIMXRT700 XSPI fence.
 
 ## How a production lock binds the software
 
 With debug closed, nothing outside the firmware can reflash the part. The
-software can then only change through wolfBoot's signed update path
-(`SERVICE_FWU`, which stages a candidate into the wolfBoot update partition).
-These keys hold the software in place for the life of the part:
+software then only changes through wolfBoot's signed update path
+(`SERVICE_FWU`). These keys hold it in place for the life of the part:
 
 | Key | What it decides |
 | --- | --- |
 | wolfBoot signing key | which wolfTrust images wolfBoot boots and accepts as updates |
-| guest measurement records (signed into the wolfTrust image) | which guest images wolfTrust launches |
+| guest measurement records (signed into the wolfTrust image) | which guests wolfTrust launches |
 | MIMXRT700 root key table hash (fused) | which first-stage images the BootROM boots |
-| STM32H5 Debug Authentication certificate chain | whether a part short of Locked can be regressed and reopened |
+| STM32H5 Debug Authentication certificate chain | whether a part short of Locked can be regressed |
 
-Treat these as production secrets and back them up before the first lock. If a
-signing key is lost, the parts locked with it can never be updated. If a key
-leaks, every part locked with it trusts whoever holds it.
+Back these up before the first lock. A lost signing key means the parts locked
+with it can never be updated; a leaked one means they trust whoever holds it.
 
 ## PSA life cycle by port
 
 | PSA life cycle | STM32H5 product state | MIMXRT700 life cycle |
 | --- | --- | --- |
-| `0x1000` ASSEMBLY_AND_TEST | Open `0xED` | Develop `0x03` |
-| `0x2000` PSA_ROT_PROVISIONING | Provisioning `0x17` | Develop2 `0x07` |
-| `0x4000` NON_PSA_ROT_DEBUG | TrustZone Closed `0xC6`, or Closed with only Non-secure debug open | In Field with only Non-secure debug open |
-| `0x5000` RECOVERABLE_PSA_ROT_DEBUG | Closed with Secure debug open | In Field with Secure debug open |
-| `0x3000` SECURED | Closed `0x72`, Locked `0x5C` | In Field `0x0F`, In Field Locked `0xCF` |
-| `0x6000` DECOMMISSIONED | none | In Field Return `0x1F` |
+| `0x1000` ASSEMBLY_AND_TEST | open `0xED` | develop `0x03` |
+| `0x2000` PSA_ROT_PROVISIONING | provisioning `0x17` | develop2 `0x07` |
+| `0x4000` NON_PSA_ROT_DEBUG | tz-closed `0xC6` | in-field, only Non-secure debug open |
+| `0x5000` RECOVERABLE_PSA_ROT_DEBUG | closed, Secure debug open | in-field, Secure debug open |
+| `0x3000` SECURED | closed `0x72`, locked `0x5C` | in-field `0x0F`, in-field-locked `0xCF` |
+| `0x6000` DECOMMISSIONED | none | in-field-return `0x1F` |
 | `0x0000` UNKNOWN | any other value | copies disagree, or an NXP-internal state |
 
-The STM32H5 refines Closed and Locked by the debug state, and the MIMXRT700
-refines In Field by the fused debug state. A rehearsal on a board whose debug
-is still open therefore attests `0x5000`, not `0x3000`.
+## Environment
 
-## Where the records live
+| Variable | Meaning |
+| --- | --- |
+| `TARGET` | the port: `stm32h563` (default) or `mimxrt700` |
+| `WT_LOCK_CONFIRM=1` | allow a board write; without it `lock` only previews |
+| `WT_PRODUCTION_LOCK=1` | marks a production station; `lock` never writes without it |
+| `WT_FIXTURE_BOUND=1` | the fixture holds one part from rehearsal to lock; needed where the part's identity cannot be read |
+| `WT_PROVISION_STATE` | where rehearsal records live (default `~/.cache/wolftrust`, one folder per port) |
+| `WT_REHEARSAL_MAX_AGE` | seconds a rehearsal stays valid (default `3600`) |
+| `WT_DA_OBK`, `WT_DA_KEY`, `WT_DA_CERT`, `WT_DA_PWD` | STM32H5 Debug Authentication inputs; a production lock requires all four, none of them ST's sample |
+| `STM32_CLI`, `H5_SERIAL` | STM32H5: STM32CubeProgrammer CLI and the board UART |
+| `RT700_ISP`, `RT700_SPSDK_VENV`, `RT700_GUEST_MASK` | MIMXRT700: blhost ISP connection, SPSDK environment, guests a rehearsal must launch |
 
-`advance` and `regress` write rehearsal records under `~/.cache/wolftrust`
-(override with `WT_PROVISION_STATE` or `RT700_PROVISION_STATE`). Each record
-holds the SHA-256 of the images it proved:
+## Adding a port
 
-- On the STM32H5, a record is bound to the device UID, expires after an
-  hour, and is consumed by the closing step. Each part is rehearsed, which
-  mass-erases it, then restored and locked within that hour.
-- On the MIMXRT700, each burn uses its record up, and a record expires after
-  an hour, so every part is rehearsed at the station right before its own
-  burn. No silicon UID is documented that both the SWD rehearsal and the ISP
-  burn can read. The record binds to the debug probe, and the burn runs only
-  on a fixture that wires the probe and ISP USB to one socket
-  (`RT700_FIXTURE_BOUND=1`).
+A port is one file, `tests/target/provisioning/provisioning_ctrl_<target>.sh`,
+that answers device questions through a fixed set of functions:
 
-Keep the records, the burn scripts `lock` writes next to them, and the
-terminal output with the production records for each part.
+| Function | Answers |
+| --- | --- |
+| `port_ladder` | the states: code, name, whether it has a mock, whether it can be locked, permanent or reversible, and the state it is reached from |
+| `port_status`, `port_discover`, `port_restore` | read the part, preflight, put the production images back |
+| `port_advance_check`, `port_advance`, `port_booted`, `port_regress` | enter and leave a mock state, and the evidence a rehearsal records |
+| `port_lock_current`, `port_lock_identity` | the real state, and the part's identity where it can be read |
+| `port_image_digest`, `port_cred_fp`, `port_record_ok` | what binds a rehearsal to these images, credentials, and part |
+| `port_rehearsal_for`, `port_ready` | which rehearsals count, and the port's provisioned-first checks |
+| `port_lock_plan`, `port_lock_write`, `port_lock_verify`, `port_consequence` | the permanent write: preview, do, read back, and what it costs |
+| `port_usage_extra`, `port_extra` | device-only commands |
+
+The gates, records, and prompts stay in `provisioning_ctrl.sh`, so a new port
+cannot weaken them.
+
+## Testing
+
+`make test` runs `make test-provisioning`: every gate of both ports against
+stub vendor tools, from the generic refusals to the typed acceptance. Nothing
+touches a board; the typed-acceptance cases need `expect` and skip without it.

@@ -208,8 +208,8 @@ Before any command that writes to the board, read the life cycle, debug, and
 fence state, then run the preflight that gates `advance`:
 
 ```sh
-tests/target/provisioning_ctrl_rt700.sh status
-tests/target/provisioning_ctrl_rt700.sh discover
+TARGET=mimxrt700 tests/target/provisioning/provisioning_ctrl.sh status
+TARGET=mimxrt700 tests/target/provisioning/provisioning_ctrl.sh discover
 ```
 
 Both only read over SWD, with the generic Cortex-M attach that never resets the
@@ -352,7 +352,7 @@ runners set this up per scenario:
 tests/target/run_rt700_hardware.sh wrpfence   # fence armed: both guests run
 tests/target/run_rt700_hardware.sh wrpoff     # no fence: both guests refused
 tests/target/run_rt700_hardware.sh wrpneg     # the silicon refuses a fenced erase
-tests/target/provisioning_ctrl_rt700.sh verify-wrp
+TARGET=mimxrt700 tests/target/provisioning/provisioning_ctrl.sh verify-wrp
 ```
 
 Because the fence is rebuilt on every boot and cleared by every reset, there is
@@ -406,9 +406,9 @@ wolfTrust, verified by the `wrpfence` checks), then run the read-only
 preflight:
 
 ```sh
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh restore
-tests/target/provisioning_ctrl.sh verify-wrp
-tests/target/provisioning_ctrl.sh discover
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh restore
+tests/target/provisioning/provisioning_ctrl.sh verify-wrp
+tests/target/provisioning/provisioning_ctrl.sh discover
 ```
 
 Output on the EVK:
@@ -439,12 +439,12 @@ and the shadow override to be open.
 for that state requires. Nothing here is permanent.
 
 ```sh
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x07
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x0F
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0xCF
-WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0x07
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0x0F
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0xCF
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
 ```
 
 Output on the EVK for Develop2:
@@ -486,7 +486,7 @@ Before regressing, check that the part behaves like the product you intend to
 ship. Output on the EVK after `advance 0xCF`, the mock locked state:
 
 ```text
-$ tests/target/provisioning_ctrl.sh status
+$ tests/target/provisioning/provisioning_ctrl.sh status
 OTP life cycle   LC_STATE=0xcf (In Field Locked)  LC_STATE_RED=0xcf
 LOCK_CFG3        0x00000000 (LIFE_CYCLE_LOCK=0: 0 = shadow override and fuse burn both open)
 DAUTHSTATUS      0x000000ff
@@ -495,7 +495,7 @@ guest fence      armed FRAD2 acp=0x00000000 word3=0xa0000000
 wolfTrust saw    0x00005000 (RECOVERABLE_PSA_ROT_DEBUG)
 guest launches   verified=0x00000003 refused=0x00000000
 
-$ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh regress
+$ WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
   [check] PASS  hardware reset reloaded the fused Develop life cycle
   [check] PASS  wolfTrust booted ASSEMBLY_AND_TEST again
   [check] PASS  rehearsal of 0xCF (In Field Locked) complete
@@ -514,9 +514,9 @@ from the fuses at boot. That is why this EVK attests `0x5000` rather than
 A refused command changes nothing and exits with status 2:
 
 ```text
-$ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh advance 0x0F
+$ WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0x0F
 REFUSED: prove 'regress' from Develop2 before advancing to 0x0F.
-$ tests/target/provisioning_ctrl.sh burn
+$ tests/target/provisioning/provisioning_ctrl.sh burn
 REFUSED: 'burn' programs OTP fuses, which is permanent on the MIMXRT700
 ```
 
@@ -565,13 +565,16 @@ See [how a production lock binds the software](Provisioning.md#how-a-production-
 
 | Command | Runs only when the fuses read | Burns | Also needs |
 | --- | --- | --- | --- |
-| `lock 0x07` | Develop `0x03` | Develop2 | a fresh rehearsal of `0x07` with the current images |
-| `lock 0x0F` | Develop2 `0x07` | In Field | **refused until ROM authentication**; then a rehearsal with the guest fence armed, and all 12 RKTH words burned |
-| `lock 0xCF` | In Field `0x0F` | In Field Locked (final) | **refused until ROM authentication**; then as In Field |
-| `lock 0x1F` | In Field `0x0F` | In Field Return (final) | **refused until ROM authentication** |
+| `lock develop2` (`0x07`) | develop `0x03` | Develop2 | a fresh rehearsal of `0x07` with the current images; `WT_FIXTURE_BOUND=1` |
+| `lock in-field` (`0x0F`) | develop2 `0x07` | In Field | **refused until ROM authentication** |
+| `lock in-field-locked` (`0xCF`) | in-field `0x0F` | In Field Locked (final) | **refused until ROM authentication** |
+| `lock in-field-return` (`0x1F`) | in-field `0x0F` | In Field Return (final) | **refused until ROM authentication** |
 
-On top of [the shared gates](Provisioning.md#gates-on-a-real-lock), `lock`
-checks four things on this port:
+The burn runs over the ISP USB link, and no chip identity is documented that
+both the SWD rehearsal and ISP can read. So every RT700 burn needs
+`WT_FIXTURE_BOUND=1`, set only on a fixture that wires the debug probe and ISP
+USB to one socket. On top of [the shared gates](Provisioning.md#the-lock-gates),
+`lock` checks these on this port:
 - It reads the life cycle from the burned fuses over the ISP connection, not
   from the shadows that `advance` changes.
 - It needs a rehearsal of that exact state, with the SHA-256 of the four
@@ -580,7 +583,7 @@ checks four things on this port:
   now, and that probe must be the only one attached. The EVK's MCU-Link is
   soldered to the board, so this binds the record to the board; on a
   production fixture with its own probe, it binds the record to the station.
-- The rehearsal must be recent: at most `RT700_REHEARSAL_MAX_AGE` seconds old,
+- The rehearsal must be recent: at most `WT_REHEARSAL_MAX_AGE` seconds old,
   one hour by default, and not dated in the future. No silicon UID is
   documented to bind a record to the part itself. On a fixture, the probe plus
   a fresh, single-use rehearsal stands in for that binding: rehearse the part
@@ -601,26 +604,21 @@ The steps below mix three kinds of output:
    `lock` runs every check, prints the exact blhost script, and writes nothing:
 
    ```sh
-   RT700_ISP='-u 0x1fc9,0x014f' tests/target/provisioning_ctrl.sh lock 0x07
+   RT700_ISP='-u 0x1fc9,0x014f' tests/target/provisioning/provisioning_ctrl.sh lock develop2
    ```
 
    ```text
-   Lock step: fused Develop (0x03) -> Develop2 (0x07)
-     checked: order, rehearsal of 0x07 with images c14c9040eaad6fb1 (240s ago)
-     will run: blhost -u 0x1fc9,0x014f batch ~/.cache/wolftrust/rt700-lock-0x07-20260930T232116Z.bls
-       efuse-program-once 0x25 00000007 --no-verify
-       efuse-program-once 0x8F 00000007 --no-verify
+   Lock step: develop (0x03) -> develop2 (0x07)
+     checked: next state, rehearsal of develop2 (0x07) with images 8841d566395ee97b (240s ago), part identity not readable here (needs WT_FIXTURE_BOUND=1), same debug probe 2GMGHYXZEONQS
+     will run: blhost -u 0x1fc9,0x014f efuse-program-once 0x25 00000007 --no-verify
+     will run: blhost -u 0x1fc9,0x014f efuse-program-once 0x8F 00000007 --no-verify
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    ```
 
-   Read every line of the script: each one is a permanent fuse write.
-
-   `lock` burns only the two life cycle words. Before printing them it checks
-   the script: only `efuse-program-once` lines, each life cycle word exactly
-   the requested state (upper bits included), no word locked before the final
-   step, no `LIFE_CYCLE_LOCK` before the final step, and the life cycle words
-   last. After the burn it requires the low byte of both words to be the new
-   state, with the upper bits unchanged.
+   Each line is a permanent fuse write. `lock` burns only the two life cycle
+   words, the redundant copy first, each exactly the requested state. After
+   the burn it requires the low byte of both words to be the new state, with
+   the upper bits unchanged.
 
    > **Not yet burnable: the root key hash and debug root.** `lock` refuses a
    > fuse configuration file. The burn runs over the ISP USB link, and no chip
@@ -630,7 +628,7 @@ The steps below mix three kinds of output:
 
    > **Fixture required for the burn.** The same gap applies to the life
    > cycle step: the rehearsal is bound to the debug probe, but the burn goes
-   > over ISP USB. `lock` therefore burns only with `RT700_FIXTURE_BOUND=1`,
+   > over ISP USB. `lock` therefore burns only with `WT_FIXTURE_BOUND=1`,
    > which a station sets only on a fixture whose single socket wires both the
    > probe and ISP USB to the part. Without it, `lock` stops after the preview.
 
@@ -640,8 +638,8 @@ The steps below mix three kinds of output:
    > to Develop.
 
    ```sh
-   export WT_PRODUCTION_LOCK=1 RT700_FIXTURE_BOUND=1 RT700_ISP='-u 0x1fc9,0x014f'
-   WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x07
+   export WT_PRODUCTION_LOCK=1 WT_FIXTURE_BOUND=1 RT700_ISP='-u 0x1fc9,0x014f'
+   WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh lock develop2
    ```
 
    After the same preview it asks, and only a person at a terminal typing the
@@ -659,7 +657,7 @@ The steps below mix three kinds of output:
    ```text
    Response status = 0 (0x0) Success.
    Response status = 0 (0x0) Success.
-     [check] PASS  life cycle fuses are Develop2 (0x07); reset the part, then run: tests/target/provisioning_ctrl.sh status
+     [check] PASS  life cycle fuses are Develop2 (0x07); reset the part, then run: tests/target/provisioning/provisioning_ctrl.sh status
    ```
 
    The two life cycle copies are separate fuse words. A burn interrupted
@@ -683,11 +681,11 @@ A refused `lock` exits with status 2 and burns nothing. Refusals seen on the
 EVK:
 
 ```text
-$ tests/target/provisioning_ctrl.sh lock 0x0F
+$ tests/target/provisioning/provisioning_ctrl.sh lock 0x0F
 REFUSED: In Field (0x0F) needs the BootROM to authenticate wolfBoot (a signed image under the fused root key hash), which this port does not build yet; see the MIMXRT700 Guide.
-$ tests/target/provisioning_ctrl.sh lock 0x07
+$ tests/target/provisioning/provisioning_ctrl.sh lock 0x07
 REFUSED: set RT700_ISP to the blhost ISP connection (for example '-u 0x1fc9,0x014f').
-$ RT700_ISP='-u 0x1fc9,0x014f' tests/target/provisioning_ctrl.sh lock 0x07
+$ RT700_ISP='-u 0x1fc9,0x014f' tests/target/provisioning/provisioning_ctrl.sh lock 0x07
 REFUSED: cannot read the life cycle fuses over RT700_ISP (-u 0x1fc9,0x014f).
 ```
 
@@ -796,7 +794,7 @@ checks:
   reference manual and NOR geometry.
 - The guest fence and a shadow life cycle both end at the next hard reset, so a
   board can never be left stuck protected or advanced: flash from a parked core,
-  or run `provisioning_ctrl_rt700.sh regress`.
+  or run `TARGET=mimxrt700 tests/target/provisioning/provisioning_ctrl.sh regress`.
 - With an advanced shadow life cycle live, the device-pack reset sequence can
   fail with a FAULT ACK; `regress` resets through the board's reset line, which
   the debug port cannot block, and restores the fused state.
