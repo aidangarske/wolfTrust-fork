@@ -32,7 +32,8 @@
 static void wt_reset_main(void) __attribute__((noreturn, used));
 
 /* Naked so nothing is pushed before MSP is moved below the two seal words
- * and they are written; MSP moves first so an exception cannot stack over them. */
+ * and they are written; MSP moves first so an exception cannot stack over
+ * them, and MSPLIM_S is set only once MSP sits above it. */
 __attribute__((naked, noreturn))
 void Reset_Handler(void)
 {
@@ -44,12 +45,16 @@ void Reset_Handler(void)
         "msr  msp, r0            \n"
         "str  r1, [r0, #0]       \n"
         "str  r1, [r0, #4]       \n"
+        "ldr  r2, =_sstack       \n"
+        "msr  msplim, r2         \n"
+        "isb                     \n"
         "b    wt_reset_main      \n");
 }
 
 static void wt_reset_main(void)
 {
     extern uint32_t _estack;
+    extern uint32_t _sstack;
     extern uint32_t _sidata;
     extern uint32_t _sdata;
     extern uint32_t _edata;
@@ -76,6 +81,7 @@ static void wt_reset_main(void)
     uint32_t* src = &_sidata;
     uint32_t* dst = &_sdata;
     uint32_t msp;
+    uint32_t msplim;
 
     while (dst < &_edata) {
         *dst++ = *src++;
@@ -122,11 +128,13 @@ static void wt_reset_main(void)
      * boot path behind it. */
     __asm__ volatile ("str %1, [%0]" : : "r"(seal), "r"(0u) : "memory");
 #endif
-    /* Refuse to boot unless the reset entry sealed the main stack top and
-     * moved MSP below the seal words. */
+    /* Refuse to boot unless the reset entry sealed the main stack top, moved
+     * MSP below the seal words, and limited the main stack at _sstack. */
     __asm__ volatile ("mrs %0, msp" : "=r"(msp));
+    __asm__ volatile ("mrs %0, msplim" : "=r"(msplim));
     if (seal[0] != WT_ARMV8M_STACK_SEAL || seal[1] != WT_ARMV8M_STACK_SEAL ||
-        msp > (uint32_t)(uintptr_t)seal) {
+        msp > (uint32_t)(uintptr_t)seal ||
+        msplim != (uint32_t)(uintptr_t)&_sstack || msplim >= msp) {
         wt_platform_panic();
     }
 

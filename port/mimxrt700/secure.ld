@@ -74,6 +74,8 @@ MEMORY {
 }
 
 _estack = ORIGIN(RAM) + LENGTH(RAM);
+/* Secure main stack: MSPLIM_S is set to _sstack at reset. */
+_sstack = _estack - WT_SPM_STACK_SIZE;
 _sidata = LOADADDR(.data);
 
 SECTIONS {
@@ -321,4 +323,6 @@ SECTIONS {
          "conformance data/bss overflows into the reserved MMIO holes")
   ASSERT(ORIGIN(SPSTACKS) == (ORIGIN(CONFDATA) + LENGTH(CONFDATA)),
          "SP secure stacks must sit directly above the conformance data window")
+  ASSERT(_ebss <= _sstack,
+         "secure .bss reaches the SPM main stack (WT_SPM_STACK_SIZE)")
 }

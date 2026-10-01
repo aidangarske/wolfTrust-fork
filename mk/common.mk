@@ -28,6 +28,8 @@ WT_MAX_GUESTS ?= 2
 # the SP_SMALL math switch; PSPLIM_S faults any real overflow, so this floor
 # is measured, not guessed.
 WT_CO_STACK_SIZE ?= 10240
+# Secure main (SPM) stack, sized at link and limited by MSPLIM_S at reset.
+WT_SPM_STACK_SIZE ?= 0x4000
 WT_LTO ?= 1
 ifneq ($(WT_LTO),0)
 ifneq ($(WT_LTO),1)
@@ -1432,6 +1434,7 @@ $(BUILD_MODE_STAMP): FORCE | $(BUILD_DIR)
 		'WT_BOOTUPDATE_PROBE=$(WT_BOOTUPDATE_PROBE)' \
 		'WT_MAX_GUESTS=$(WT_MAX_GUESTS)' \
 		'WT_CO_STACK_SIZE=$(WT_CO_STACK_SIZE)' \
+		'WT_SPM_STACK_SIZE=$(WT_SPM_STACK_SIZE)' \
 		'WT_WOLFCRYPT_SP_ASM=$(WT_WOLFCRYPT_SP_ASM)' \
 		'WT_WOLFCRYPT_ARMASM=$(WT_WOLFCRYPT_ARMASM)' \
 		'WT_WOLFCRYPT_STM32_HASH=$(WT_WOLFCRYPT_STM32_HASH)' \
@@ -1535,6 +1538,7 @@ $(SECURE_ELF) $(SECURE_MAP) $(ARCH_LINK_OUTPUTS) &: $(ALL_SECURE_OBJS) $(SECURE_
 	$(CC) $(SECURE_CFLAGS) \
 		$(TARGET_LDFLAGS) \
 		-Wl,--defsym=WT_VNET_DATA_LENGTH=$(WT_VNET_DATA_LENGTH) \
+		-Wl,--defsym=WT_SPM_STACK_SIZE=$(WT_SPM_STACK_SIZE) \
 		-Wl,-T$(SECURE_LD) \
 		-Wl,--gc-sections -Wl,-Map=$(SECURE_MAP),--cref \
 		$(WT_LTO_LDFLAGS) $(WT_EXTRA_LDFLAGS) \

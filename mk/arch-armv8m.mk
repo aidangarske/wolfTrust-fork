@@ -96,6 +96,7 @@ define arch_image_checks
 	@$(TOOLPREFIX)size -A -x $(SECURE_ELF) > $(BUILD_DIR)/sec-sections.txt || \
 		{ echo "FAIL: size on the secure image failed" >&2; exit 1; }
 	@estack=$$(awk '$$3 == "_estack" { print $$1 }' $(BUILD_DIR)/nsc-syms.txt); \
+	sstack=$$(awk '$$3 == "_sstack" { print $$1 }' $(BUILD_DIR)/nsc-syms.txt); \
 	python3 $(ROOT)/tools/check_stack_seal.py --estack "$$estack" \
-		$(BUILD_DIR)/sec-sections.txt
+		--sstack "$$sstack" $(BUILD_DIR)/sec-sections.txt
 endef

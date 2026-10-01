@@ -678,6 +678,10 @@ void wt_platform_system_reset(void)
             spins < 0x00200000u) {
         spins++;
     }
+    /* Drop the Secure stack limits first: the next boot starts wolfBoot on
+     * its own stack below MSPLIM_S, and a core that carried the limit over
+     * the reset would fault its first push. */
+    __asm volatile("movs r0, #0\n msr msplim, r0\n msr psplim, r0" ::: "r0");
     wt_dsb();
     WT_SCB_AIRCR_S = WT_SCB_AIRCR_SYSRESETREQ;
     wt_dsb();

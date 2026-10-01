@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Check that no allocated section reaches the Secure main-stack seal."""
+"""Check that no allocated section reaches the Secure main stack.
+
+The seal words sit at the top of the stack; with --sstack the whole stack
+[sstack, estack) is reserved, so .bss cannot grow under the stack limit."""
 
 import argparse
 import re
@@ -23,7 +26,7 @@ def sections(lines):
     return found
 
 
-def check(lines, estack):
+def check(lines, estack, sstack=None):
     found = sections(lines)
     if not found:
         return ["no sections found in the size listing"]
@@ -31,11 +34,20 @@ def check(lines, estack):
         return ["stack top 0x%08x is not a usable 8-byte aligned address"
                 % estack]
     seal = estack - SEAL_BYTES
+    if sstack is None:
+        low = seal
+        what = "stack seal"
+    else:
+        if sstack >= seal or (sstack & 7) != 0:
+            return ["stack limit 0x%08x is not below the seal at 0x%08x"
+                    % (sstack, seal)]
+        low = sstack
+        what = "main stack"
     errors = []
     for name, size, addr in found:
-        if size != 0 and addr < estack and addr + size > seal:
-            errors.append("section %s (0x%08x..0x%08x) overlaps the stack "
-                          "seal at 0x%08x" % (name, addr, addr + size, seal))
+        if size != 0 and addr < estack and addr + size > low:
+            errors.append("section %s (0x%08x..0x%08x) overlaps the %s "
+                          "at 0x%08x" % (name, addr, addr + size, what, low))
     return errors
 
 
@@ -67,6 +79,21 @@ def self_test():
     if check([], estack) == [] or check(base, 0x30096004) == []:
         print("self-test accepted unusable input", file=sys.stderr)
         failures += 1
+    limit_cases = (
+        ("bss ending at the stack limit", [".bss 0x100 0x30091f00\n"],
+         True),
+        ("bss crossing the stack limit", [".bss 0x101 0x30091f00\n"],
+         False),
+        ("bss inside the stack", [".bss 0x10 0x30094000\n"], False),
+    )
+    for name, extra, want_ok in limit_cases:
+        if (check(base + extra, estack, 0x30092000) == []) != want_ok:
+            print("self-test failed: %s" % name, file=sys.stderr)
+            failures += 1
+    if check(base, estack, 0x30095ff8) == [] or \
+            check(base, estack, 0x30092004) == []:
+        print("self-test accepted an unusable stack limit", file=sys.stderr)
+        failures += 1
     if failures != 0:
         return 1
     print("PASS: stack_seal_layout")
@@ -78,6 +105,7 @@ def main():
     parser.add_argument("listing", nargs="?",
                         help="output of 'size -A -x' for the Secure image")
     parser.add_argument("--estack", help="address of the main stack top")
+    parser.add_argument("--sstack", help="address of the main stack limit")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -87,8 +115,9 @@ def main():
         parser.error("listing and --estack are required")
     try:
         estack = int(args.estack, 16)
+        sstack = int(args.sstack, 16) if args.sstack else None
         with open(args.listing, "r", errors="replace") as handle:
-            errors = check(handle, estack)
+            errors = check(handle, estack, sstack)
     except (OSError, ValueError) as error:
         errors = ["cannot check %s: %s" % (args.listing, error)]
     for error in errors:
