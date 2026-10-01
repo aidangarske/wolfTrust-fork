@@ -42,4 +42,8 @@ wt_guest_id_t wt_hsm_guest_for_tasklet(const struct wt_co *tasklet);
  * NULL for an out-of-range guest. */
 unsigned char *wt_hsm_priv_stack(wt_guest_id_t guest_id);
 
+/* Zero a faulted guest's tasklet stack and guard, keeping the canary word at
+ * stack[0] for the post-fault switch check. */
+void wt_hsm_priv_wipe_stack(wt_guest_id_t guest_id);
+
 #endif /* WOLFTRUST_HSM_PRIV_H */

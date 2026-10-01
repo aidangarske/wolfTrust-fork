@@ -68,6 +68,7 @@ static whNvmConfig g_nvm_cfg;
 static whNvmContext g_nvm_ctx;
 
 static int g_failures;
+static uint32_t g_ramsim_size = RAMSIM_SIZE;
 static whNvmId g_fail_add_id = WH_NVM_ID_INVALID;
 static unsigned int g_fail_add_skips;
 
@@ -182,7 +183,7 @@ static int test_nvm_up(int reboot)
     g_nvm_cb[0].AddObject = test_nvm_add;
     (void)memset(&g_ramsim_cfg, 0, sizeof(g_ramsim_cfg));
     g_ramsim_cfg.memory = g_flash_memory;
-    g_ramsim_cfg.size = RAMSIM_SIZE;
+    g_ramsim_cfg.size = g_ramsim_size;
     g_ramsim_cfg.sectorSize = RAMSIM_SECTOR;
     g_ramsim_cfg.pageSize = RAMSIM_PAGE;
     g_ramsim_cfg.erasedByte = 0xFF;
@@ -746,6 +747,120 @@ static void test_replacement_stage_cleanup(void)
           "next operation destroys an orphan recovery stage");
 }
 
+static void test_sealed_delete_recovery(void)
+{
+    static const uint8_t secret[] = "delete recovery";
+    static const uint8_t key_data[] = "retained key";
+    uint8_t buffer[sizeof(secret)];
+    uint8_t corrupt[sizeof(secret) + WT_VAULT_SEAL_TAG_LEN];
+    whNvmMetadata meta;
+    whNvmId id = WH_NVM_ID_INVALID;
+    size_t got = 0U;
+    psa_status_t status;
+
+    check(test_nvm_up(0) == 0, "initialized sealed delete recovery test");
+    status = wt_hsm_vault_backend.set(TEST_PS_PARTITION, TEST_NS_GUEST0,
+        0xC001ULL, WT_VAULT_FLAG_SEALED, secret, sizeof(secret));
+    check(status == PSA_SUCCESS, "created sealed delete recovery source");
+    if (status != PSA_SUCCESS) {
+        return;
+    }
+    check(test_find_stored(sizeof(secret), &id, &meta) == 0,
+          "located sealed delete recovery source");
+    if (id == WH_NVM_ID_INVALID) {
+        return;
+    }
+
+    /* Let the delete marker commit, then fail the table update after the
+     * object is destroyed. Reboot must finish the pending deletion. */
+    g_fail_add_id = WT_HSM_VAULT_TABLE_ID;
+    g_fail_add_skips = 1U;
+    status = wt_hsm_vault_backend.remove(TEST_PS_PARTITION, TEST_NS_GUEST0,
+                                          0xC001ULL);
+    check(status == PSA_ERROR_STORAGE_FAILURE,
+          "interrupted sealed delete reports storage failure");
+    (void)memset(&meta, 0, sizeof(meta));
+    meta.id = id;
+    meta.access = WH_NVM_ACCESS_ANY;
+    meta.flags = WH_NVM_FLAGS_SENSITIVE | WH_NVM_FLAGS_NONEXPORTABLE;
+    meta.len = (whNvmSize)sizeof(key_data);
+    wt_hsm_vault_make_label(meta.label, TEST_PS_PARTITION, TEST_NS_GUEST1,
+                            0xC002ULL, WT_VAULT_FLAG_KEY);
+    check(wh_Nvm_AddObject(&g_nvm_ctx, &meta, meta.len, key_data) ==
+              WH_ERROR_OK, "new key reuses deleted sealed slot");
+    check(test_nvm_up(1) == 0, "rebooted after interrupted sealed delete");
+    status = wt_hsm_vault_backend.get(TEST_PS_PARTITION, TEST_NS_GUEST0,
+        0xC001ULL, 0U, buffer, sizeof(buffer), &got);
+    check(status == PSA_ERROR_DOES_NOT_EXIST,
+          "recovery finishes sealed delete before serving reads");
+    check(wh_Nvm_GetMetadata(&g_nvm_ctx, id, &meta) == WH_ERROR_OK &&
+              wh_Nvm_Read(&g_nvm_ctx, id, 0U, (whNvmSize)sizeof(key_data),
+                          buffer) == WH_ERROR_OK &&
+              memcmp(buffer, key_data, sizeof(key_data)) == 0,
+          "recovery preserves a key that reused the slot");
+    status = wt_hsm_vault_backend.set(TEST_PS_PARTITION, TEST_NS_GUEST0,
+        0xC001ULL, WT_VAULT_FLAG_SEALED, secret, sizeof(secret));
+    check(status == PSA_SUCCESS, "deleted sealed UID can be reused");
+
+    check(test_find_stored(sizeof(secret), &id, &meta) == 0,
+          "located second sealed delete recovery source");
+    g_fail_add_id = WT_HSM_VAULT_TABLE_ID;
+    g_fail_add_skips = 1U;
+    status = wt_hsm_vault_backend.remove(TEST_PS_PARTITION, TEST_NS_GUEST0,
+                                          0xC001ULL);
+    check(status == PSA_ERROR_STORAGE_FAILURE,
+          "second sealed delete is interrupted");
+    (void)memset(corrupt, 0xA5, sizeof(corrupt));
+    check(wh_Nvm_AddObject(&g_nvm_ctx, &meta, meta.len, corrupt) ==
+              WH_ERROR_OK, "corrupt sealed object occupies deleted slot");
+    check(test_nvm_up(1) == 0, "rebooted with corrupt sealed object");
+    status = wt_hsm_vault_backend.get(TEST_PS_PARTITION, TEST_NS_GUEST0,
+        0xC001ULL, 0U, buffer, sizeof(buffer), &got);
+    check(status == PSA_ERROR_DOES_NOT_EXIST,
+          "recovery removes the corrupt sealed object");
+    check(wh_Nvm_GetMetadata(&g_nvm_ctx, id, &meta) == WH_ERROR_NOTFOUND,
+          "corrupt sealed object no longer consumes its slot");
+}
+
+static void test_full_store_remove(void)
+{
+    static uint8_t object[512];
+    uint64_t uid;
+    uint64_t filled = 0U;
+    uint64_t refilled = 0U;
+    psa_status_t status = PSA_SUCCESS;
+
+    /* Two 4 KiB sectors match the smallest port NVM store (MIMXRT700). */
+    (void)memset(object, 0x5A, sizeof(object));
+    (void)memset(g_flash_memory, 0xFF, sizeof(g_flash_memory));
+    g_ramsim_size = 2U * RAMSIM_SECTOR;
+    check(test_nvm_up(0) == 0, "initialized small sealed store");
+    for (uid = 1U; status == PSA_SUCCESS; uid++) {
+        status = wt_hsm_vault_backend.set(TEST_PS_PARTITION, TEST_NS_GUEST0,
+            uid, WT_VAULT_FLAG_SEALED, object, sizeof(object));
+        if (status == PSA_SUCCESS) {
+            filled++;
+        }
+    }
+    check(filled > 0U && status == PSA_ERROR_INSUFFICIENT_STORAGE,
+          "sealed store fills to insufficient storage");
+    for (uid = 1U; uid <= filled; uid++) {
+        status = wt_hsm_vault_backend.remove(TEST_PS_PARTITION,
+                                              TEST_NS_GUEST0, uid);
+        check(status == PSA_SUCCESS, "sealed remove succeeds on a full store");
+    }
+    status = PSA_SUCCESS;
+    for (uid = 1U; status == PSA_SUCCESS; uid++) {
+        status = wt_hsm_vault_backend.set(TEST_PS_PARTITION, TEST_NS_GUEST0,
+            uid, WT_VAULT_FLAG_SEALED, object, sizeof(object));
+        if (status == PSA_SUCCESS) {
+            refilled++;
+        }
+    }
+    check(refilled == filled, "full store refills to the same count");
+    g_ramsim_size = RAMSIM_SIZE;
+}
+
 int main(void)
 {
     static const uint8_t secret_v1[] = "ps-secret-version-one";
@@ -968,6 +1083,8 @@ int main(void)
     test_recovery_counter_binding();
     test_invalid_sealed_length();
     test_replacement_stage_cleanup();
+    test_sealed_delete_recovery();
+    test_full_store_remove();
 
     if (g_failures != 0) {
         return 1;

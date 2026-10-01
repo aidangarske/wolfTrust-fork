@@ -28,6 +28,7 @@ scenario_secure_flags() {
         deputyneg)        echo "WT_DEPUTY_NEG_PROBE=1" ;;
         hsmpinneg)        echo "WT_HSM_PIN_NEG_PROBE=1" ;;
         spfaultneg)       echo "WT_SP_FAULT_PROBE=1" ;;
+        hsmfaultneg)      echo "WT_HSM_FAULT_PROBE=1" ;;
         panicneg)         echo "WT_PANIC_NEG_PROBE=1" ;;
         confboot|devstorage|devcrypto|devattest|devattestqcbor)
                           echo "WT_CONFORMANCE=1" ;;
