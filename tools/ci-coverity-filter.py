@@ -13,6 +13,12 @@ def filter_capture():
     for entry in index.split(b"\0"):
         if entry.startswith(b"160000 "):
             dependencies.add(root / entry.split(b"\t", 1)[1].decode())
+    # Coverity Scan's ignored component also covers included headers in lib/.
+    # Refuse a new submodule elsewhere rather than upload unexcluded headers.
+    if any(path != root / "lib" and root / "lib" not in path.parents
+           for path in dependencies):
+        raise ValueError("Coverity dependencies must reside under lib/ to "
+                         "match the project's ignored component")
 
     command = ["cov-manage-emit", "--dir", "cov-int"]
 

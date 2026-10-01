@@ -12,16 +12,19 @@ both crypto engines via `tools/ci-static-analysis-build.sh`.
 
 Before upload, `tools/ci-coverity-filter.py` removes compilation units whose
 primary source is under `lib/`, in any Git submodule, or outside the checkout,
-then the workflow recreates the archive. Submodule paths come from Git's index,
-so a new submodule outside `lib/` is excluded automatically. The scan covers
+then the workflow recreates the archive. Submodule paths come from Git's index.
+Dependencies must reside under `lib/`; a new submodule elsewhere fails the job
+before upload so its headers cannot bypass the project exclusion. The scan covers
 wolfTrust runtime, ports, tests, and generated policy code. The job lists the
 retained units and refuses to upload an empty capture, an unrecognized listing,
 or one that still contains dependency source units.
 
 Dependency headers remain available to parse wolfTrust sources. Source-unit
-filtering does not suppress findings in included dependency headers. A project
-component exclusion in Coverity Scan is needed to ignore those header findings;
-keep that exclusion aligned with `lib/` and any other submodule paths.
+filtering does not suppress findings in included dependency headers. In wolfTrust's
+Coverity Scan Analysis Settings, keep the `Third party dependencies` component
+with pattern `.*/lib/.*` and **Ignore component in analysis** enabled. This excludes
+dependency headers as well as sources; the CI guard keeps new submodules inside
+that scope. Component changes can take up to 15 minutes to appear in Scan.
 
 Coverity uploads must return HTTP 201 to pass. A refusal because an earlier
 build is still queued fails the submission step and shows the server response.
