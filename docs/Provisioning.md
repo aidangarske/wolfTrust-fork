@@ -88,8 +88,10 @@ write to the board refuse without `WT_LOCK_CONFIRM=1`.
 | `WT_PRODUCTION_LOCK=1` | marks a production station; `lock` never writes without it |
 | `WT_PROVISION_STATE`, `RT700_PROVISION_STATE` | where rehearsal records are kept (default `~/.cache/wolftrust`) |
 | `RT700_ISP` | MIMXRT700 blhost ISP connection, for example `-u 0x1fc9,0x014f` |
+| `RT700_GUEST_MASK` | guests a MIMXRT700 rehearsal must launch verified (default `0x3`) |
+| `RT700_REHEARSAL_MAX_AGE` | seconds a MIMXRT700 rehearsal stays valid (default `3600`) |
 | `STM32_CLI`, `H5_SERIAL` | STM32CubeProgrammer CLI path and the board UART |
-| `WT_DA_*` | STM32H5 Debug Authentication key, certificate, and OBK |
+| `WT_DA_*` | STM32H5 Debug Authentication key, certificate, and OBK; a production lock requires all three, and not ST's sample |
 
 ## Gates on a real lock
 
@@ -101,11 +103,17 @@ fails, with exit status 2 and nothing written:
    the burned fuses over ISP on the MIMXRT700, the product state over SWD on
    the STM32H5. The silicon would accept some skips, for example MIMXRT700
    Develop straight to In Field Locked. `lock` refuses them.
-3. **A rehearsal of that state exists for the current images.** A rebuild
-   invalidates it.
+3. **A rehearsal of that state exists for the current images.** It holds the
+   SHA-256 of the images that are flashed, so a rebuild invalidates it. On the
+   MIMXRT700 the rehearsal also read those images back off the part, required
+   every guest to launch verified, and must be at most an hour old. On the
+   STM32H5 it also holds the DA certificate the regression used.
 4. **The part is provisioned first**:
-   - on the MIMXRT700, the guest fence and the root key hash;
-   - on the STM32H5, the guest WRP and a working Debug Authentication chain.
+   - on the MIMXRT700, the guest fence and all 12 root key hash words, and a
+     first stage the BootROM authenticates (until the port builds one, `lock`
+     refuses In Field and later);
+   - on the STM32H5, the guest WRP and a working Debug Authentication chain
+     that is your own, never ST's sample.
 
    The life cycle is always written last.
 5. **Preview.** `lock` prints the exact write. Without `WT_LOCK_CONFIRM=1` it
@@ -115,7 +123,8 @@ fails, with exit status 2 and nothing written:
 8. **Typed acceptance.** Only the exact phrase `I ACCEPT <state>` continues;
    anything else changes nothing.
 9. **Read back.** After the write, `lock` reads the state back and fails
-   unless it moved.
+   unless it moved. On the STM32H5 it also fails if wolfTrust did not boot in
+   a closed state.
 
 These follow the pattern of the vendors' own provisioning tools:
 - NXP's MCUXpresso Secure Provisioning tool offers a "Test life cycle" mode
@@ -188,12 +197,14 @@ is still open therefore attests `0x5000`, not `0x3000`.
 
 `advance` and `regress` write rehearsal records under `~/.cache/wolftrust`
 (override with `WT_PROVISION_STATE` or `RT700_PROVISION_STATE`). Each record
-holds a digest of the images it proved:
+holds the SHA-256 of the images it proved:
 
-- On the STM32H5, a record is kept until the images change, because each
-  rehearsal of a closed state mass-erases the sample.
-- On the MIMXRT700, each burn uses its record up, so every part is rehearsed
-  before its own burn.
+- On the STM32H5, a record is kept until the images or the DA certificate
+  change, because each rehearsal of a closed state mass-erases the sample.
+- On the MIMXRT700, each burn uses its record up, and a record expires after
+  an hour, so every part is rehearsed at the station right before its own
+  burn. No silicon UID is documented to bind a record to one part, so this
+  freshness is the binding.
 
 Keep the records, the burn scripts `lock` writes next to them, and the
 terminal output with the production records for each part.

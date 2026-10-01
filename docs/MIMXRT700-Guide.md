@@ -752,6 +752,14 @@ each `advance` followed by `regress`, with the fenced production chain:
 `lock 0x07` then refused without `RT700_ISP`, and with it refused because the
 EVK was not in ISP mode, so the fuses could not be read. Nothing was burned.
 
+After the security review the rehearsal was run again with the stricter
+checks:
+- `advance 0x07` required `verified=0x3 refused=0x0`.
+- It read the four flashed images back and matched the host build.
+- It recorded the full image SHA-256 with a timestamp.
+
+`lock 0x0F` then refused, because the first stage is not ROM-authenticated.
+
 ## Recovery rules
 
 - If the BootROM does not run the image, confirm the FCB is present and the

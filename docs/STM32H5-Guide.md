@@ -299,12 +299,20 @@ state after regression: 0xED
 PASS: wolfTrust restored and booting
 ```
 
-The rehearsal records, each holding the digest of the four images:
+The rehearsal records hold the SHA-256 of the four images. The regression
+record also holds the SHA-256 of the DA certificate chain it authenticated
+with (first 16 hex digits of each shown):
 
 ```text
-h5-booted-0x72: 78ec12f957707ed0
-h5-regressed-0x72: 78ec12f957707ed0
+h5-booted-0x72: 78ec12f957707ed0...
+h5-regressed-0x72: 78ec12f957707ed0... d21811a12f5533f4...
 ```
+
+> **Warning:** rehearse with the production DA chain (`WT_DA_OBK`,
+> `WT_DA_KEY`, `WT_DA_CERT`), not ST's sample. A production `lock` refuses
+> ST's sample, and accepts only a rehearsal whose regression used the same
+> certificate chain it is about to rely on. The run above used ST's sample, as
+> a development board does.
 
 One Closed rehearsal covers `lock 0x17`, `lock 0x72`, and `lock 0x5C`. For
 `lock 0xC6`, rehearse with `advance 0xC6` in place of `advance 0x72`.
@@ -356,17 +364,22 @@ See [how a production lock binds the software](Provisioning.md#how-a-production-
 | Command | Runs only from | Sets | Also needs |
 | --- | --- | --- | --- |
 | `lock 0x17` | Open `0xED` | Provisioning | a DA regression rehearsed from Provisioning or a closed state |
-| `lock 0xC6` | Provisioning `0x17` | TrustZone Closed | a rehearsal of `0xC6`; guest WRP; DA provisioned |
-| `lock 0x72` | Provisioning `0x17` | Closed | a rehearsal of `0x72`; guest WRP; DA provisioned |
+| `lock 0xC6` | Provisioning `0x17` | TrustZone Closed | a rehearsal of `0xC6` with the production DA chain; guest WRP; DA provisioned |
+| `lock 0x72` | Provisioning `0x17` | Closed | a rehearsal of `0x72` with the production DA chain; guest WRP; DA provisioned |
 | `lock 0x5C` | Provisioning `0x17` | Locked (final) | a rehearsal of `0x72`; guest WRP |
 
 On top of [the shared gates](Provisioning.md#gates-on-a-real-lock), `lock`
-checks two more things on this port:
+checks more on this port:
 - `WRPSGn1=0x000FFFFF`, the guest WRP.
-- For TrustZone Closed and Closed, a live DA discovery showing an intact
-  OBK that offers Full Regression.
+- For TrustZone Closed and Closed:
+  - a live DA discovery showing an intact OBK that offers Full Regression;
+  - a production DA credential: `WT_DA_OBK`, `WT_DA_KEY`, and `WT_DA_CERT`
+    set explicitly, none matching ST's sample. `provision-da` refuses the
+    sample too when `WT_PRODUCTION_LOCK=1`.
 
-After the write, it confirms the new state through DA discovery.
+After the write, it confirms the new state through DA discovery. For
+TrustZone Closed, Closed, and Locked it also requires the wolfTrust boot on
+the UART, and fails (without repeating the write) if the chain did not boot.
 
 1. **Flash the production part** as in stage 1. Keep the images you
    rehearsed with: a rebuild invalidates the rehearsal.
@@ -382,12 +395,13 @@ After the write, it confirms the new state through DA discovery.
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    ```
 
-   From Provisioning, with DA provisioned:
+   From Provisioning, with DA provisioned. This board carries ST's sample
+   credential, so the preview says a production lock would refuse it:
 
    ```text
    $ tests/target/provisioning_ctrl.sh lock 0x72
    Lock step: Provisioning (0x17) -> Closed (0x72)
-     checked: order, rehearsal of Closed with images 78ec12f957707ed0, guest WRP, DA provisioned
+     checked: order, rehearsal of Closed with images 78ec12f957707ed0, guest WRP, DA credential is ST's sample or unset (a production lock refuses it), DA provisioned
      will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x72
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    $ tests/target/provisioning_ctrl.sh lock 0x5C
@@ -402,6 +416,8 @@ After the write, it confirms the new state through DA discovery.
 
    ```sh
    export WT_PRODUCTION_LOCK=1
+   export WT_DA_OBK=production/DA_Config.obk WT_DA_KEY=production/leaf.pem \
+          WT_DA_CERT=production/leaf_chain.b64
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x17
    WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh provision-da
    tests/target/provisioning_ctrl.sh discover
@@ -469,6 +485,10 @@ After the write, it confirms the new state through DA discovery.
 The production gates, as refused on the board without writing anything:
 
 ```text
+$ WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 tests/target/provisioning_ctrl.sh provision-da
+REFUSED: a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, and WT_DA_CERT, not ST's sample.
+$ WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 tests/target/provisioning_ctrl.sh lock 0x72
+REFUSED: a production part needs its own DA credential: set WT_DA_OBK, WT_DA_KEY, and WT_DA_CERT, not ST's sample.
 $ WT_LOCK_CONFIRM=1 tests/target/provisioning_ctrl.sh lock 0x72
 REFUSED: Moving this STM32H563 to Closed (0x72) is a production lock step. Only a production station sets WT_PRODUCTION_LOCK=1.
 $ echo "I ACCEPT 0x5C" | WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 tests/target/provisioning_ctrl.sh lock 0x5C
@@ -480,6 +500,7 @@ Refusals from the offline gate tests:
 ```text
 REFUSED: guest flash is not write protected (WRPSGn1=0xFFFFFFFF): run 'set-wrp' in Open first.
 REFUSED: Debug Authentication is not provisioned (no intact OBK offering Full Regression): run 'provision-da' and 'discover'.
+REFUSED: no rehearsal of Closed (0x72) with these images and DA certificate: run 'advance 0x72' and 'regress' first.
 REFUSED: confirmation did not match; nothing was changed.
 ```
 
@@ -503,6 +524,8 @@ Run on 2026-09-30, from Open, with the `positive` production images:
 | `lock 0x72`, `lock 0x5C` previews from Provisioning | preview printed; nothing written |
 | `lock 0x72` without `WT_PRODUCTION_LOCK=1` | refused |
 | `lock 0x5C` with a piped acceptance | refused: needs a terminal |
+| rerun after the security review: `provision-da` and `lock 0x72` with `WT_PRODUCTION_LOCK=1` and ST's sample | refused: production DA credential required |
+| rerun: Closed rehearsal | records the image SHA-256 and the DA certificate SHA-256 |
 
 The board ended Open with the chain booting.
 
