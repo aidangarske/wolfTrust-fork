@@ -71,7 +71,7 @@ for a in "\$@"; do
            echo "discovery: PSA lifecycle...................:ST_LIFECYCLE_\$l"
            echo "discovery: ST provisioning integrity status:\$(cat $T/da)"
            [ "\$(cat $T/da)" = 0xeaeaeaea ] && echo "discovery: permission if authorized........:(a/14) ==> Full Regression"; true ;;
-    debugauth=1) echo 0xED > $T/ps; echo "Debug Authentication Success" ;;
+    debugauth=1) [ -e $T/noregress ] || echo 0xED > $T/ps; echo "Debug Authentication Success" ;;
     -sdp) echo 0xeaeaeaea > $T/da; echo "OBKey Provisioned successfully" ;;
     PRODUCT_STATE=*) echo "\$a" >> $T/writes; [ -e $T/stuck ] || echo "\${a#PRODUCT_STATE=}" > $T/ps; [ ! -e $T/boots ] || echo "guest0_psa heartbeat" >> $T/uart; echo "Error: failed to reconnect after reset !"; exit 1 ;;
   esac
@@ -168,6 +168,10 @@ rm -f "$T/stuck"
 check "advance Closed, boot captured" 0 "rehearsal of closed (0x72) recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance closed
 : > "$T/writes"
 check "lock while Closed (link down)" 2 "cannot read the product state" -- "${H5[@]}" lock 0x5C
+touch "$T/noregress"; cp "$HS/pending" "$T/pending.keep"
+check "a failed regression exits nonzero" 1 "nothing was recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" regress
+[ ! -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   a failed regression records no rehearsal"; } || { failn=$((failn+1)); echo "FAIL rehearsal after failed regress"; }
+rm -f "$T/noregress"; cp "$T/pending.keep" "$HS/pending"
 check "regress completes the rehearsal" 0 "rehearsal of closed (0x72) complete" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" regress
 grep -q " id=$UID1 .* cred=$SFP " "$HS/rehearsal-0x72" && { pass=$((pass+1)); echo "ok   rehearsal binds UID and every DA input"; } || { failn=$((failn+1)); echo "FAIL record: $(cat "$HS/rehearsal-0x72")"; }
 check "a second regress records nothing stale" 0 "state after regression" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" regress

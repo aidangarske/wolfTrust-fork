@@ -382,8 +382,11 @@ port_regress() {
     *" $hl "*) pass "wolfTrust booted $(psa_name "$hl") again" ;;
     *) fail "regress" "wolfTrust saw 0x$hl after regress" ;;
   esac
-  mkdir -p "$state_dir"
-  date -u +%FT%TZ > "$state_dir/regress-ok"
+  # Only a regress out of a recorded mock proves the way back for later steps.
+  if [ -n "$PENDING" ]; then
+    mkdir -p "$state_dir"
+    date -u +%FT%TZ > "$state_dir/regress-ok"
+  fi
 }
 
 port_cred_fp() { echo none; }

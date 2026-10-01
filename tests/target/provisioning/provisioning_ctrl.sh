@@ -158,7 +158,9 @@ case "$cmd" in
     PENDING="$(cat "$state_dir/pending" 2>/dev/null || true)"
     rm -f "$state_dir/pending"
     REGRESS_EXTRA=""
-    if port_regress && [ -n "$PENDING" ]; then
+    # With nothing pending this is plain recovery: it returns the part, records nothing.
+    port_regress || fail "regress" "regression did not complete; nothing was recorded"
+    if [ -n "$PENDING" ]; then
       s="$(field state "$PENDING")"
       put "rehearsal-$s" "$PENDING cred=$(port_cred_fp) $REGRESS_EXTRA completed=$(date +%s)"
       pass "rehearsal of $(label "$s") complete"
