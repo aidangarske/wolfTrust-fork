@@ -9,10 +9,6 @@ release branches, and weekly. `coverity.yml` scans on pushes to `main`, daily,
 or on manual dispatch from `wolfSSL/wolfTrust` only. Both trace host suite
 builds and secure-image builds for STM32H563 and MIMXRT700 with both crypto
 engines via `tools/ci-static-analysis-build.sh`.
-Both jobs use the pinned `ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.15` image for
-native and Arm toolchains, so they do not install packages at job time.
-Dependency initialization only checks out the pinned submodules and has a
-10-minute timeout; toolchain validation runs as a separate step.
 
 ## At a glance
 
