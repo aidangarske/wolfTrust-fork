@@ -39,6 +39,18 @@ extern wt_mutex_t   g_wt_nvm_lock_mutex;
  * again against a freshly erased pool. Returns a WH_ERROR_* code. */
 int wt_nvm_store_bind(void);
 
+/* Re-assert every callback and context pointer in the shared NVM chain from
+ * link-time constants. The contexts live in the shared keystore band, so a
+ * keystore partition can rewrite them; a server pump calls this first so a
+ * forged pointer is never dereferenced (WT-FFM-0011). */
+void wt_nvm_store_pin(void);
+
+#if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
+/* Test builds only: corrupt every pointer wt_nvm_store_pin repairs, heal them
+ * synchronously, and return 1 iff all six were restored (WT-FFM-0011). */
+int wt_nvm_store_pin_probe(void);
+#endif
+
 /* Nonzero when the wolfBoot-reported lifecycle permits destructive store
  * recovery (ASSEMBLY_AND_TEST or PSA_ROT_PROVISIONING); unset stays locked. */
 int wt_nvm_reformat_allowed(void);

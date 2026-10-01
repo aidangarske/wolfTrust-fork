@@ -19,6 +19,7 @@
  */
 
 #include "wolftrust/platform.h"
+#include "wolftrust/priv_stack.h"
 #include "wolftrust/arch.h"
 #include "wolftrust/guest_verify.h"
 #include "wolftrust/monitor.h"
@@ -544,6 +545,24 @@ uintptr_t wt_platform_probe_address(unsigned int target)
     }
 }
 #endif
+
+int wt_platform_priv_stack_ok(const void *stack, size_t size)
+{
+    /* Only a coroutine that stays privileged reaches here, so require the stack
+     * wholly inside SPM-private RAM: the secure SRAM below the lowest
+     * partition-writable band (WT-FFM-0011). */
+#if defined(CONFIG_VNET)
+    uintptr_t priv_end = WT_VNET_DATA_BASE;
+#else
+    uintptr_t priv_end = WT_KEYSTORE_BASE;
+#endif
+
+    if (stack == NULL) {
+        return 0;
+    }
+    return wt_priv_stack_ok((uintptr_t)stack, size, WT_RAM_S_BASE, priv_end,
+                            NULL, 0u);
+}
 
 void wt_platform_log_fault(wt_guest_id_t guest_id,
                            wt_fault_reason_t reason,

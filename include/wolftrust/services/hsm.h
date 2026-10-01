@@ -32,8 +32,8 @@
 
 /* Initialise the wolfHSM service: wolfCrypt static memory pool,
  * target-backed NVM, shared lock, the per-guest crypto contexts, but NOT
- * the per-guest transport (that is wired by wt_hsm_guest_init for each
- * guest). Call once at boot, before wt_hsm_guest_init. Returns 0 on
+ * the per-guest relay transport (wired by wt_hsm_guest_init_relay for each
+ * guest). Call once at boot, before the per-guest relay init. Returns 0 on
  * success, negative on failure. Failure is fatal — the caller should panic. */
 int wt_hsm_init(void);
 
@@ -64,21 +64,15 @@ uint32_t wt_hsm_active_image_version(void);
 /* 1 if a foreign/corrupt vault was reformatted this boot (observability). */
 int wt_hsm_vault_was_reformatted(void);
 
-/* Initialise the per-guest wolfHSM server context, transport, and
- * tasklet. `transport_cb` and `transport_ctx` come from the CMSE transport
- * module. The tasklet starts blocked and is later scheduled by the monitor as
- * the guest's runnable representative while that guest is waiting on HSM
- * work. Safe to call only from monitor init (before scheduler starts).
- * Returns 0 on success, negative on failure. */
-int wt_hsm_guest_init(wt_guest_id_t guest_id,
-                      const whTransportServerCb *transport_cb,
-                      void *transport_ctx,
-                      const void *transport_cfg);
-
 /* Bind a guest's wolfHSM server to the secure relay capture transport
  * (WT-FFM-0054): the request/response buffers live in monitor RAM, filled by
  * wt_hsm_relay_submit from SERVICE_HSM's mediated psa_call path — no NS-RAM
- * window and no CSR handshake. Same call rules as wt_hsm_guest_init. */
+ * window and no CSR handshake. Bind before the scheduler starts.
+ *
+ * This deliberately replaces the former caller-supplied-transport initializer
+ * (a four-argument wt_hsm_guest_init): the relay is the sole supported
+ * transport, and a caller-chosen transport left a pointer a later pump could be
+ * made to follow, so there is no custom-transport path (WT-FFM-0011). */
 int wt_hsm_guest_init_relay(wt_guest_id_t guest_id);
 
 /* SERVICE_HSM's platform submit hook (matches wt_hsm_relay_submit_fn): map
@@ -100,16 +94,10 @@ bool wt_hsm_guest_ready(wt_guest_id_t guest_id);
  * guest_id + 1 (0 is reserved). */
 uint16_t wt_hsm_guest_client_id(wt_guest_id_t guest_id);
 
-/* Return the tasklet handle for guest_id, or NULL if guest_id is out of
- * range or the guest has not yet been initialised via wt_hsm_guest_init.
- * Used by the monitor to wake per-guest wolfHSM service work. */
-struct wt_co;
-struct wt_co *wt_hsm_guest_tasklet(wt_guest_id_t guest_id);
-
-/* Reverse lookup: which guest owns `tasklet`? Returns WT_MAX_GUESTS if it
- * does not match any per-guest server tasklet. Used by the Secure fault
- * dispatcher to map a faulted tasklet back to its NS client. */
-wt_guest_id_t wt_hsm_guest_for_tasklet(const struct wt_co *tasklet);
+/* The per-guest server tasklet handle registry and SPM-private stacks
+ * (WT-FFM-0011) are declared in the wolfHSM-free hsm_priv.h so the privileged
+ * registry can be unit-tested on the host. */
+#include "wolftrust/hsm_priv.h"
 
 /* Signal a terminal Secure-side fault for guest_id: drops the NVM lock
  * if the dying tasklet was holding it, writes a WH_ERROR_ABORTED

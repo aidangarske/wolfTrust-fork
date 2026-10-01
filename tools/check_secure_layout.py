@@ -50,7 +50,6 @@ KEYSTORE_STATE = tuple(
         r"^g_signer_id(?:\.|$)",
         r"^g_ueid(?:\.|$)",
         r"^g_guests(?:\.|$)",
-        r"^g_co_stack_slots(?:\.|$)",
         r"^gCryptoDev(?:\.|$)",
         r"^sha256DrbgDisabled(?:\.|$)",
         r"^initRefCount(?:\.|$)",
@@ -222,6 +221,21 @@ def validate(symbols, layout=DEFAULT_LAYOUT):
                     symbol.address < vnet_start or end > vnet_end):
                 errors.append("VNET state outside its band: %s" % symbol.name)
 
+    priv_end = vnet_start if vnet_start is not None else keystore_start
+    for name, symbols in table.items():
+        if name.startswith("g_co_stack_slots"):
+            label = "privileged tasklet stack"
+        elif name.startswith("g_wt_taskreg"):
+            label = "privileged tasklet registry"
+        else:
+            continue
+        for symbol in symbols:
+            end = symbol.address + max(symbol.size, 1)
+            if (bounds.get("_sdata") is None or priv_end is None or
+                    symbol.address < bounds["_sdata"] or end > priv_end):
+                errors.append(
+                    "%s outside SPM-private RAM: %s" % (label, name))
+
     timeout = table.get("g_whalTimeout", ())
     if not layout.wolfhal:
         if timeout:
@@ -286,6 +300,8 @@ def self_test():
         "30093040 ? _econfbss",
         "30028004 0000000c D g_whalTimeout",
         "30075040 00000100 B g_guests.lto_priv.0",
+        "30028010 00000080 B g_co_stack_slots",
+        "30028090 00000008 B g_wt_taskreg",
         "30075140 00000020 B g_conf_nvm_ctx.lto_priv.0",
         "30070020 00000020 B g_vnet_tx_scratch",
         "0c000900 00000004 t default_handler",
@@ -373,6 +389,12 @@ def self_test():
         ("keystore symbol", changed(
             good, "g_guests.lto_priv.0", address=0x30028200),
          "keystore state outside its band"),
+        ("privileged stack in a band", changed(
+            good, "g_co_stack_slots", address=0x30075100),
+         "privileged tasklet stack outside SPM-private RAM"),
+        ("registry in a band", changed(
+            good, "g_wt_taskreg", address=0x30075100),
+         "privileged tasklet registry outside SPM-private RAM"),
         ("conformance NVM symbol", changed(
             good, "g_conf_nvm_ctx.lto_priv.0", address=0x30028200),
          "keystore state outside its band"),

@@ -145,6 +145,13 @@ static void wt_spm_vault_entry(void* arg)
         wt_arch_sp_fault_probe(2u);
     }
 #endif
+#if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
+    /* Verify the NVM-chain pin and fault the scenario on a failed heal, so
+     * hsmpinneg fails loudly rather than proceed on forged state (WT-FFM-0011). */
+    if (wt_platform_hsm_pin_probe() == 0) {
+        wt_arch_sp_fault_probe(0u);
+    }
+#endif
     for (;;) {
         (void)wt_vault_service_dispatch(NULL, NULL, partition_id);
     }
