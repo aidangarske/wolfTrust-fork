@@ -245,12 +245,8 @@ framework, its PAL, and the test lists are the upstream sources the Secure
 build fetches and generates.
 
 The runner builds its own pinned emulator and wolfBoot first stage. The
-emulator is `M33MU_REF` plus `tests/target/m33mu-imxrt700.patch`, the model
-correction the chain needs until it lands upstream: a Secure AHBSC SRAM rule
-refuses Non-secure transactions but no longer overrides the SAU's NSC
-attribution, so the SG veneers in the Secure-ruled code-RAM band stay callable
-as the SRM's transaction check allows. The rules otherwise apply to CPU0 as
-documented, which is stricter than the EVK measured.
+emulator is upstream M33MU at `M33MU_REF`, unpatched. Its Secure AHBSC SRAM
+rules apply to CPU0 as documented, which is stricter than the EVK measured.
 wolfBoot is `WOLFBOOT_REF` built from `config/examples/imx-rt700-tz.config`
 plus `tests/target/wolfboot-imxrt700-lifecycle.patch` (the RT700 HAL's PSA
 lifecycle hook, which the attestation service needs; it goes once wolfBoot

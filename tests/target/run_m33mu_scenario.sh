@@ -94,7 +94,7 @@ export WT_ZEPHYR_DTC_OVERLAY_FILE=boards/wolfboot-stm32h563.overlay
 export WT_MAX_GUESTS=2
 export ZEPHYR_BOARD=nucleo_h563zi/stm32h563xx/ns
 WOLFBOOT_REF=d85fa9dbdf6c36f47b7e96eba5c9df750ad3c963
-M33MU_REF=5d7f854acd8bcb5b56a6dba391995f9373261b1c
+M33MU_REF=f3c03675260264cdec815adebe4b020bb6fe57b8
 
 # --- Build the pinned M33MU emulator. Reuse a caller-supplied or already-built
 #     binary so back-to-back scenarios in one container share the build (and a
