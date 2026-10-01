@@ -53,15 +53,7 @@ jobs:
         shell: bash
         run: |
           export PATH="$PWD/cov-analysis/bin:$PATH"
-          cov-manage-emit --dir cov-int --tu-pattern "file('/lib/')" delete
-          units_file="$RUNNER_TEMP/coverity-units.txt"
-          cov-manage-emit --dir cov-int list > "$units_file"
-          cat "$units_file"
-          if grep -Eq '^[[:space:]]*[0-9]+[[:space:]]+->[[:space:]]+.*/lib/' "$units_file" ||
-              ! grep -Eq '^[[:space:]]*[0-9]+[[:space:]]+->[[:space:]]+/' "$units_file"; then
-            echo '::error::Coverity capture is empty or still contains dependency sources.'
-            exit 1
-          fi
+          python3 tools/ci-coverity-filter.py
           tar -czf cov-int.tgz cov-int
       - name: Submit build to Coverity Scan
         shell: bash
