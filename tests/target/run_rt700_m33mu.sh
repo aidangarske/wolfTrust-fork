@@ -51,10 +51,12 @@ set -eu
 unset TARGET MAKEFLAGS MFLAGS
 
 scenario="${1:-}"
-case "$scenario" in
-  positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec) ;;
-  *) echo "usage: $0 positive|ahbscneg|restart|authneg|crossdomain|keystoreneg|spfaultneg|panicneg|rollbackneg|remeasureneg|manifestneg|spbudgetneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec" >&2
-     exit 2 ;;
+# The scenario table in lib/scenario_matrix.py is the one list of names.
+known="$(python3 "$(dirname "$0")/lib/scenario_matrix.py" --port mimxrt700 \
+  --tier full --flat)"
+case " $known " in
+  *" $scenario "*) ;;
+  *) echo "usage: $0 $(echo "$known" | tr ' ' '|')" >&2; exit 2 ;;
 esac
 if [ "$scenario" = "hsmattackneg" ] && [ "${WT_ENGINE:-native}" != "hsm" ]; then
   echo "hsmattackneg drives the raw wolfHSM client wire; run it with WT_ENGINE=hsm" >&2

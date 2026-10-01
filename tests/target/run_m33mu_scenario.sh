@@ -55,9 +55,12 @@ unset TARGET MAKEFLAGS MFLAGS
 set -o pipefail
 
 scenario="${1:-}"
-case "$scenario" in
-  positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|hsmpinneg|spfaultneg|hsmfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg) ;;
-  *) echo "usage: $0 positive|bothpsa|bothiso|restart|crossdomain|keystoreneg|deputyneg|hsmpinneg|spfaultneg|hsmfaultneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|attestneg|hsmattackneg|vaultrecover|vaultrecoversec|authneg|rollbackneg|fwustage|remeasureneg|bootupdate|vnet|vnetneg|manifestneg|manifestneg2|gtzcneg|spbudgetneg|revneg" >&2; exit 2 ;;
+# The scenario table in lib/scenario_matrix.py is the one list of names.
+known="$(python3 "$(dirname "$0")/lib/scenario_matrix.py" --port stm32h563 \
+  --tier full --flat)"
+case " $known " in
+  *" $scenario "*) ;;
+  *) echo "usage: $0 $(echo "$known" | tr ' ' '|')" >&2; exit 2 ;;
 esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
