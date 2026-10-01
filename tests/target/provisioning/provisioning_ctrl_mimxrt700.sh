@@ -23,6 +23,12 @@
 # the BootROM's ISP. Sourced, never run. See docs/MIMXRT700-Guide.md.
 # shellcheck disable=SC2034,SC2154  # PORT_* are read, and $cur/$PENDING set, by the main script
 
+# A port file only works inside provisioning_ctrl.sh, which holds the gates.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  echo "REFUSED: run TARGET=mimxrt700 tests/target/provisioning/provisioning_ctrl.sh, not this port file." >&2
+  exit 2
+fi
+
 PORT_NAME="MIMXRT700"
 target_dir="$here/.."
 pyocd_target="${RT700_TARGET:-mimxrt798sgfob}"

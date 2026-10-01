@@ -131,6 +131,8 @@ UID1=002100453332511238363236
 
 echo "== shared"
 check "help lists the port's states" 0 "0x72   closed" -- "${H5[@]}" help
+check "a port file refuses to run alone" 2 "not this port file" -- bash "$R/tests/target/provisioning/provisioning_ctrl_stm32h563.sh" lock 0x72
+check "the other port file too" 2 "not this port file" -- bash "$R/tests/target/provisioning/provisioning_ctrl_mimxrt700.sh" lock 0x07
 check "unknown port"         2 "no provisioning port for TARGET=nope" -- env TARGET=nope "$P" help
 check "unknown state"        2 "unknown state '0x99'" -- "${H5[@]}" lock 0x99
 check "no state"             2 "unknown state ''" -- "${H5[@]}" lock
