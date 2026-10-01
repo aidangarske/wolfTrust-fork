@@ -64,6 +64,14 @@ extern uint32_t _s_vnet_bss;
 extern uint32_t _e_vnet;
 #endif
 
+extern uint32_t _wt_part_stacks_base;
+extern uint32_t _wt_part_stacks_limit;
+extern uint32_t _wt_sp_stacks_base;
+extern uint32_t _wt_sp_stacks_limit;
+
+/* Bytes of partition band and stack RAM zeroed at reset, read over SWD. */
+volatile uint32_t g_wt_boot_zeroed_bytes;
+
 extern uint32_t _wt_band_vault_base;
 extern uint32_t _wt_band_vault_limit;
 extern uint32_t _wt_band_attest_base;
@@ -156,6 +164,7 @@ static void wt_reset_main(void)
     uint32_t* dst = &_sdata;
     uint32_t msp;
     uint32_t msplim;
+    uint32_t zeroed = 0u;
     size_t i;
 
     while (dst < &_edata) {
@@ -183,7 +192,23 @@ static void wt_reset_main(void)
             *dst = 0u;
         }
         wt_band_load(&g_wt_bands[i]);
+        zeroed += (uint32_t)((uintptr_t)g_wt_bands[i].limit -
+                             (uintptr_t)g_wt_bands[i].base);
     }
+
+    /* Partition and coroutine stacks are NOLOAD outside .bss: zero them so no
+     * partition starts on a previous boot's stack contents. */
+    for (dst = &_wt_part_stacks_base; dst < &_wt_part_stacks_limit; ++dst) {
+        *dst = 0u;
+    }
+    for (dst = &_wt_sp_stacks_base; dst < &_wt_sp_stacks_limit; ++dst) {
+        *dst = 0u;
+    }
+    zeroed += (uint32_t)((uintptr_t)&_wt_part_stacks_limit -
+                         (uintptr_t)&_wt_part_stacks_base);
+    zeroed += (uint32_t)((uintptr_t)&_wt_sp_stacks_limit -
+                         (uintptr_t)&_wt_sp_stacks_base);
+    g_wt_boot_zeroed_bytes = zeroed;
 
 #if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE == 3)
     /* sealbootneg: a damaged main-stack seal must stop the boot here. The

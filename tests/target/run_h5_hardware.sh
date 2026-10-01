@@ -496,6 +496,12 @@ if [ "$mode" != "build" ]; then
       # cross-checked below against the wolfBoot measurement of the signed image.
       refute_re "no fault markers in UART" \
         '^(\[MEMFAULT\]|\[HARDFLT\]|HardFault|SecureFault|BusFault|UsageFault)'
+      zeroed=$(read_secure_u32 g_wt_boot_zeroed_bytes)
+      if [ -n "$zeroed" ] && [ $((0x$zeroed)) -gt 0 ]; then
+        check_pass "partition stacks and bands zeroed at boot (0x$zeroed bytes)"
+      else
+        check_fail "boot zeroing" "zeroed-bytes latch 0x${zeroed:-none}"
+      fi
       lc=$(read_guest0_u32 g_guest0_lifecycle)
       if [ -n "$lc" ] && [ $((0x$lc & 0xFF)) -eq 255 ]; then
         check_pass "guest0 full PSA/FF-M lifecycle latched (0x$lc)"
