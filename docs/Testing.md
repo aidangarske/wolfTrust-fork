@@ -110,6 +110,11 @@ scenario). Detection accepts `m33mu` on
 `PATH` or a path in `M33MU`. If the emulator is unavailable,
 the target reports a skip rather than a pass.
 
+The STM32H563 and RT700 scenario runners reuse their `/tmp` emulator builds
+only when the `.wt_m33mu_ref` stamp matches the runner's `M33MU_REF`. Missing
+or mismatched stamps trigger a clean rebuild; the stamp is written after a
+successful build. Set `M33MU` to use an explicit prebuilt emulator instead.
+
 Additional focused runs use:
 
 ```sh

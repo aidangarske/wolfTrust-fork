@@ -106,9 +106,11 @@ GUEST_STARTED_RE='wolfTrust RT700 guest[01]: start'
 GUEST_DONE_RE='wolfTrust RT700 guest[01]: FF-M connect ok, done'
 
 # --- The pinned upstream M33MU. ---
+# Only a completed build stamped with M33MU_REF is reusable.
 if [ -n "${M33MU:-}" ] && [ -x "$M33MU" ]; then
   log "Using prebuilt M33MU: $M33MU"
-elif [ -x /tmp/m33mu_rt700_src/build/m33mu ]; then
+elif [ -x /tmp/m33mu_rt700_src/build/m33mu ] &&
+     [ "$(cat /tmp/m33mu_rt700_src/.wt_m33mu_ref 2>/dev/null)" = "$M33MU_REF" ]; then
   M33MU=/tmp/m33mu_rt700_src/build/m33mu
   log "Reusing M33MU from a prior scenario: $M33MU"
 else
@@ -121,6 +123,7 @@ else
         -DM33MU_ENABLE_WOLFSSL=OFF -DM33MU_BUILD_TESTS=OFF \
         -DM33MU_ENABLE_RUST_PLUGINS=OFF
   cmake --build /tmp/m33mu_rt700_src/build --target m33mu -j"$(nproc)"
+  printf '%s\n' "$M33MU_REF" > /tmp/m33mu_rt700_src/.wt_m33mu_ref
   M33MU=/tmp/m33mu_rt700_src/build/m33mu
 fi
 

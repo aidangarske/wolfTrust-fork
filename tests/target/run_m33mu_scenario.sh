@@ -99,12 +99,12 @@ export ZEPHYR_BOARD=nucleo_h563zi/stm32h563xx/ns
 WOLFBOOT_REF=d85fa9dbdf6c36f47b7e96eba5c9df750ad3c963
 M33MU_REF=f3c03675260264cdec815adebe4b020bb6fe57b8
 
-# --- Build the pinned M33MU emulator. Reuse a caller-supplied or already-built
-#     binary so back-to-back scenarios in one container share the build (and a
-#     fresh clone never lands in a non-empty /tmp/m33mu_src). ---
+# --- Build the pinned M33MU emulator. Reuse a caller-supplied binary or a
+#     completed build stamped with M33MU_REF across back-to-back scenarios. ---
 if [ -n "${M33MU:-}" ] && [ -x "${M33MU:-}" ]; then
   echo "Using prebuilt M33MU: $M33MU"
-elif [ -x /tmp/m33mu_src/build/m33mu ]; then
+elif [ -x /tmp/m33mu_src/build/m33mu ] &&
+     [ "$(cat /tmp/m33mu_src/.wt_m33mu_ref 2>/dev/null)" = "$M33MU_REF" ]; then
   M33MU=/tmp/m33mu_src/build/m33mu
   echo "Reusing M33MU from a prior scenario: $M33MU"
 else
@@ -115,6 +115,7 @@ else
   git checkout --detach "$M33MU_REF"
   cmake -S . -B build -DM33MU_ENABLE_WOLFSSL=OFF
   cmake --build build --target m33mu -j"$(nproc)"
+  printf '%s\n' "$M33MU_REF" > .wt_m33mu_ref
   M33MU=/tmp/m33mu_src/build/m33mu
   cd "$repo"
 fi
