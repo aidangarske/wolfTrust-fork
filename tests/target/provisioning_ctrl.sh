@@ -45,6 +45,7 @@ CLI="${STM32_CLI:-$CP/STM32_Programmer_CLI}"
 SERIAL="${H5_SERIAL:-/dev/ttyACM0}"
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 state_dir="${WT_PROVISION_STATE:-$HOME/.cache/wolftrust}"
+rehearsal_max_age="${WT_REHEARSAL_MAX_AGE:-3600}"
 
 # ST DA credential from the pinned NUCLEO-H563ZI ROT_Provisioning/DA folder.
 # wolfTrust runs with TrustZone ENABLED, so DA is CERTIFICATE-based: AN6008
@@ -199,23 +200,71 @@ da_production_ready() {
     ! da_is_sample "$f" || return 1
   done
 }
-record() {
-  local d
-  d="$(image_digest)" || return 0
-  mkdir -p "$state_dir"
-  echo "$d${2:+ $2}" > "$state_dir/h5-$1"
+# The 96-bit device UID (RM0481 UID_BASE). It reads only under reset in Open;
+# Provisioning masks it to zero.
+device_uid() {
+  local u
+  u="$("$CLI" -c port=SWD mode=UR -r32 0x08FFF800 12 2>&1 | strip \
+    | awk '$1 == "0x08FFF800" { print $3 $4 $5 }')"
+  "$CLI" -c port=SWD mode=UR -rst >/dev/null 2>&1 || true
+  case "$u" in
+    ""|000000000000000000000000|ffffffffffffffffffffffff|FFFFFFFFFFFFFFFFFFFFFFFF) return 1 ;;
+  esac
+  echo "$u"
 }
-# rehearsed <state>: these images booted in <state> and DA regression from it
-# worked. Provisioning runs no wolfTrust chain (seen on the NUCLEO-H563ZI), so
-# its step needs only a regression from it or from a closed state.
+# One hash over the values of the perimeter and guest WRP option bytes this
+# script sets (SECBOOTADD is unused with BOOT_UBE and a regression resets it).
+ob_hash() {
+  local lines
+  lines="$("$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
+    | awk '$1 ~ /^(TZEN|BOOT_UBE|SWAP_BANK|SECWM[12]_(STRT|END)|WRPSGn1)$/ && $2 == ":" { print $1 "=" $3 }' \
+    | sort || true)"
+  [ "$(grep -c . <<<"$lines")" -eq 8 ] || return 1
+  sha256 <<<"$lines" | cut -c1-64
+}
+# A read near a reset can be transient, so two reads in a row must agree.
+ob_snapshot() {
+  local a b
+  a="$(ob_hash || true)"
+  for _ in 1 2 3; do
+    sleep 1
+    b="$(ob_hash || true)"
+    if [ -n "$b" ] && [ "$a" = "$b" ]; then
+      echo "$b"
+      return 0
+    fi
+    a="$b"
+  done
+  return 1
+}
+put() { mkdir -p "$state_dir"; echo "$2" > "$state_dir/h5-$1"; }
+field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" <<<" $2"; }
+fresh() {
+  local age
+  [ -n "${1:-}" ] || return 1
+  age=$(($(date +%s) - $1))
+  [ "$age" -ge 0 ] && [ "$age" -le "$rehearsal_max_age" ]
+}
+# rehearsed <state>: on one device, these images booted in <state> and a DA
+# regression with these DA inputs brought it back, recently. Provisioning runs
+# no wolfTrust chain, so its step needs only a regression from it or a closed
+# state. Sets R_UID and R_OB from the record.
 rehearsed() {
-  local d s fp
+  local d s fp rec b=""
   d="$(image_digest)" || return 1
-  fp="$(da_fingerprint || true)"
-  [ "$1" = "$PS_PROVISIONING" ] ||
-    [ "$(cat "$state_dir/h5-booted-$1" 2>/dev/null)" = "$d" ] || return 1
+  fp="$(da_fingerprint || echo none)"
+  if [ "$1" != "$PS_PROVISIONING" ]; then
+    b="$(cat "$state_dir/h5-booted-$1" 2>/dev/null || true)"
+    [ "$(field image "$b")" = "$d" ] || return 1
+  fi
   for s in "$1" $([ "$1" = "$PS_PROVISIONING" ] && echo "$PS_TZCLOSED $PS_CLOSED"); do
-    [ "$(cat "$state_dir/h5-regressed-$s" 2>/dev/null)" = "$d${fp:+ $fp}" ] && return 0
+    rec="$(cat "$state_dir/h5-regressed-$s" 2>/dev/null || true)"
+    [ "$(field image "$rec")" = "$d" ] && [ "$(field da "$rec")" = "$fp" ] &&
+      fresh "$(field time "$rec")" || continue
+    [ -z "$b" ] || [ "$(field uid "$b")" = "$(field uid "$rec")" ] || continue
+    R_UID="$(field uid "$rec")"
+    R_OB="$(field ob "$rec")"
+    return 0
   done
   return 1
 }
@@ -328,16 +377,19 @@ case "$cmd" in
     readback=0
     if [ "$state" = "$PS_PROVISIONING" ]; then
       rm -f "$state_dir/h5-readback"
-      if images_on_device; then
-        record readback
-        pass "the images on the part match the host build ($(image_digest | cut -c1-16))"
+      ob="$(ob_snapshot || true)"
+      uid="$(device_uid || true)"
+      if [ -n "$uid" ] && [ -n "$ob" ] && images_on_device; then
+        put readback "image=$(image_digest) uid=$uid ob=$ob time=$(date +%s)"
+        pass "the images on device $uid match the host build ($(image_digest | cut -c1-16))"
       else
-        echo "the images on the part differ from the host build; a closed-state rehearsal will refuse"
+        echo "could not read back the images, device UID, and option bytes; a closed-state rehearsal will refuse"
       fi
-    elif [ "$(cat "$state_dir/h5-readback" 2>/dev/null)" = "$(image_digest)" ]; then
-      readback=1
     else
-      refuse "no read-back of these images: 'restore', then 'advance 0x17' from Open reads them back."
+      rb="$(cat "$state_dir/h5-readback" 2>/dev/null || true)"
+      [ "$(field image "$rb")" = "$(image_digest)" ] && fresh "$(field time "$rb")" || \
+        refuse "no recent read-back of these images: 'restore', then 'advance 0x17' from Open reads them back."
+      readback=1
     fi
     echo "ADVANCING product state ${cur:-?} -> $state (regress is the only way back)"
     uart_capture 12 /tmp/wt-advance.log
@@ -348,7 +400,8 @@ case "$cmd" in
     sleep 10
     if booted /tmp/wt-advance.log; then
       pass "wolfTrust chain boots in $(ps_name "$state")"
-      [ "$readback" != "1" ] || record "booted-$state"
+      [ "$readback" != "1" ] ||
+        put "booted-$state" "image=$(field image "$rb") uid=$(field uid "$rb") ob=$(field ob "$rb") time=$(date +%s)"
     elif [ "$state" = "$PS_PROVISIONING" ]; then
       echo "Provisioning does not run the wolfTrust chain; a closed-state rehearsal proves the boot"
     else
@@ -380,8 +433,22 @@ case "$cmd" in
       refuse "the part is $(ps_name "$cur") ($cur); lock $target runs only from $(ps_name "$from") ($from)."
     rehearsed "$rehearse" || \
       refuse "no rehearsal of $(ps_name "$rehearse") ($rehearse) with these images and DA certificate: run 'advance $rehearse' and 'regress' first."
+    ob="$(ob_snapshot)" || refuse "cannot read the option bytes over SWD."
+    [ "$ob" = "$R_OB" ] || \
+      refuse "the perimeter or guest WRP option bytes differ from the rehearsal."
+    # Provisioning hides the UID, so it is checked when the part enters it.
+    if [ "$target" = "0x17" ]; then
+      uid="$(device_uid)" || refuse "cannot read the device UID over SWD."
+      [ "$uid" = "$R_UID" ] || \
+        refuse "this part (UID $uid) is not the one rehearsed (UID $R_UID): rehearse this part."
+    else
+      sess="$(cat "$state_dir/h5-session" 2>/dev/null || true)"
+      uid="$(field uid "$sess")"
+      [ -n "$uid" ] && [ "$uid" = "$R_UID" ] && fresh "$(field time "$sess")" || \
+        refuse "no recent 'lock 0x17' of the rehearsed part (UID $R_UID) on this station."
+    fi
     digest="$(image_digest)"
-    checked="order, rehearsal of $(ps_name "$rehearse") with images ${digest:0:16}"
+    checked="order, rehearsal of $(ps_name "$rehearse") with images ${digest:0:16} on device $uid, same option bytes"
     if [ "$target" != "0x17" ]; then
       wrp="$("$CLI" -c port=SWD mode=HotPlug -ob displ 2>&1 | strip \
         | grep -iE "WRPSGn1" | grep -oE "0x[0-9A-Fa-f]+" | head -1 || true)"
@@ -438,6 +505,12 @@ case "$cmd" in
         fail "lock" "the part is $(ps_name "$target") but wolfTrust did not boot on $SERIAL; do not ship it"
     fi
     pass "product state is $(ps_name "$target") ($target)"
+    if [ "$target" = "0x17" ]; then
+      put session "uid=$uid time=$(date +%s)"
+    else
+      rm -f "$state_dir"/h5-booted-* "$state_dir"/h5-regressed-* \
+        "$state_dir/h5-session" "$state_dir/h5-readback"
+    fi
     ;;
 
   regress)
@@ -450,6 +523,7 @@ case "$cmd" in
     # answers) with the key+cert; CubeProgrammer selects the certificate because
     # TZEN is enabled and the RSS mass-erases the device back to Open.
     advanced="$(cat "$state_dir/h5-advanced" 2>/dev/null || true)"
+    rb="$(cat "$state_dir/h5-readback" 2>/dev/null || true)"
     rm -f "$state_dir/h5-readback"
     echo "DA certificate Full Regression -> Open (mass-erase):"
     "$CLI" -c port=SWD mode=HotPlug -rst 2>&1 | strip | tail -1 || true
@@ -464,7 +538,13 @@ case "$cmd" in
     done
     echo "state after regression: ${after:-unreadable}"
     if [ -n "$after" ] && [ "$(hexstate "$after")" = "$PS_OPEN" ] && [ -n "$advanced" ]; then
-      record "regressed-$advanced" "$(da_fingerprint || true)"
+      uid="$(device_uid || true)"
+      if [ -n "$uid" ] && [ "$uid" = "$(field uid "$rb")" ]; then
+        put "regressed-$advanced" "image=$(field image "$rb") da=$(da_fingerprint || echo none) uid=$uid ob=$(field ob "$rb") time=$(date +%s)"
+        pass "regression of device $uid from $(ps_name "$advanced") recorded"
+      else
+        echo "device UID ${uid:-unreadable} does not match the rehearsal read-back; not recorded"
+      fi
       rm -f "$state_dir/h5-advanced"
     fi
     ;;

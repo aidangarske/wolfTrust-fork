@@ -90,6 +90,7 @@ write to the board refuse without `WT_LOCK_CONFIRM=1`.
 | `RT700_ISP` | MIMXRT700 blhost ISP connection, for example `-u 0x1fc9,0x014f` |
 | `RT700_GUEST_MASK` | guests a MIMXRT700 rehearsal must launch verified (default `0x3`) |
 | `RT700_REHEARSAL_MAX_AGE` | seconds a MIMXRT700 rehearsal stays valid (default `3600`) |
+| `WT_REHEARSAL_MAX_AGE` | seconds a STM32H5 rehearsal or `lock 0x17` session stays valid (default `3600`) |
 | `STM32_CLI`, `H5_SERIAL` | STM32CubeProgrammer CLI path and the board UART |
 | `WT_DA_*` | STM32H5 Debug Authentication key, certificate, and OBK; a production lock requires all three, and not ST's sample |
 
@@ -108,9 +109,12 @@ fails, with exit status 2 and nothing written:
    MIMXRT700 the rehearsal also read those images back off the part, required
    every guest to launch verified, and must have run through the same single
    debug probe, at most an hour ago. On the
-   STM32H5 `advance` first reads the four images back off the part before a
-   closing write, and the regression record holds a fingerprint of every DA
-   input it used: key, certificate chain, OBK, and password.
+   STM32H5 the rehearsal is bound to the part's 96-bit device UID and its
+   perimeter option-byte values, read in Open together with the four images.
+   The regression record holds a fingerprint of every DA input it used: key,
+   certificate chain, OBK, and password. A STM32H5 closing step also needs a
+   recent `lock 0x17` of that same UID on the station, because Provisioning
+   masks the UID.
 4. **The part is provisioned first**:
    - on the MIMXRT700, the guest fence and all 12 root key hash words, and a
      first stage the BootROM authenticates (until the port builds one, `lock`
@@ -202,8 +206,9 @@ is still open therefore attests `0x5000`, not `0x3000`.
 (override with `WT_PROVISION_STATE` or `RT700_PROVISION_STATE`). Each record
 holds the SHA-256 of the images it proved:
 
-- On the STM32H5, a record is kept until the images or any DA input
-  change, because each rehearsal of a closed state mass-erases the sample.
+- On the STM32H5, a record is bound to the device UID, expires after an
+  hour, and is consumed by the closing step. Each part is rehearsed, which
+  mass-erases it, then restored and locked within that hour.
 - On the MIMXRT700, each burn uses its record up, and a record expires after
   an hour, so every part is rehearsed at the station right before its own
   burn. No silicon UID is documented to bind a record to one part, so this

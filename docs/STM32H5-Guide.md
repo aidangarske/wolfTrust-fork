@@ -304,16 +304,22 @@ state after regression: 0xED
 PASS: wolfTrust restored and booting
 ```
 
-The rehearsal records hold the SHA-256 of the four images with their
-addresses and sizes. Before any closing write, `advance` reads those images
-back off the part and refuses if they differ from the host build. The
-regression record also holds a fingerprint of every DA input the regression
-used: key, certificate chain, OBK, and password. The first 16 hex digits of
-each are shown:
+The rehearsal binds to one physical part:
+- `advance 0x17` runs in Open and reads several things back: the four images
+  over SWD, the 96-bit device UID (`UID_BASE`, `0x08FFF800`, readable only in
+  Open), and the values of the perimeter and guest WRP option bytes. A
+  closing `advance` requires that read-back for the current images, from the
+  last hour.
+- `regress` reads the UID again after the mass erase, and records the
+  regression only if it is the same part.
+- The records also hold a fingerprint of every DA input the regression used:
+  key, certificate chain, OBK, and password.
+
+The records from the board, with the first 16 hex digits of each digest:
 
 ```text
-h5-booted-0x72: c1f89defe6238bcc...
-h5-regressed-0x72: c1f89defe6238bcc... 0b5e16e7754c68c1...
+h5-booted-0x72: image=c1f89defe6238bcc... uid=002100453332511238363236 ob=dd12796198f30eac... time=1790874603
+h5-regressed-0x72: image=c1f89defe6238bcc... da=0b5e16e7754c68c1... uid=002100453332511238363236 ob=dd12796198f30eac... time=1790874619
 ```
 
 > **Warning:** rehearse with the production DA chain (`WT_DA_OBK`,
@@ -388,6 +394,19 @@ checks more on this port:
     installed. `provision-da` refuses the sample too when
     `WT_PRODUCTION_LOCK=1`.
 
+It also binds the step to the rehearsed part:
+- **`lock 0x17`** runs in Open, so it reads the UID and the option bytes live
+  and requires both to match the rehearsal. When the write succeeds, it opens
+  a session for that UID.
+- **Provisioning masks the UID** (it reads as zeros), so `lock 0xC6`,
+  `lock 0x72`, and `lock 0x5C` instead require that session for the same UID,
+  from the last hour (`WT_REHEARSAL_MAX_AGE`, default `3600` seconds). They
+  also require the same option-byte values, read live.
+- **A completed closing step consumes the rehearsal and the session.** The
+  next part is rehearsed on its own.
+
+The rehearsal itself must also be from the last hour.
+
 After the write, it confirms the new state through DA discovery. For
 TrustZone Closed, Closed, and Locked it also requires the wolfTrust boot on
 the UART, and fails (without repeating the write) if the chain did not boot.
@@ -401,23 +420,32 @@ the UART, and fails (without repeating the write) if the chain did not boot.
    ```text
    $ tests/target/provisioning_ctrl.sh lock 0x17
    Lock step: Open (0xED) -> Provisioning (0x17)
-     checked: order, rehearsal of Provisioning with images 78ec12f957707ed0
+     checked: order, rehearsal of Provisioning with images c1f89defe6238bcc on device 002100453332511238363236, same option bytes
      will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x17
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    ```
 
-   From Provisioning, with DA provisioned. This board carries ST's sample
-   credential, so the preview says a production lock would refuse it:
+   From Provisioning, the closing previews also need the session that
+   `lock 0x17` opens. On the development board the typed acceptance is never
+   given, so there is no session, and a closing preview stops there:
+
+   ```text
+   $ tests/target/provisioning_ctrl.sh lock 0x72
+   REFUSED: no recent 'lock 0x17' of the rehearsed part (UID 002100453332511238363236) on this station.
+   ```
+
+   On a production station, after `lock 0x17` and `provision-da`, the
+   previews look like this (format from the offline gate tests):
 
    ```text
    $ tests/target/provisioning_ctrl.sh lock 0x72
    Lock step: Provisioning (0x17) -> Closed (0x72)
-     checked: order, rehearsal of Closed with images 78ec12f957707ed0, guest WRP, DA credential is ST's sample or unset (a production lock refuses it), DA provisioned
+     checked: order, rehearsal of Closed with images c1f89defe6238bcc on device 002100453332511238363236, same option bytes, guest WRP, production DA credential, DA provisioned
      will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x72
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    $ tests/target/provisioning_ctrl.sh lock 0x5C
    Lock step: Provisioning (0x17) -> Locked (0x5C)
-     checked: order, rehearsal of Closed with images 78ec12f957707ed0, guest WRP
+     checked: order, rehearsal of Closed with images c1f89defe6238bcc on device 002100453332511238363236, same option bytes, guest WRP
      will run: STM32_Programmer_CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=0x5C
    REFUSED: preview only, nothing was written. A production station re-runs this with WT_LOCK_CONFIRM=1.
    ```
