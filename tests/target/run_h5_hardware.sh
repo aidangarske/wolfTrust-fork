@@ -42,7 +42,7 @@ set -o pipefail
 mode="${1:-all}"
 scenario="${2:-positive}"
 case "$mode" in build|flash|all) ;; *) echo "usage: $0 build|flash|all [scenario]" >&2; exit 2 ;; esac
-case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|xnneg|svcneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|xnneg|svcneg" >&2; exit 2 ;; esac
+case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|nsbusfaultneg|xnneg|svcneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|nsbusfaultneg|xnneg|svcneg" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
@@ -60,7 +60,7 @@ SERIAL="${H5_SERIAL:-/dev/ttyACM0}"
 # confboot reboots the whole chain once per panic test (real SYSRESETREQ, each
 # re-running wolfBoot), so it needs a long ceiling; the capture stops early on
 # the suite report.
-case "$scenario" in restart) cap_default=32 ;; confboot) cap_default=900 ;; devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec) cap_default=600 ;; bootupdate) cap_default=45 ;; authneg) cap_default=30 ;; writeonce) cap_default=40 ;; *) cap_default=25 ;; esac
+case "$scenario" in restart|nsbusfaultneg) cap_default=32 ;; confboot) cap_default=900 ;; devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec) cap_default=600 ;; bootupdate) cap_default=45 ;; authneg) cap_default=30 ;; writeonce) cap_default=40 ;; *) cap_default=25 ;; esac
 CAP_S="${H5_CAPTURE_SECONDS:-$cap_default}"
 LOGFILE="${WT_SCENARIO_LOG:-ci-h5-hardware-$scenario.log}"
 case "$LOGFILE" in /*) ;; *) LOGFILE="$repo/$LOGFILE" ;; esac
@@ -162,6 +162,7 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "keystoreneg" ] && secure_flags="WT_KEYSTORE_NEG_PROBE=1"
   [ "$scenario" = "panicneg" ] && secure_flags="WT_PANIC_NEG_PROBE=1"
   [ "$scenario" = "restart" ] && guest_flags="WT_GUEST_FAULT_PROBE=1"
+  [ "$scenario" = "nsbusfaultneg" ] && guest_flags="WT_NS_BUSFAULT_PROBE=1"
   [ "$scenario" = "writeonce" ] && guest_flags="WT_WRITE_ONCE_RESET_PROBE=1"
   [ "$scenario" = "hsmattackneg" ] && guest_flags="WT_HSM_ATTACK_PROBE=1"
   [ "$scenario" = "gtzcneg" ] && guest_flags="WT_MPU_BYPASS_PROBE=1"
@@ -607,6 +608,31 @@ if [ "$mode" != "build" ]; then
         check_fail "quarantine" "quarantine events 0x${quarantines:-none}, expected 1"
       fi
       expect "guest1 alive after guest0 FAULTED" "freertos_guest1: heartbeat"
+      ;;
+    nsbusfaultneg)
+      # guest0 reads an unmapped Non-secure peripheral hole each boot: a precise
+      # BusFault the Secure monitor attributes to guest0 (BFAR), restarting it
+      # RESTART_LIMIT times then quarantining it while guest1 keeps running.
+      refute_re "no HardFault escalation" '^(\[HARDFLT\]|HardFault|SecureFault)'
+      fault_addr=$(read_secure_u32 g_last_fault_address)
+      if [ -n "$fault_addr" ] && [ $((0x$fault_addr)) -eq $((0x4C000000)) ]; then
+        check_pass "BusFault BFAR names the Non-secure hole (0x$fault_addr)"
+      else
+        check_fail "Non-secure BusFault" "fault addr 0x${fault_addr:-none}, want 0x4C000000"
+      fi
+      restarts=$(read_secure_u32 g_wt_restart_events)
+      quarantines=$(read_secure_u32 g_wt_quarantine_events)
+      if [ -n "$restarts" ] && [ $((0x$restarts)) -eq "$RESTART_LIMIT" ]; then
+        check_pass "monitor restarted guest0 exactly $RESTART_LIMIT times"
+      else
+        check_fail "guest restart count" "restart events 0x${restarts:-none}, expected $RESTART_LIMIT"
+      fi
+      if [ -n "$quarantines" ] && [ $((0x$quarantines)) -eq 1 ]; then
+        check_pass "guest0 quarantined after the limit (events=1)"
+      else
+        check_fail "quarantine" "quarantine events 0x${quarantines:-none}, expected 1"
+      fi
+      expect "guest1 alive through guest0's BusFaults" "freertos_guest1: heartbeat"
       ;;
     crossdomain)
       # The unprivileged crypto SP reads SPM-private RAM (WT_RAM_S_BASE) on

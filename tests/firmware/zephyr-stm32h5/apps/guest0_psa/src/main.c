@@ -1093,6 +1093,22 @@ static void wt_guest_fault_probe(void)
 }
 #endif
 
+#if defined(WT_NS_BUSFAULT_PROBE)
+/* Test-only: with its own MPU off, the guest reads an unmapped Non-secure hole;
+ * the precise BusFault goes to the Secure monitor (BFHFNMINS=0) for restart. */
+static void wt_guest_ns_busfault_probe(void)
+{
+	volatile uint32_t *mpu_ctrl_ns = (volatile uint32_t *)0xE000ED94u;
+	volatile const uint32_t *hole = (volatile const uint32_t *)0x4C000000u;
+	uint32_t sink;
+
+	*mpu_ctrl_ns = 0u;
+	__asm volatile("dsb; isb");
+	sink = *hole;
+	(void)sink;
+}
+#endif
+
 #if defined(WT_FWU_PROBE)
 /* P6-S4: drive SERVICE_FWU from a Non-secure guest. The unprivileged FWU SP
  * stages the candidate through its privileged SVC flash gate and
@@ -1545,6 +1561,9 @@ int main(void)
 
 #if defined(WT_GUEST_FAULT_PROBE)
 	wt_guest_fault_probe();
+#endif
+#if defined(WT_NS_BUSFAULT_PROBE)
+	wt_guest_ns_busfault_probe();
 #endif
 
 	rc = wt_zephyr_client_init("guest0_psa");

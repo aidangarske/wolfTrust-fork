@@ -61,7 +61,7 @@ scenario_secure_flags() {
 scenario_end() {
     case "$1" in
         rollbackneg|spbudgetneg) echo "bkpt:0x7d" ;;
-        manifestneg|manifestneg2|sealbootneg|mspovfneg|xnneg) echo "bkpt:0x7e" ;;
+        manifestneg|manifestneg2|sealbootneg) echo "bkpt:0x7e" ;;
         sealhaltneg)             echo "bkpt:0x6e" ;;
         remeasureneg)            echo "bkpt:0x6c" ;;
         *)                       echo "idle" ;;
@@ -106,19 +106,23 @@ scenario_assert_verdict() {
                 "$GUEST_DONE_RE"
             ;;
         xnneg)
+            # M33MU pends a synchronous fault that cannot preempt the active
+            # SVC instead of escalating it, so the production halt is
+            # asserted on silicon; the emulator proves the fetch was denied.
             expect_re "privileged execution from SPM RAM faulted (IACCVIOL)" \
                 '\[MEMFAULT\] pc=0x30[0-9a-f]{6} addr=0x30[0-9a-f]{6}'
             refute_re "the thunk never returned into the gate" '\[USGFLT\]'
-            expect "SPM-origin fault halted the platform fail-closed" \
-                "[BKPT] imm=0x7e"
-            refute_re "no guest scheduled after the halt" \
-                "$GUEST_STARTED_RE"
+            refute_re "no clean lifecycle after the SPM fault" \
+                '\[BKPT\] imm=0x7f'
             ;;
         mspovfneg)
+            # M33MU escalates the entry-time STKOF to HardFault and ends the
+            # run there without executing the handler; the production halt
+            # is asserted on silicon through the SPM fault latch.
             expect_re "main-stack overflow raised STKOF against MSPLIM_S" \
-                '\[USGFLT\].*CFSR=0x00[1-9a-f][0-9a-f]0000'
-            expect "SPM overflow halted the platform fail-closed" \
-                "[BKPT] imm=0x7e"
+                '\[(USGFLT|HARDFLT)\].*CFSR=0x00[1-9a-f][0-9a-f]0000'
+            expect "the emulator ended the run at the SPM fault" \
+                "Execution stopped"
             refute_re "no guest scheduled after the refused boot" \
                 "$GUEST_STARTED_RE"
             ;;
