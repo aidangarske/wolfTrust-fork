@@ -60,7 +60,7 @@ wolfBoot; the Secure runtime changes live in wolfTrust.
 | `config/examples/imx-rt700-mldsa.config` | ML-DSA-87 image signatures for a CNSA 2.0 boot chain. |
 | Boot-region protection | Before handoff, wolfBoot programs and locks the XSPI Secure Flash Protection descriptors so the bootloader region is read-only to the application, and refuses to continue if the protection cannot be read back. |
 | Guest flash fence | Carried as `tests/target/wolfboot-imxrt700-guest-fence.patch`: with `XSPI_GUEST_FENCE_START`/`END` defined, a further locked descriptor makes both guest windows read-only to every initiator until the next reset. |
-| Life cycle | Carried as `tests/target/wolfboot-imxrt700-lifecycle.patch`: `hal_attestation_get_lifecycle()` reads the OTP `LC_STATE` shadow, its redundant copy, and `DAUTHSTATUS`, and maps them to the PSA life cycle in the handoff. In Field reports SECURED only when every `DAUTHSTATUS` field reads implemented and disabled (`0xAA`); an enabled field lowers it to `0x5000` or `0x4000`, and any other encoding reports UNKNOWN. |
+| Life cycle | Carried as `tests/target/wolfboot-imxrt700-lifecycle.patch`: `hal_attestation_get_lifecycle()` reads the OTP `LC_STATE` shadow, its redundant copy, the A0/A1 bit-protection copies when present, and `DAUTHSTATUS`, and maps them to the PSA life cycle in the handoff. In Field reports SECURED only when every `DAUTHSTATUS` field reads implemented and disabled (`0xAA`); an enabled field lowers it to `0x5000` or `0x4000`, and any other encoding reports UNKNOWN. |
 
 The loader satisfies the [Porting](Porting.md) bootloader contract: it
 authenticates the Secure image, provides `wt_boot_handoff_t` (SHA-256
@@ -578,6 +578,10 @@ USB to one socket. On top of [the shared gates](Provisioning.md#the-lock-gates),
 `lock` checks these on this port:
 - It reads the life cycle from the burned fuses over the ISP connection, not
   from the shadows that `advance` changes.
+- The life cycle words must hold nothing above the state byte, which is the B0
+  layout. A0/A1 silicon keeps a bit-protection copy of each byte in bits
+  16-23; that burn encoding is not validated, so `discover` and `lock` refuse
+  those parts.
 - It needs a rehearsal of that exact state, with the SHA-256 of the four
   images the runner flashes, from a fused state earlier in the ladder.
 - The rehearsal must have run through the same debug probe that is attached

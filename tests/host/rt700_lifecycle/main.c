@@ -86,6 +86,24 @@ static void test_redundancy(void)
               IMX_RT7XX_LC_IN_FIELD), 0x0000u);
     EXPECT_LC(imx_rt7xx_attestation_lifecycle(IMX_RT7XX_LC_IN_FIELD,
               0x00u, DAUTH_CLOSED), 0x0000u);
+
+    /* A0/A1 bit-protection copies in bits 16-23 must agree with each byte. */
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x000F000Fu, 0x000F000Fu),
+              0x3000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(0x000F000Fu, 0x000F000Fu,
+              DAUTH_CLOSED), 0x3000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x0003000Fu, 0x000F000Fu),
+              0x0000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x000F000Fu, 0x0007000Fu),
+              0x0000u);
+    EXPECT_LC(imx_rt7xx_attestation_lifecycle(0x0003000Fu, 0x0003000Fu,
+              DAUTH_CLOSED), 0x0000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x000F000Fu, 0x0000000Fu),
+              0x0000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x0000000Fu, 0x000F000Fu),
+              0x0000u);
+    EXPECT_LC(imx_rt7xx_lc_to_psa_lifecycle(0x00030007u, 0x00030007u),
+              0x0000u);
 }
 
 static void test_debug_refinement(void)

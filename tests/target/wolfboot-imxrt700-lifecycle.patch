@@ -28,9 +28,9 @@ index a5b40299..bf9227a6 100644
 +        return -1;
 +    }
 +    lcState = *(volatile uint32_t *)(IMX_RT7XX_OTP_SHADOW_BASE_S +
-+        IMX_RT7XX_OTP_LC_STATE_OFFSET) & IMX_RT7XX_OTP_LC_STATE_MASK;
++        IMX_RT7XX_OTP_LC_STATE_OFFSET);
 +    lcStateRed = *(volatile uint32_t *)(IMX_RT7XX_OTP_SHADOW_BASE_S +
-+        IMX_RT7XX_OTP_LC_STATE_RED_OFFSET) & IMX_RT7XX_OTP_LC_STATE_MASK;
++        IMX_RT7XX_OTP_LC_STATE_RED_OFFSET);
 +    debugAuthStatus = *(volatile uint32_t *)IMX_RT7XX_DAUTHSTATUS_ADDRESS;
 +    *lifecycle = imx_rt7xx_attestation_lifecycle(lcState, lcStateRed,
 +        debugAuthStatus);
@@ -41,7 +41,7 @@ new file mode 100644
 index 00000000..c6a99736
 --- /dev/null
 +++ b/hal/imx_rt7xx_lifecycle.h
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,140 @@
 +/* imx_rt7xx_lifecycle.h
 + *
 + * Copyright (C) 2026 wolfSSL Inc.
@@ -73,6 +73,8 @@ index 00000000..c6a99736
 +#define IMX_RT7XX_OTP_LC_STATE_OFFSET      0x23Cu
 +#define IMX_RT7XX_OTP_LC_STATE_RED_OFFSET  0x094u
 +#define IMX_RT7XX_OTP_LC_STATE_MASK        0xFFu
++/* A0/A1 only: a bit-protection copy of each byte in bits 16-23; B0 reads 0. */
++#define IMX_RT7XX_OTP_BP_LC_STATE_SHIFT    16u
 +
 +#define IMX_RT7XX_LC_DEVELOP               0x03u
 +#define IMX_RT7XX_LC_DEVELOP2              0x07u
@@ -93,11 +95,18 @@ index 00000000..c6a99736
 +    uint32_t lcStateRed)
 +{
 +    uint32_t lifecycle;
++    uint32_t lc = lcState & IMX_RT7XX_OTP_LC_STATE_MASK;
++    uint32_t lcRed = lcStateRed & IMX_RT7XX_OTP_LC_STATE_MASK;
++    uint32_t bp = (lcState >> IMX_RT7XX_OTP_BP_LC_STATE_SHIFT) &
++        IMX_RT7XX_OTP_LC_STATE_MASK;
++    uint32_t bpRed = (lcStateRed >> IMX_RT7XX_OTP_BP_LC_STATE_SHIFT) &
++        IMX_RT7XX_OTP_LC_STATE_MASK;
 +
-+    if (lcState != lcStateRed) {
++    if (lc != lcRed || (bp == 0u) != (bpRed == 0u) ||
++            (bp != 0u && (bp != lc || bpRed != lcRed))) {
 +        return 0x0000u; /* PSA_LIFECYCLE_UNKNOWN */
 +    }
-+    switch (lcState) {
++    switch (lc) {
 +        case IMX_RT7XX_LC_DEVELOP:
 +            lifecycle = 0x1000u; /* PSA_LIFECYCLE_ASSEMBLY_AND_TEST */
 +            break;

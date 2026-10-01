@@ -238,6 +238,8 @@ port_discover() {
   pass "SPSDK shadowregs supports mimxrt798s"
   read -r lc lcr lock dauth < <(read_words "$LC_STATE" "$LC_STATE_RED" "$LOCK_CFG3" "$DAUTHSTATUS" | tr '\n' ' '; echo)
   [ "$(lc_hex "0x$lc")" = "$(lc_hex "0x$lcr")" ] || fail "discover" "life cycle copies disagree (LC 0x$lc, RED 0x$lcr)"
+  [ $((0x$lc & 0xFFFFFF00)) -eq 0 ] && [ $((0x$lcr & 0xFFFFFF00)) -eq 0 ] ||
+    fail "discover" "life cycle words 0x$lc/0x$lcr carry bits above the state byte (A0/A1 bit-protection copies); only the B0 encoding is validated"
   case "$(lc_hex "0x$lc")" in
     0x03|0x07|0x0F) ;;
     *) fail "discover" "fused life cycle $(lc_hex "0x$lc") has no further rehearsal step" ;;
@@ -380,6 +382,8 @@ port_lock_current() {
     refuse "cannot read the life cycle fuses over RT700_ISP ($RT700_ISP)."
   fi
   [ "$(lc_hex "$lc")" = "$(lc_hex "$lcr")" ] || refuse "the life cycle fuses disagree (LC $lc, RED $lcr)."
+  [ $((lc & 0xFFFFFF00)) -eq 0 ] && [ $((lcr & 0xFFFFFF00)) -eq 0 ] ||
+    refuse "the life cycle fuses $lc/$lcr carry bits above the state byte (A0/A1 bit-protection copies); only the B0 burn encoding is validated."
   lc_hex "$lc"
 }
 # The burn runs over ISP USB, and no chip identity is documented that both the

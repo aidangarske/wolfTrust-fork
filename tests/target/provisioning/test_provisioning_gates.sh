@@ -286,7 +286,9 @@ check "no ISP"               2 "set RT700_ISP" -- "${RT[@]}" lock 0x07
 check "skip ahead"           2 "runs only from develop2 (0x07)" -- env "${ISP[@]}" "${RT[@]}" lock in-field
 fuse 0x25 0x07
 check "copies disagree"      2 "disagree" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
-fuse 0x25 0x03
+fuse 0x8F 0x00030003; fuse 0x25 0x00030003
+check "A0/A1 protection copies"  2 "only the B0 burn encoding" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
+fuse 0x8F 0x03; fuse 0x25 0x03
 check "unrehearsed"          2 "no rehearsal for develop2" -- env "${ISP[@]}" "${RT[@]}" lock develop2
 rec 0x07 0x03 0000 armed "$(now)"
 check "rehearsed other images" 2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" lock 0x07

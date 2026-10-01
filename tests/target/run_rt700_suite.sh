@@ -20,16 +20,18 @@ if ! "$repo/tests/target/detect_rt700.sh" >/dev/null 2>&1; then
   exit 0
 fi
 
+logs="$repo/build/rt700-suite"
+mkdir -p "$logs"
 rc=0
 for s in $scenarios; do
   echo "RUN: hardware/$s"
-  if "$runner" "$s" >"/tmp/rt700-suite-$s.log" 2>&1; then
-    grep -F '  [check] ' "/tmp/rt700-suite-$s.log" || true
+  if "$runner" "$s" >"$logs/$s.log" 2>&1; then
+    grep -F '  [check] ' "$logs/$s.log" || true
     echo "PASS: hardware/$s"
   else
-    grep -F '  [check] ' "/tmp/rt700-suite-$s.log" || true
-    echo "FAIL: hardware/$s (tail of /tmp/rt700-suite-$s.log):"
-    tail -15 "/tmp/rt700-suite-$s.log" || true
+    grep -F '  [check] ' "$logs/$s.log" || true
+    echo "FAIL: hardware/$s (tail of $logs/$s.log):"
+    tail -15 "$logs/$s.log" || true
     rc=1
   fi
 done
