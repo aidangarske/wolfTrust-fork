@@ -1,6 +1,6 @@
 [submodule "lib/wolfHSM"]
 	path = lib/wolfHSM
-	url = https://github.com/aidangarske/wolfHSM.git
+	url = https://github.com/wolfSSL/wolfHSM.git
 [submodule "lib/wolfSSL"]
 	path = lib/wolfSSL
 	url = git@github.com:wolfSSL/wolfSSL.git

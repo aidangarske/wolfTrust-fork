@@ -82,6 +82,19 @@ static int wolfhsm_guest_connect(void)
         return rc;
     }
 
+    /* Bind the client namespace before the server accepts crypto requests. */
+    rc = wh_Client_CommInitRequest(&g_client_ctx);
+    if (rc == WH_ERROR_OK) {
+        rc = wh_Client_CommInitResponse(&g_client_ctx, NULL, NULL);
+    }
+    if (rc != WH_ERROR_OK) {
+        (void)wh_Client_Cleanup(&g_client_ctx);
+        if (g_retry_crypto_initialized != 0) {
+            (void)wolfhsm_guest_register_retry();
+        }
+        return rc;
+    }
+
     g_client_ready = 1;
     if (g_retry_crypto_initialized != 0) {
         (void)wolfCrypt_Cleanup();
