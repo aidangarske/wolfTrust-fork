@@ -27,6 +27,7 @@
 #include "wolftrust/arch/armv8m/armv8m.h"
 #include "wolftrust/arch/armv8m/core_regs.h"
 #include "wolftrust/arch/armv8m/mmio_map.h"
+#include "wolftrust/platform.h"
 #include "wolftrust/types.h"
 
 #include <stdbool.h>
@@ -41,6 +42,14 @@
 
 static const wt_armv8m_mpu_region_t* g_spm_whitelist;
 static size_t g_spm_whitelist_count;
+
+/* SPM-private RAM: .data, .bss and the main stack, never inside a domain. */
+extern uint32_t _sdata;
+extern uint32_t _estack;
+
+/* Partition dispatches that found no free region for the privileged
+ * execute-never cover of SPM RAM; only a conformance image may leave it set. */
+volatile uint32_t g_wt_xn_denied __attribute__((used));
 
 /* Program one secure MPU region. base/limit are inclusive 32-byte-aligned
  * boundaries; `rbar_flags` carries XN/AP/SH, `rlar_flags` carries AttrIndx. */
@@ -138,10 +147,52 @@ static void wt_program_secure_partition_region(uint32_t rnr, uintptr_t base,
     wt_mpu_s_set_region(rnr, base, base + size - 1u, rbar_flags, rlar_flags);
 }
 
+/* The cover starts at the boot-handoff scratch when the port places it below
+ * .data, so all writable SPM RAM up to the main stack top is covered. */
+static uintptr_t wt_mpu_s_spm_ram_base(void)
+{
+    size_t size = 0u;
+    uintptr_t base = (uintptr_t)wt_platform_boot_handoff_region(&size);
+
+    if (base == 0u || size == 0u || base >= (uintptr_t)&_sdata) {
+        base = (uintptr_t)&_sdata;
+    }
+    return base;
+}
+
+/* With PRIVDEFENA the privileged handlers that run under a partition thread
+ * domain see the default map, which permits execution from SRAM; cover the
+ * SPM's own RAM privileged-only and execute-never so they cannot. */
+static void wt_mpu_s_cover_spm_ram(uint32_t rnr)
+{
+    wt_mpu_s_set_region(rnr, wt_mpu_s_spm_ram_base(), (uintptr_t)&_estack - 1u,
+                        WT_MPU_RBAR_XN | WT_MPU_RBAR_AP_RW |
+                        WT_MPU_RBAR_SH_INNER, WT_MPU_RLAR_ATTRIDX_NORMAL);
+}
+
+/* A domain region inside SPM-private RAM breaks the level 3 invariant and
+ * would overlap the cover region; fail closed instead of dispatching. */
+static void wt_mpu_s_check_spm_ram_clear(const wt_memory_region_t* regions,
+                                         size_t count)
+{
+    size_t i;
+    uintptr_t base = wt_mpu_s_spm_ram_base();
+
+    for (i = 0u; regions != NULL && i < count; ++i) {
+        if (regions[i].size != 0u &&
+                regions[i].base < (uintptr_t)&_estack &&
+                regions[i].base + regions[i].size > base) {
+            wt_platform_panic();
+        }
+    }
+}
+
 static void wt_program_sp_domain_regions(const wt_memory_region_t* regions,
                                          size_t count, uint32_t ctrl)
 {
     size_t i;
+    uint32_t next = WT_MAX_MEMORY_REGIONS;
+    uint32_t dregion = (WT_MPU_S_TYPE >> 8) & 0xFFu;
 
     WT_MPU_S_CTRL = 0u;
     wt_dsb();
@@ -160,7 +211,26 @@ static void wt_program_sp_domain_regions(const wt_memory_region_t* regions,
             WT_MPU_S_RLAR = 0u;
         }
     }
-    wt_mpu_s_disable_from(WT_MAX_MEMORY_REGIONS);
+    if ((ctrl & WT_MPU_CTRL_PRIVDEFENA) != 0u) {
+        wt_mpu_s_check_spm_ram_clear(regions, count);
+        if (count < WT_MAX_MEMORY_REGIONS) {
+            next = (uint32_t)count;
+        }
+        if (next < dregion) {
+            wt_mpu_s_cover_spm_ram(next);
+            next++;
+        }
+        else {
+#if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
+            /* The Arm client partition's window grants fill an 8-region
+             * MPU; the test image records the uncovered dispatch. */
+            g_wt_xn_denied++;
+#else
+            wt_platform_panic();
+#endif
+        }
+    }
+    wt_mpu_s_disable_from(next);
 
     wt_dsb();
     WT_MPU_S_CTRL = ctrl;

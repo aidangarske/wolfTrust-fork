@@ -92,6 +92,7 @@ PORTS = {
             ("sealbootneg", "Damaged main-stack seal refuses to boot"),
             ("sealpivotneg", "Blocking wait stacked on the seal stays contained"),
             ("mspovfneg", "SPM main-stack overflow halts fail-closed"),
+            ("xnneg", "Privileged execution from SPM RAM denied"),
         ),
     },
     "mimxrt700": {

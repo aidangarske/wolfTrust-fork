@@ -42,7 +42,7 @@ set -o pipefail
 mode="${1:-all}"
 scenario="${2:-positive}"
 case "$mode" in build|flash|all) ;; *) echo "usage: $0 build|flash|all [scenario]" >&2; exit 2 ;; esac
-case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg" >&2; exit 2 ;; esac
+case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|xnneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|xnneg" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
@@ -173,6 +173,7 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "sealpivotneg" ] && secure_flags="WT_SEAL_NEG_PROBE=4"
   [ "$scenario" = "mspovfneg" ] && secure_flags="WT_MSP_OVF_PROBE=1"
   [ "$scenario" = "busfaultneg" ] && secure_flags="WT_BUSFAULT_NEG_PROBE=1"
+  [ "$scenario" = "xnneg" ] && secure_flags="WT_XN_NEG_PROBE=1"
   [ "$scenario" = "vnet" ] && secure_flags="CONFIG_VNET=y"
   [ "$scenario" = "vnetneg" ] && secure_flags="CONFIG_VNET=y WT_VNET_NEG_PROBE=1"
   # WT_CONF_DIAG_TRAP=0: the emulator-only hang-probe fault would become a
@@ -516,6 +517,14 @@ if [ "$mode" != "build" ]; then
         check_pass "cross-guest vector refused on silicon (mask=0x$neg)"
       else
         check_fail "cross-guest isolation" "guest1 negative mask 0x${neg:-none}, want bit 0x4"
+      fi
+      # Every production partition dispatch carried the privileged
+      # execute-never cover of SPM RAM (12 MPU regions on the H563).
+      xn=$(read_secure_u32 g_wt_xn_denied)
+      if [ -n "$xn" ] && [ $((0x$xn)) -eq 0 ]; then
+        check_pass "SPM RAM execute-never cover present on every dispatch"
+      else
+        check_fail "XN cover" "g_wt_xn_denied=0x${xn:-none}, want 0"
       fi
       ;;
     authneg)
@@ -916,6 +925,27 @@ if [ "$mode" != "build" ]; then
         check_fail "recovery" "lifecycle 0x${lc:-none} after the BusFault, expected 0xFF"
       fi
       expect "guest1 alive after the partition fault" "freertos_guest1: heartbeat"
+      ;;
+    xnneg)
+      # The privileged SVC gate calls a thunk in SPM .bss under a partition
+      # thread domain; the execute-never cover faults the fetch (IACCVIOL,
+      # escalated from the gate's priority to HardFault) and the SPM latch
+      # names the thunk address before the production panic. No guest runs.
+      cfsr=$(read_secure_u32 g_wt_spm_fault_cfsr)
+      pc=$(read_secure_u32 g_wt_spm_fault_pc)
+      if [ -n "$cfsr" ] && [ $((0x$cfsr & 0x1)) -eq 1 ]; then
+        check_pass "privileged execution from SPM RAM faulted (IACCVIOL, CFSR=0x$cfsr)"
+      else
+        check_fail "XN" "CFSR 0x${cfsr:-none} lacks IACCVIOL"
+      fi
+      if [ -n "$pc" ] && [ $((0x$pc)) -ge $((0x30028000)) ] && \
+         [ $((0x$pc)) -lt $((0x30075000)) ]; then
+        check_pass "faulting fetch was inside SPM RAM (pc=0x$pc)"
+      else
+        check_fail "XN" "fault pc 0x${pc:-none} not in SPM RAM"
+      fi
+      refute_re "no guest ran after the halt" \
+        '(guest0_psa alive|freertos_guest1: heartbeat)'
       ;;
     mspovfneg)
       # The reset path pushes on the main stack until MSPLIM_S raises STKOF;

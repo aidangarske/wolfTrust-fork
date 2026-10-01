@@ -296,9 +296,10 @@ elif [ "$scenario" = "sealbootneg" ]; then
   # The reset path refuses the damaged main-stack seal before any partition.
   expect_bkpt=0x7e
   timeout_s=40
-elif [ "$scenario" = "mspovfneg" ]; then
-  # The reset path overflows the main stack on purpose; MSPLIM_S raises STKOF
-  # and the SPM halts on the production panic. Do not quit on the fault.
+elif [ "$scenario" = "mspovfneg" ] || [ "$scenario" = "xnneg" ]; then
+  # The SPM faults itself on purpose (main-stack overflow against MSPLIM_S,
+  # or privileged execution from its own RAM) and halts on the production
+  # panic. Do not quit on the fault.
   quit_flag=""
   expect_bkpt=0x7e
   timeout_s=40
@@ -1009,6 +1010,24 @@ case "$scenario" in
     expect "unrelated guest kept running" "freertos_guest1: alive"
     expect "run reached the clean scenario end" "[EXPECT BKPT] Success"
     echo "PASS: target/sealpivotneg"
+    ;;
+  xnneg)
+    # The privileged SVC gate, running under a partition's thread domain,
+    # calls a `bx lr` thunk copied into SPM .bss. The execute-never cover of
+    # SPM RAM must fault the fetch (IACCVIOL at the thunk address) and the
+    # SPM-origin fault halts the platform; a thunk that returned would run
+    # the probe's udf #0x52 instead, a UsageFault the checks refuse.
+    if grep -Eq '\[MEMFAULT\] pc=0x30[0-9a-f]{6} addr=0x30[0-9a-f]{6}' "$log"; then
+      check_pass "privileged execution from SPM RAM faulted (IACCVIOL)"
+    else
+      check_fail "XN" "expected an instruction-fetch MemManage in SPM RAM, none seen"
+    fi
+    refute_re "the thunk never returned into the gate" '\[USGFLT\]'
+    expect "SPM-origin fault halted the platform fail-closed" "[BKPT] imm=0x7e"
+    expect "the emulator stopped on that halt" "[EXPECT BKPT] Success"
+    refute_re "no guest ran after the halt" \
+      '(guest0_psa alive|freertos_guest1:|vnet-guest|\[BKPT\] imm=0x7f)'
+    echo "PASS: target/xnneg"
     ;;
   mspovfneg)
     # The SPM pushes on its own stack until MSPLIM_S raises STKOF (CFSR bit
