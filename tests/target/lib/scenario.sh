@@ -51,6 +51,7 @@ scenario_secure_flags() {
         mspovfneg)        echo "WT_MSP_OVF_PROBE=1" ;;
         busfaultneg)      echo "WT_BUSFAULT_NEG_PROBE=1" ;;
         xnneg)            echo "WT_XN_NEG_PROBE=1" ;;
+        svcneg)           echo "WT_SVC_NEG_PROBE=1" ;;
         *)                echo "" ;;
     esac
 }

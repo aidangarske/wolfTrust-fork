@@ -185,22 +185,27 @@ static void wt_spm_its_entry(void* arg)
     volatile uint32_t periph_probe;
 #endif
 
-#if defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1)
-    /* Secure-caller-misuse proof (target/panicneg): closing an error-status
-     * handle is an FF-M PROGRAMMER ERROR the production SPM must panic this
-     * partition for; the graceful recovery restarts it with the marker set
-     * and the re-run serves storage normally. Reaching the udf below means
-     * the SPM failed to panic the caller, which fails the scenario with a
-     * distinct fault. Never built into production images. */
+#if (defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1)) || \
+    (defined(WT_SVC_NEG_PROBE) && (WT_SVC_NEG_PROBE == 1))
+    /* Secure-caller-misuse proofs (target/panicneg, svcneg): closing an
+     * error-status handle, or issuing the scheduler's internal SVC, is an
+     * FF-M PROGRAMMER ERROR the production SPM must panic this partition
+     * for; the graceful recovery restarts it with the marker set and the
+     * re-run serves storage normally. Reaching the udf below means the SPM
+     * failed to panic the caller. Never built into production images. */
     partition_id = (int32_t)((intptr_t)arg &
                              ~(intptr_t)WT_SP_FAULT_PROBE_RESTARTED);
     if (((intptr_t)arg & WT_SP_FAULT_PROBE_RESTARTED) == 0) {
+#if defined(WT_SVC_NEG_PROBE) && (WT_SVC_NEG_PROBE == 1)
+        wt_arch_sp_guest_return_probe();
+#else
         wt_spm_call_t bad;
 
         (void)memset(&bad, 0, sizeof(bad));
         bad.op = WT_SPM_OP_CLOSE;
         bad.msg_handle = (psa_handle_t)-135;
         (void)wt_arch_sp_trap(&bad);
+#endif
         wt_arch_sp_fault_probe(3u);
     }
 #endif

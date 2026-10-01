@@ -305,7 +305,7 @@ elif [ "$scenario" = "mspovfneg" ] || [ "$scenario" = "xnneg" ]; then
   timeout_s=40
 elif [ "$scenario" = "spfaultneg" ] || [ "$scenario" = "panicneg" ] ||
      [ "$scenario" = "vnetneg" ] || [ "$scenario" = "sealneg" ] ||
-     [ "$scenario" = "sealpivotneg" ]; then
+     [ "$scenario" = "sealpivotneg" ] || [ "$scenario" = "svcneg" ]; then
   # The SP faults on purpose; wolfTrust catches the fault and restarts
   # the partition in place, so halting on the fault would defeat the
   # recovery. The rest of the lifecycle then completes normally through the
@@ -1010,6 +1010,32 @@ case "$scenario" in
     expect "unrelated guest kept running" "freertos_guest1: alive"
     expect "run reached the clean scenario end" "[EXPECT BKPT] Success"
     echo "PASS: target/sealpivotneg"
+    ;;
+  svcneg)
+    # The ITS SP issues the scheduler's internal guest-return SVC (0x7F) on
+    # its first entry. A PSP-origin caller is a PROGRAMMER ERROR: the SPM
+    # resumes that partition on the panic trap (udf #0x50 -> Secure-Thread
+    # UNDEFINSTR UsageFault), the pinned client is unblocked with
+    # COMMUNICATION_FAILURE, and the platform keeps running. A missed reject
+    # would halt the platform (BKPT 0x7E) or run the probe's udf #3.
+    if grep -Eq '\[USGFLT\].*CFSR=0x00010000' "$log" &&
+       grep -Eq '\[USGFLT\] mem16\[0x[0-9a-f]+\]=0xde50' "$log"; then
+      check_pass "ITS SP panicked once on the panic trap (Secure-Thread UNDEFINSTR)"
+    else
+      check_fail "SP panic" "expected the panic-trap UsageFault, none seen"
+    fi
+    refute_re "panic was contained, not escalated" \
+      '(\[HARDFLT\]|HardFault|SecureFault)'
+    refute_re "platform did not halt on the partition's SVC" \
+      '\[BKPT\] imm=0x(6e|7e|7d)'
+    expect "pinned client unblocked with COMMUNICATION_FAILURE" \
+      "psa_connect(SERVICE_ITS) failed rc=0 handle=-145"
+    expect "sealed storage path unaffected" \
+      "wolfTrust PS sealed set/get verified"
+    expect "unrelated guest booted and ran through the panic" \
+      "freertos_guest1: alive"
+    expect "full lifecycle completed after recovery" "[EXPECT BKPT] Success"
+    echo "PASS: target/svcneg"
     ;;
   xnneg)
     # The privileged SVC gate, running under a partition's thread domain,

@@ -42,7 +42,7 @@ set -o pipefail
 mode="${1:-all}"
 scenario="${2:-positive}"
 case "$mode" in build|flash|all) ;; *) echo "usage: $0 build|flash|all [scenario]" >&2; exit 2 ;; esac
-case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|xnneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|xnneg" >&2; exit 2 ;; esac
+case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|xnneg|svcneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|xnneg|svcneg" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
@@ -174,6 +174,7 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "mspovfneg" ] && secure_flags="WT_MSP_OVF_PROBE=1"
   [ "$scenario" = "busfaultneg" ] && secure_flags="WT_BUSFAULT_NEG_PROBE=1"
   [ "$scenario" = "xnneg" ] && secure_flags="WT_XN_NEG_PROBE=1"
+  [ "$scenario" = "svcneg" ] && secure_flags="WT_SVC_NEG_PROBE=1"
   [ "$scenario" = "vnet" ] && secure_flags="CONFIG_VNET=y"
   [ "$scenario" = "vnetneg" ] && secure_flags="CONFIG_VNET=y WT_VNET_NEG_PROBE=1"
   # WT_CONF_DIAG_TRAP=0: the emulator-only hang-probe fault would become a
@@ -381,7 +382,7 @@ if [ "$mode" != "build" ]; then
     erase_verified 0x0C1FE000
     erase_verified 0x0C1FA000
     pyocd cmd -t "$PYOCD_TARGET" -c reset >/dev/null 2>&1 || true
-  elif [ "$scenario" = "positive" ] || [ "$scenario" = "bothpsa" ] || [ "$scenario" = "crossdomain" ] || [ "$scenario" = "keystoreneg" ] || [ "$scenario" = "panicneg" ] || [ "$scenario" = "fpneg" ] || [ "$scenario" = "sealneg" ] || [ "$scenario" = "sealpivotneg" ] || [ "$scenario" = "busfaultneg" ]; then
+  elif [ "$scenario" = "positive" ] || [ "$scenario" = "bothpsa" ] || [ "$scenario" = "crossdomain" ] || [ "$scenario" = "keystoreneg" ] || [ "$scenario" = "panicneg" ] || [ "$scenario" = "fpneg" ] || [ "$scenario" = "sealneg" ] || [ "$scenario" = "sealpivotneg" ] || [ "$scenario" = "busfaultneg" ] || [ "$scenario" = "svcneg" ]; then
     # Guest0's ITS+PS lifecycle persists vault objects across runs on silicon
     # (the emulator starts on fresh flash); blank the vault like the dev
     # scenarios do so the pool stays emulator-equivalent.
@@ -653,8 +654,9 @@ if [ "$mode" != "build" ]; then
       fi
       expect "guest1 alive after SP quarantined" "freertos_guest1: heartbeat"
       ;;
-    panicneg)
-      # Secure-caller misuse: the ITS SP closes an error-status handle on its
+    panicneg|svcneg)
+      # Secure-caller misuse: the ITS SP closes an error-status handle
+      # (panicneg) or issues the scheduler's internal SVC (svcneg) on its
       # first entry, so the production SPM panics it (resume PC landed on an
       # undefined instruction -> UsageFault UNDEFINSTR in the CFSR latch), the
       # graceful recovery restarts it, and the RESTARTED partition must then

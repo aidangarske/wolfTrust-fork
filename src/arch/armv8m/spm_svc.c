@@ -82,6 +82,21 @@ void wt_spm_svc_entry(uint32_t* frame)
     frame[0] = (uint32_t)wt_spm_dispatch_call(call, (wt_trap_frame_t*)frame);
 }
 
+/* A partition issued the scheduler's own SVC: resume it on the panic trap so
+ * it is quarantined under its policy instead of halting the platform. */
+__attribute__((used))
+void wt_spm_svc_reject(uint32_t* frame)
+{
+    wt_arch_sp_redirect_to_panic_trap((wt_trap_frame_t*)frame);
+}
+
+#if defined(WT_SVC_NEG_PROBE) && (WT_SVC_NEG_PROBE == 1)
+void wt_arch_sp_guest_return_probe(void)
+{
+    __asm volatile("svc #0x7F");
+}
+#endif
+
 uintptr_t wt_arch_sp_stack_pointer(void)
 {
     uint32_t psp;

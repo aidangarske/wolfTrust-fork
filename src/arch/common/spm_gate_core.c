@@ -256,7 +256,9 @@ static int wt_spm_fault_restart(void* ctx)
     void* arg = slot->arg;
 
 #if (defined(WT_SP_FAULT_PROBE) && (WT_SP_FAULT_PROBE == 1)) || \
-    (defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1))
+    (defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1)) || \
+    (defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)) || \
+    (defined(WT_SVC_NEG_PROBE) && (WT_SVC_NEG_PROBE == 1))
     arg = (void*)((intptr_t)slot->arg | WT_SP_FAULT_PROBE_RESTARTED);
 #endif
 #if defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1)

@@ -295,10 +295,11 @@ void SVC_Handler(void)
         "bne  2f                           \n"
         /* Internal guest-return is privileged MSP-thread-only: a PSP-origin
          * caller is a Secure Partition attempting the scheduler's own SVC,
-         * which fails the platform closed instead of restoring SPM state. */
+         * a PROGRAMMER ERROR that panics that partition alone. */
         "tst  lr, #4                       \n"
         "beq  wt_armv8m_svc_guest_return \n"
-        "b    wt_platform_panic            \n"
+        "mov  r0, r2                       \n"
+        "b    wt_spm_svc_reject            \n"
         "2:                                \n"
         "cmp  r3, #0x01                    \n"
         "bne  1f                           \n"
