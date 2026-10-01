@@ -395,16 +395,15 @@ port_ready() {
   fi
   ob_safe wrp || refuse "the perimeter or guest WRP option bytes are not wolfTrust's: run 'set-perimeter' and 'set-wrp' in Open."
   CHECKED="$CHECKED, perimeter and guest WRP values"
-  if [ "$1" = "0xC6" ] || [ "$1" = "0x72" ]; then
-    if da_production_ready; then
-      CHECKED="$CHECKED, production DA credential"
-    else
-      [ "${WT_PRODUCTION_LOCK:-0}" != "1" ] || da_refuse_sample
-      CHECKED="$CHECKED, DA credential is ST's sample or unset (a production lock refuses it)"
-    fi
-    da_ready || refuse "Debug Authentication is not provisioned (no intact OBK offering Full Regression): run 'provision-da' and 'discover'."
-    CHECKED="$CHECKED, DA provisioned"
+  # Locked too: the read-back after every closing write needs DA discovery.
+  if da_production_ready; then
+    CHECKED="$CHECKED, production DA credential"
+  else
+    [ "${WT_PRODUCTION_LOCK:-0}" != "1" ] || da_refuse_sample
+    CHECKED="$CHECKED, DA credential is ST's sample or unset (a production lock refuses it)"
   fi
+  da_ready || refuse "Debug Authentication is not provisioned (no intact OBK offering Full Regression): run 'provision-da' and 'discover'."
+  CHECKED="$CHECKED, DA provisioned"
 }
 port_lock_plan() { echo "$CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=$1"; }
 port_consequence() {

@@ -187,6 +187,9 @@ echo 0x17 > "$T/ps"
 check "closing preview: identity unreadable, sample DA noted" 2 "identity not readable here (needs WT_FIXTURE_BOUND=1)" -- "${H5[@]}" lock 0x72
 check "closing preview lists DA checks" 2 "DA credential is ST's sample or unset" -- "${H5[@]}" lock closed
 check "Locked preview"       2 "provisioning (0x17) -> locked (0x5C)" -- "${H5[@]}" lock locked
+echo 0xf5f5f5f5 > "$T/da"
+check "Locked without DA"    2 "Debug Authentication is not provisioned" -- "${H5[@]}" lock locked
+echo 0xeaeaeaea > "$T/da"
 check "closing lock without a bound fixture" 2 "set WT_FIXTURE_BOUND=1 there" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" lock 0x72
 check "no production opt-in" 2 "Only a production station" -- env WT_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 "${H5[@]}" lock 0x72
 check "production lock with ST sample DA" 2 "needs its own DA credential" -- env WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" lock 0x72

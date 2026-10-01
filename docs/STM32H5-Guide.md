@@ -382,7 +382,7 @@ See [how a production lock binds the software](Provisioning.md#how-a-production-
 | `lock provisioning` (`0x17`) | open `0xED` | Provisioning | a rehearsal of Provisioning or a closed state on this part |
 | `lock tz-closed` (`0xC6`) | provisioning `0x17` | TrustZone Closed | a rehearsal of `0xC6`; guest WRP; production DA, provisioned; `WT_FIXTURE_BOUND=1` |
 | `lock closed` (`0x72`) | provisioning `0x17` | Closed | a rehearsal of `0x72`; guest WRP; production DA, provisioned; `WT_FIXTURE_BOUND=1` |
-| `lock locked` (`0x5C`) | provisioning `0x17` | Locked (final) | a rehearsal of `0x72`; guest WRP; `WT_FIXTURE_BOUND=1` |
+| `lock locked` (`0x5C`) | provisioning `0x17` | Locked (final) | a rehearsal of `0x72`; guest WRP; production DA, provisioned (the read-back needs DA discovery); `WT_FIXTURE_BOUND=1` |
 
 On top of [the shared gates](Provisioning.md#the-lock-gates), this port checks:
 
