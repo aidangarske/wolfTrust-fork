@@ -143,6 +143,23 @@ than their names suggest:
   parked on its stack top, so the exception frame lands on the seal words;
   that partition alone faults and restarts, and the guests keep running.
 
+Three more cover the SPM's own fault handling:
+
+- `mspovfneg` pushes on the Secure main stack in the reset path until
+  `MSPLIM_S` raises STKOF; the platform halts on the production panic before
+  any partition or guest runs.
+- `xnneg` makes the privileged SVC gate call a thunk copied into SPM `.bss`
+  while a partition thread domain is installed; the execute-never cover faults
+  the fetch and the SPM-origin fault halts the platform.
+- `svcneg` has the ITS partition issue the scheduler's internal guest-return
+  SVC; the partition alone is panicked and restarted, and the lifecycle
+  completes.
+
+`busfaultneg` (the SERVICE_HSM partition reads an MPU-permitted window past
+the end of physical SRAM) runs only on the STM32H563: M33MU turns an unmapped
+data access into a MemManage fault and never vectors a data BusFault, so the
+scenario has no emulator row until the pinned emulator models it.
+
 VNET has convenience targets:
 
 ```sh

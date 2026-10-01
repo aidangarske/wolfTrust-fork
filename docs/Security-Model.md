@@ -143,6 +143,47 @@ moved onto a seal while another context runs, so this check does not replace
 the integrity signature the processor places in, and checks on, the Secure
 frames it stacks itself.
 
+### SPM stack limit and fault attribution
+
+The Secure main stack has a fixed size (`WT_SPM_STACK_SIZE`, 16 KiB), reserved
+by the linker below `_estack`; the link fails if `.bss` reaches it. Reset sets
+`MSPLIM_S` to its bottom right after MSP is placed under the seal words, and
+boot refuses to continue unless the limit reads back. An SPM stack overflow
+raises `UsageFault.STKOF` on the main stack; the handler halts the platform on
+the production panic without touching the stack, and a real `HardFault`
+handler does the same for any escalated fault, latching `CFSR`, `HFSR`,
+`MMFAR`, `BFAR`, the stacked PC and `EXC_RETURN` for a debugger instead of
+spinning silently.
+
+`BusFault` is enabled alongside `MemManage` and `UsageFault`. All three take one
+dispatcher, which attributes the fault by the frame it finds: a Secure Thread
+frame on the process stack with a scheduled partition or wolfHSM tasklet
+current is that partition's fault (precise bus errors carry `BFAR`; an
+imprecise one is drained by the barrier every context switch issues, so it is
+still pending against the partition that issued the write), and the partition
+restarts under its manifest policy. A frame from a privileged handler, the
+bootstrap thread, or no current coroutine is the SPM's own fault and halts the
+platform. A Non-secure bus error targets the Secure `BusFault` as well
+(`BFHFNMINS` is 0); it is routed to the guest fault path and restarts the
+guest. A partition that issues the scheduler's internal guest-return `SVC` is
+resumed on the PROGRAMMER ERROR trap and restarts alone.
+
+### Execute-never Secure RAM
+
+The SPM whitelist maps every writable Secure RAM region execute-never. The one
+executable Secure RAM window is the MIMXRT700's RAMFUNC band, which holds the
+NSC gateway and NOR routines and is mapped read-only. While an
+unprivileged partition thread runs, its MPU table keeps `PRIVDEFENA` so the
+privileged SVC gate and its deputies can reach SPM state, and the default map
+would let privileged code execute from SRAM; one extra region therefore covers
+the SPM's own RAM (the boot-handoff scratch, `.data`, `.bss`, the main stack)
+privileged-only and execute-never on every partition dispatch, and a domain
+region inside that window fails the dispatch closed. A production partition
+table must leave the region free; the Arm conformance client partition fills
+an 8-region MPU with its window grants, and the conformance image counts those
+dispatches in `g_wt_xn_denied` instead (the STM32H563 implements 12 regions,
+so it is covered there).
+
 ### Link-time optimization
 
 The Secure image enables GCC link-time optimization by default. LTO can replace
@@ -270,6 +311,8 @@ engine images.
 - [FF-M gateway](../src/arch/armv8m/ffm_nsc.c)
 - [Secure Partition scheduler and SVC gates](../src/arch/armv8m/spm_svc.c)
 - [Secure stack sealing and context switch](../src/arch/armv8m/coroutine_armv8m.c)
+- [Secure fault attribution and SPM halt](../src/arch/armv8m/sp_fault_armv8m.c)
+- [Secure MPU tables and the SPM RAM cover](../src/arch/armv8m/mpu_armv8m.c)
 - [Guest verification](../src/guest_verify.c)
 - [HSM relay binding](../src/services/wolfhsm/wt_hsm.c)
 - [Native crypto dispatch](../src/services/native/crypto_native.c)
