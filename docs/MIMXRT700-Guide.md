@@ -244,10 +244,10 @@ guest windows. `discover` then checks the preflight:
   [check] PASS  fused life cycle is Develop and its redundant copy agrees
   [check] PASS  life cycle shadow over-ride is open (LOCK_CFG3 0x00000000)
   [check] PASS  the boot handoff life cycle is readable (0x00001000, ASSEMBLY_AND_TEST)
-PASS: discovery stamped (/home/<user>/.cache/wolftrust/rt700-discovery-ok)
+PASS: discovery stamped (/home/<user>/.cache/wolftrust/mimxrt700/discovery)
 ```
 
-The stamp lives under `RT700_PROVISION_STATE` (default `~/.cache/wolftrust`).
+The stamp lives under `WT_PROVISION_STATE/mimxrt700` (default `~/.cache/wolftrust/mimxrt700`).
 Running `discover` again clears both it and any earlier `regress` stamp.
 
 ## Build, flash, and verify
@@ -426,7 +426,7 @@ PASS: hardware/wrpfence
   [check] PASS  fused life cycle is Develop and its redundant copy agrees
   [check] PASS  life cycle shadow over-ride is open (LOCK_CFG3 0x00000000)
   [check] PASS  the boot handoff life cycle is readable (0x00001000, ASSEMBLY_AND_TEST)
-PASS: discovery stamped (~/.cache/wolftrust/rt700-discovery-ok)
+PASS: discovery stamped (~/.cache/wolftrust/mimxrt700/discovery)
 ```
 
 `discover` gates `advance`. It requires the fused life cycle copies to agree,

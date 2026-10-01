@@ -102,7 +102,7 @@ fused_lc() {
   w="$(sed -n 's/^LC=\(0x[0-9A-Fa-f]*\) .*/\1/p' "$state_dir/discovery" 2>/dev/null)"
   [ -n "$w" ] && lc_hex "$w"
 }
-elf_sym() { arm-none-eabi-nm "$elf" | awk -v s="$1" '$3 == s { print "0x" $1; exit }'; }
+elf_sym() { arm-none-eabi-nm "$elf" | awk -v s="$1" '$3 == s && !f { print "0x" $1; f = 1 }'; }
 # The life cycle wolfBoot handed wolfTrust: the raw handoff record while it is
 # intact, else wolfTrust's consumed copy.
 handoff_lifecycle() {
@@ -117,29 +117,63 @@ handoff_lifecycle() {
   [ -n "$sym" ] || return 1
   read_words "$sym"
 }
+# The same predicate as wt_platform_guest_flash_wrp_ok: SFP sealed, every valid
+# descriptor touching the guest windows locked and write-denying, no gap.
 fence_line() {
-  local -a cmds=()
-  local w0 w1 w2 w3 n=0 out=""
+  local -a cmds=(-c "read32 0x50184900 4" -c "read32 0x50184920 4") st=() en=() deny=() desc=()
+  local addr w0 w1 w2 w3 n mgc="" mdad="" lock last cur found out=""
   rt700_fence_bounds || return 1
-  for w0 in 0 1 2 3 4 5 6 7; do
-    cmds+=(-c "read32 $(printf '0x%x' $((0x50184800 + w0 * 0x20))) 16")
+  for n in 0 1 2 3 4 5 6 7; do
+    cmds+=(-c "read32 $(printf '0x%x' $((0x50184800 + n * 0x20))) 16")
   done
-  while read -r w0 w1 w2 w3; do
-    if [ $((0x$w0 & 0xFFFF0000)) -le $((RT700_GUEST_FENCE_START)) ] &&
-       [ $(((0x$w1 & 0xFFFF0000) | 0xFFFF)) -ge $((RT700_GUEST_FENCE_END - 1)) ] &&
-       [ $((0x$w3 & 0x80000000)) -ne 0 ]; then
-      out="FRAD$n acp=0x$w2 word3=0x$w3"
-      if [ $((0x$w2 & 0x3F)) -eq 0 ] &&
-         { [ $((0x$w3 & 0x63000000)) -eq $((0x20000000)) ] ||
-           [ $((0x$w3 & 0x63000000)) -eq $((0x60000000)) ]; }; then
-        echo "armed $out"
-        return 0
-      fi
+  while read -r addr w0 w1 w2 w3; do
+    case "$addr" in
+      50184900:) mdad="$w0" ;;
+      50184920:) mgc="$w0" ;;
+      *)
+        [ $((0x${w3:-0} & 0x80000000)) -ne 0 ] || continue
+        lock=$((0x$w3 & 0x60000000))
+        st+=("$((0x$w0 & 0xFFFF0000))")
+        en+=("$(((0x$w1 & 0xFFFF0000) | 0xFFFF))")
+        desc+=("FRAD$(( (0x${addr%:} - 0x50184800) / 0x20 )) acp=0x$w2 word3=0x$w3")
+        if [ $((0x$w2 & 0x3F)) -eq 0 ] && [ $((0x$w3 & 0x03000000)) -eq 0 ] &&
+           { [ "$lock" -eq $((0x20000000)) ] || [ "$lock" -eq $((0x60000000)) ]; }; then
+          deny+=(1)
+        else
+          deny+=(0)
+        fi ;;
+    esac
+  done < <(timeout 60 pyocd cmd -t cortex_m "${cmds[@]}" 2>&1 | awk '/^50184/ { print $1, $2, $3, $4, $5 }')
+  if [ -z "$mgc" ] || [ -z "$mdad" ] ||
+     [ $((0x$mgc & 0xA8000000)) -ne $((0xA8000000)) ] || [ $((0x$mgc & 0xC00)) -eq 0 ] ||
+     [ $((0x$mdad & 0xA0000000)) -ne $((0xA0000000)) ]; then
+    echo "open SFP not sealed (MGC=0x${mgc:-?} TG0MDAD=0x${mdad:-?})"
+    return 1
+  fi
+  last=$((RT700_GUEST_FENCE_END - 1))
+  for n in "${!st[@]}"; do
+    if [ "${st[$n]}" -le "$last" ] && [ "${en[$n]}" -ge $((RT700_GUEST_FENCE_START)) ] && [ "${deny[$n]}" = 0 ]; then
+      echo "open ${desc[$n]} touches the guest windows without a locked write deny"
+      return 1
     fi
-    n=$((n + 1))
-  done < <(timeout 60 pyocd cmd -t cortex_m "${cmds[@]}" 2>&1 | awk '/^50184/ { print $2, $3, $4, $5 }')
-  echo "open ${out:-no descriptor spans the guest windows}"
-  return 1
+  done
+  cur=$((RT700_GUEST_FENCE_START))
+  while [ "$cur" -le "$last" ]; do
+    found=""
+    for n in "${!st[@]}"; do
+      if [ "${deny[$n]}" = 1 ] && [ "${st[$n]}" -le "$cur" ] && [ "${en[$n]}" -ge "$cur" ]; then
+        found="$n"
+        break
+      fi
+    done
+    if [ -z "$found" ]; then
+      echo "open no locked write deny covers $(printf '0x%08X' "$cur")"
+      return 1
+    fi
+    out="${out:+$out, }${desc[$found]}"
+    cur=$((en[found] + 1))
+  done
+  echo "armed $out"
 }
 # The four images run_rt700_hardware.sh flashes, as "address file" lines.
 flashed_images() {
@@ -327,12 +361,11 @@ port_regress() {
   [ "$(lc_hex "0x$lc")" = "$fused" ] && [ "$(lc_hex "0x$lcr")" = "$fused" ] ||
     fail "regress" "life cycle after reset is 0x$lc/0x$lcr, not the fused $fused (run discover)"
   pass "hardware reset reloaded the fused $(state_name "$fused") life cycle"
-  if hl="$(handoff_lifecycle)"; then
-    case " $(expect_psa "$fused") " in
-      *" $hl "*) pass "wolfTrust booted $(psa_name "$hl") again" ;;
-      *) fail "regress" "wolfTrust saw 0x$hl after regress" ;;
-    esac
-  fi
+  hl="$(handoff_lifecycle)" || fail "regress" "cannot read the life cycle wolfTrust saw after the reset"
+  case " $(expect_psa "$fused") " in
+    *" $hl "*) pass "wolfTrust booted $(psa_name "$hl") again" ;;
+    *) fail "regress" "wolfTrust saw 0x$hl after regress" ;;
+  esac
   mkdir -p "$state_dir"
   date -u +%FT%TZ > "$state_dir/regress-ok"
 }
@@ -379,7 +412,8 @@ port_lock_write() {
   mkdir -p "$state_dir"
   burn_script "$1" > "$state_dir/burn-$1.bls"
   # shellcheck disable=SC2086  # RT700_ISP is a blhost option list
-  blhost $RT700_ISP batch "$state_dir/burn-$1.bls"
+  blhost $RT700_ISP batch "$state_dir/burn-$1.bls" ||
+    echo "blhost batch failed part way; reading both life cycle words back"
 }
 port_lock_verify() {
   local lc lcr

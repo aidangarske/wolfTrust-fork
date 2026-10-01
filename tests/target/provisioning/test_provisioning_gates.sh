@@ -30,6 +30,7 @@ R="$T/repo"
 mkdir -p "$R/build" "$R/wolfBoot" "$R/tests/firmware/zephyr-stm32h5/build/guest0_psa/zephyr" \
     "$R/tests/firmware/zephyr-stm32h5/build/freertos_guest1" "$T/st" "$T/bin" "$T/venv/bin"
 cp -R "$SRC/tests/target" "$R/tests/"
+mkdir -p "$R/mk"; cp "$SRC/mk/target-mimxrt700.mk" "$R/mk/"
 echo wb > "$R/wolfBoot/wolfboot.bin"; echo wt > "$R/build/wolftrust_v1_signed.bin"
 echo g0 > "$R/tests/firmware/zephyr-stm32h5/build/guest0_psa/zephyr/zephyr.bin"
 echo g1 > "$R/tests/firmware/zephyr-stm32h5/build/freertos_guest1/freertos_guest1.bin"
@@ -87,11 +88,12 @@ case "\$1" in
     printf '{"command":"efuse-read-once","response":[4,%d],"status":{"value":0}}\n' \$((v)) ;;
   batch) cat "\$2" >> $T/writes
     while read -r c a d _; do i=\$((a)); o=\$(cat $T/fuse.\$i 2>/dev/null || echo 0)
-      echo \$(( o | 0x\$d )) > $T/fuse.\$i; done < "\$2" ;;
+      echo \$(( o | 0x\$d )) > $T/fuse.\$i; [ ! -e $T/batchfail ] || exit 1; done < "\$2" ;;
 esac
 EOF
 cat > "$T/venv/bin/pyocd" <<EOF
 #!/bin/sh
+if [ "\$1" = cmd ]; then cat "$T/sfp" 2>/dev/null; exit 0; fi
 [ "\$1" = list ] || exit 0
 echo "  #   Probe/Board   Unique ID   Target"
 echo "-----------------------------------"
@@ -252,6 +254,26 @@ rec() { mkdir -p "$RS"; echo "state=$1 run=r id=${6:-PROBEA} image=$3 fused=$2 f
 now() { date +%s; }
 rm -f "$T"/fuse.*; fuse 0x8F 0x03; fuse 0x25 0x03
 check "help lists the port's states" 0 "in-field-locked" -- "${RT[@]}" help
+# sfp <MGC> <FRAD2 last> <FRAD2 word3> [extra descriptor line]
+sfp() {
+  printf '50184900:  a000c000\n50184920:  %s\n' "$1"
+  printf '50184800:  28000000 2803ffff 00000000 a0000000\n50184820:  28040000 2807ffff 00000007 a0000000\n'
+  printf '50184840:  28080000 %s 00000000 %s\n50184860:  28140000 2bffffff 00000007 a0000000\n' "$2" "$3"
+  printf '%s\n' "${4:-50184880:  00000000 00000000 00000000 20000000}"
+}
+sfp a8000400 2813ffff a0000000 > "$T/sfp"
+check "verify-wrp: wolfBoot's fence" 0 "armed FRAD2" -- "${RT[@]}" verify-wrp
+sfp 28000400 2813ffff a0000000 > "$T/sfp"
+check "verify-wrp: SFP not valid" 1 "SFP not sealed" -- "${RT[@]}" verify-wrp
+sfp a8000000 2813ffff a0000000 > "$T/sfp"
+check "verify-wrp: SFP not locked" 1 "SFP not sealed" -- "${RT[@]}" verify-wrp
+sfp a8000400 2813ffff 80000000 > "$T/sfp"
+check "verify-wrp: fence descriptor unlocked" 1 "FRAD2 .* touches the guest windows" -- "${RT[@]}" verify-wrp
+sfp a8000400 2813ffff a0000000 "50184880:  28100000 2810ffff 00000007 a0000000" > "$T/sfp"
+check "verify-wrp: writable overlap" 1 "FRAD4 .* touches the guest windows" -- "${RT[@]}" verify-wrp
+sfp a8000400 280fffff a0000000 > "$T/sfp"
+check "verify-wrp: gap in the fence" 1 "covers 0x28100000" -- "${RT[@]}" verify-wrp
+rm -f "$T/sfp"
 check "no ISP"               2 "set RT700_ISP" -- "${RT[@]}" lock 0x07
 check "skip ahead"           2 "runs only from develop2 (0x07)" -- env "${ISP[@]}" "${RT[@]}" lock in-field
 fuse 0x25 0x07
@@ -292,7 +314,11 @@ rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && { pass=$((pass+1)); echo "ok   old
 expect -c "set timeout 5; spawn $RTX lock 0x07; expect \"to continue: \"; send \"I ACCEPT 0x07\r\"; expect eof; catch wait r; exit [lindex \$r 3]" >/dev/null
 rc=$?; [ $rc = 0 ] && [ "$(cat "$T/fuse.143")" = 7 ] && [ "$(cat "$T/fuse.37")" = 7 ] && [ ! -e "$RS/rehearsal-0x07" ] && { pass=$((pass+1)); echo "ok   exact phrase burns Develop2 (stub) and consumes the rehearsal"; } || { failn=$((failn+1)); echo "FAIL exact phrase rc=$rc"; }
 [ "$(head -1 "$T/writes" | cut -d' ' -f2)" = 0x25 ] && { pass=$((pass+1)); echo "ok   life cycle words burn RED then LC"; } || { failn=$((failn+1)); echo "FAIL order"; }
-: > "$T/writes"
+: > "$T/writes"; fuse 0x8F 0x03; fuse 0x25 0x03; touch "$T/batchfail"
+rec 0x07 0x03 "$(edig)" armed "$(now)"
+out="$(expect -c "set timeout 10; spawn $RTX lock 0x07; expect \"to continue: \"; send \"I ACCEPT 0x07\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+rc=$?; [ $rc = 1 ] && grep -q "batch failed part way" <<<"$out" && grep -q "fuses read LC 0x00000003, RED 0x00000007" <<<"$out" && { pass=$((pass+1)); echo "ok   a burn that fails part way still reads both words back"; } || { failn=$((failn+1)); echo "FAIL partial burn rc=$rc"; echo "$out" | tail -4; }
+rm -f "$T/batchfail" "$RS/rehearsal-0x07"; fuse 0x8F 0x07; fuse 0x25 0x07; : > "$T/writes"
 else
   echo "skip typed burn tests (no expect)"; fuse 0x8F 0x07; fuse 0x25 0x07
 fi

@@ -155,15 +155,20 @@ erase_range() {
         -s "$range" >/dev/null 2>&1 || fail "erase of $range failed"
 }
 
-# SRAM survives a warm reset, so the last run's mailboxes and sentinel would
-# otherwise read back as this run's result if the chain never reached a guest.
+# SRAM survives a warm reset, so the last run's mailboxes, sentinel, and launch
+# masks would otherwise read back as this run's result.
 clear_mailboxes() {
+    local verified refused
+    verified="$(elf_sym g_wt_launch_verified_mask)"
+    refused="$(elf_sym g_wt_launch_refused_mask)"
+    [ -n "$verified" ] && [ -n "$refused" ] || fail "launch masks not found in wolftrust.elf"
     park_core
     timeout 60 pyocd cmd -t "$target" -O resume_on_disconnect=false \
         -c "write32 0x20100000 0 0 0 0 0 0 0 0 0 0" \
         -c "write32 0x20140000 0 0 0 0 0 0 0 0 0 0" \
         -c "write32 0x20170000 0" \
-        -c "write32 0x20180080 0 0 0 0 0 0 0 0 0 0 0 0" >/dev/null 2>&1 || \
+        -c "write32 0x20180080 0 0 0 0 0 0 0 0 0 0 0 0" \
+        -c "write32 $verified 0" -c "write32 $refused 0" >/dev/null 2>&1 || \
         fail "could not clear the guest mailboxes"
 }
 
@@ -285,7 +290,7 @@ check_guest() {
 # A wolfTrust global's address, from the image this run built and flashed.
 elf_sym() {
     arm-none-eabi-nm "$repo/build/wolftrust.elf" |
-        awk -v s="$1" '$3 == s { print "0x" $1; exit }'
+        awk -v s="$1" '$3 == s && !f { print "0x" $1; f = 1 }'
 }
 
 # All eight XSPI0 FRADs as "start end acp word3" lines, in one debugger
