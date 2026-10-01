@@ -265,6 +265,17 @@ volatile void* wt_platform_boot_handoff_region(size_t* size)
     return (volatile void*)WT_BOOT_HANDOFF_ADDRESS;
 }
 
+#if defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)
+/* The 32 KiB past the end of physical SRAM3 (0x300A0000) is unmapped on the
+ * H563, so an MPU-permitted read there is a precise BusFault on silicon. */
+void wt_platform_busfault_probe_region(wt_memory_region_t* region)
+{
+    region->base = 0x300A0000u;
+    region->size = 0x00008000u;
+    region->attributes = WT_MEM_ATTR_READ;
+}
+#endif
+
 static void wt_clock_init(void)
 {
     uint32_t reg;

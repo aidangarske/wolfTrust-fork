@@ -32,6 +32,10 @@ typedef struct wt_trap_frame wt_trap_frame_t;
 #include "wolftrust/types.h"
 
 void wt_platform_init(void);
+#if defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)
+/* busfaultneg: a readable region whose bus returns an error on this SoC. */
+void wt_platform_busfault_probe_region(wt_memory_region_t* region);
+#endif
 /* Only asked of ports providing WT_PORT_CAPABILITY_TZ_FILTER. */
 void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
                                         size_t count);

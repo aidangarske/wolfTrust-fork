@@ -43,6 +43,7 @@
 #define WT_SCB_AIRCR_VECTKEY     (0x05FAu << 16)
 #define WT_SCB_AIRCR_SYSRESETREQ (WT_SCB_AIRCR_VECTKEY | (1u << 2))
 #define WT_SCB_AIRCR_SYSRESETREQS (1u << 3)
+#define WT_SCB_AIRCR_BFHFNMINS   (1u << 13)
 /* Config bits that must be preserved across an AIRCR read-modify-write. */
 #define WT_SCB_AIRCR_CFG_MASK    ((1u << 3) | (1u << 13) | (1u << 14) | (7u << 8))
 #define WT_SCB_ICSR_PENDSVCLR    (1u << 27)
@@ -79,6 +80,12 @@
 #define WT_SCB_HFSR_FORCED            (1u << 30)
 
 #define WT_SCB_CFSR_UFSR_STKOF        (1u << 20)  /* UFSR bit 4 lifted to CFSR bit 20 */
+/* Faults that leave no readable exception frame at the faulting SP. */
+#define WT_SCB_CFSR_NO_FRAME          (WT_SCB_CFSR_MMFSR_MUNSTKERR | \
+                                       WT_SCB_CFSR_MMFSR_MSTKERR | \
+                                       WT_SCB_CFSR_BFSR_UNSTKERR | \
+                                       WT_SCB_CFSR_BFSR_STKERR | \
+                                       WT_SCB_CFSR_UFSR_STKOF)
 #define WT_SCB_CFSR_UFSR_NOCP         (1u << 19)  /* UFSR bit 3: coprocessor disabled */
 #define WT_SCB_CFSR_UFSR_UNDEFINSTR   (1u << 16)  /* UFSR bit 0: undefined instruction */
 

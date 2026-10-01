@@ -139,20 +139,25 @@ static void wt_arch_fp_lockdown(void)
 void wt_arch_init(void)
 {
     wt_arch_fp_lockdown();
-    /* Route MemManage and UsageFault to their own handlers (otherwise
-     * they escalate to HardFault and we lose the fault-status registers
-     * by the time we get the trap). STKOF on PSPLIM_S overflow surfaces
-     * as a UsageFault. */
-    WT_SCB_SHCSR_S |= WT_SCB_SHCSR_MEMFAULTENA | WT_SCB_SHCSR_USGFAULTENA;
+    /* Route MemManage, BusFault and UsageFault to their own handlers
+     * (otherwise they escalate to HardFault and we lose the fault-status
+     * registers by the time we get the trap). STKOF on a stack limit
+     * surfaces as a UsageFault. */
+    WT_SCB_SHCSR_S |= WT_SCB_SHCSR_MEMFAULTENA | WT_SCB_SHCSR_BUSFAULTENA |
+                      WT_SCB_SHCSR_USGFAULTENA;
     /* Reset authority belongs to the Secure world. With SYSRESETREQS set, a
      * Non-secure SYSRESETREQ (e.g. a guest RTOS calling sys_reboot on a fault)
      * no longer resets the SoC — only Secure code can. This is the correct
      * Secure-Manager policy and stops a rogue NS reboot from tearing the whole
-     * system down. Read-modify-write with VECTKEY, preserving the TrustZone
-     * config bits (PRIS/BFHFNMINS/PRIGROUP). */
+     * system down. Keep PRIS/PRIGROUP; clear BFHFNMINS so BusFault, HardFault
+     * and NMI always target the Secure monitor. */
     WT_SCB_AIRCR_S = WT_SCB_AIRCR_VECTKEY |
-                     (WT_SCB_AIRCR_S & WT_SCB_AIRCR_CFG_MASK) |
+                     (WT_SCB_AIRCR_S & WT_SCB_AIRCR_CFG_MASK &
+                      ~WT_SCB_AIRCR_BFHFNMINS) |
                      WT_SCB_AIRCR_SYSRESETREQS;
+    if ((WT_SCB_AIRCR_S & WT_SCB_AIRCR_BFHFNMINS) != 0u) {
+        wt_platform_panic();
+    }
     /* PendSV and the secure SysTick must share the lowest priority: SysTick at
      * the reset default (0, highest) would preempt PendSV mid-coroutine switch,
      * and a nested exception return off the half-saved frame faults INVPC.
@@ -352,6 +357,44 @@ static void wt_secure_fault_dispatch(const wt_trap_frame_t* frame)
 {
     g_last_fault_address = WT_SAU_SFAR;
     wt_monitor_on_guest_fault(frame, WT_FAULT_SECURE_ESCALATION);
+    wt_platform_panic();
+    __builtin_unreachable();
+}
+
+/* A Non-secure bus error targets the Secure BusFault (BFHFNMINS is 0): the
+ * guest that issued it is restarted under its policy, never the platform. */
+static void wt_secure_busfault_dispatch(const wt_trap_frame_t* frame)
+    __attribute__((noreturn, used));
+
+/* A guest (un)stacking error leaves no readable frame; capture this instead. */
+static wt_trap_frame_t g_wt_guest_no_frame;
+
+static void wt_secure_busfault_dispatch(const wt_trap_frame_t* frame)
+{
+    uint32_t cfsr = WT_SCB_CFSR_S;
+
+    if ((cfsr & (WT_SCB_CFSR_BFSR_STKERR | WT_SCB_CFSR_BFSR_UNSTKERR)) != 0u) {
+        frame = &g_wt_guest_no_frame;
+    }
+    g_last_fault_address = 0u;
+    if ((cfsr & WT_SCB_CFSR_BFSR_BFARVALID) != 0u) {
+        g_last_fault_address = WT_SCB_BFAR_S;
+    }
+    WT_SCB_CFSR_S = cfsr & WT_SCB_CFSR_BFSR_MASK;
+    wt_monitor_on_guest_fault(frame, WT_FAULT_MEMORY_VIOLATION);
+    wt_platform_panic();
+    __builtin_unreachable();
+}
+
+/* A guest's escalated fault may come from an invalid stack: restart it
+ * without reading the frame. */
+static void wt_secure_hardfault_dispatch(void) __attribute__((noreturn, used));
+
+static void wt_secure_hardfault_dispatch(void)
+{
+    g_last_fault_address = 0u;
+    WT_SCB_HFSR_S = WT_SCB_HFSR_FORCED;
+    wt_monitor_on_guest_fault(&g_wt_guest_no_frame, WT_FAULT_SECURE_ESCALATION);
     wt_platform_panic();
     __builtin_unreachable();
 }
@@ -828,6 +871,41 @@ __attribute__((naked)) void SecureFault_Handler(void)
         "str lr, [r1]                   \n"
         "mrs r0, msp_ns                 \n"
         "b wt_secure_fault_dispatch     \n"
+    );
+}
+
+/* NS-origin BusFault: the SecureFault NS capture, with the frame taken from
+ * whichever Non-secure stack EXC_RETURN bit 2 names (RTOS threads run on
+ * PSP_NS; the guest's reset context runs on MSP_NS). */
+__attribute__((naked, used)) void wt_armv8m_guest_busfault_entry(void)
+{
+    __asm volatile(
+        "mov r2, sp                     \n"
+        "ldr r1, =g_secure_entry_sp     \n"
+        "str r2, [r1]                   \n"
+        "ldr r1, =g_live_r4_r11         \n"
+        "stmia r1!, {r4-r11}            \n"
+        "ldr r1, =g_live_exc_return     \n"
+        "str lr, [r1]                   \n"
+        "tst lr, #4                     \n"
+        "ite eq                         \n"
+        "mrseq r0, msp_ns               \n"
+        "mrsne r0, psp_ns               \n"
+        "b wt_secure_busfault_dispatch  \n"
+    );
+}
+
+__attribute__((naked, used)) void wt_armv8m_guest_hardfault_entry(void)
+{
+    __asm volatile(
+        "mov r2, sp                     \n"
+        "ldr r1, =g_secure_entry_sp     \n"
+        "str r2, [r1]                   \n"
+        "ldr r1, =g_live_r4_r11         \n"
+        "stmia r1!, {r4-r11}            \n"
+        "ldr r1, =g_live_exc_return     \n"
+        "str lr, [r1]                   \n"
+        "b wt_secure_hardfault_dispatch \n"
     );
 }
 

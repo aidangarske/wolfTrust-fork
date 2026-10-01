@@ -1012,6 +1012,14 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
                                               region_count,
                                               WT_MAX_MEMORY_REGIONS);
 #endif
+#if defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)
+    /* busfaultneg: grant the port's bus-error window so the probe read
+     * passes the MPU and faults on the bus. Never built into production. */
+    if (region_count < WT_MAX_MEMORY_REGIONS) {
+        wt_platform_busfault_probe_region(&slot->table.regions[region_count]);
+        region_count++;
+    }
+#endif
     slot->table.region_count = region_count;
 
     slot->co = wt_co_create_blocked_ex(

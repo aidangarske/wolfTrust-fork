@@ -49,6 +49,7 @@ scenario_secure_flags() {
         sealbootneg)      echo "WT_SEAL_NEG_PROBE=3" ;;
         sealpivotneg)     echo "WT_SEAL_NEG_PROBE=4" ;;
         mspovfneg)        echo "WT_MSP_OVF_PROBE=1" ;;
+        busfaultneg)      echo "WT_BUSFAULT_NEG_PROBE=1" ;;
         *)                echo "" ;;
     esac
 }

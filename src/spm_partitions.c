@@ -74,13 +74,21 @@ static void wt_spm_hsm_entry(void* arg)
      * recovery (WT-FFM-0017/0051). Never built into production images. */
     wt_arch_sp_fault_probe(0u);
 #endif
-#if defined(WT_SP_FAULT_PROBE) && (WT_SP_FAULT_PROBE == 1)
-    /* One-shot graceful-recovery probe (target/spfaultneg): an undefined
-     * instruction raises a recoverable Secure-Thread UsageFault. The
-     * recovery re-arms this partition with the restarted marker set, so the
-     * re-run skips the probe and serves. */
+#if (defined(WT_SP_FAULT_PROBE) && (WT_SP_FAULT_PROBE == 1)) || \
+    (defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1))
+    /* One-shot graceful-recovery probes (target/spfaultneg, busfaultneg): an
+     * undefined instruction, or a read of the port's bus-error window, raises
+     * a recoverable Secure-Thread fault. The recovery re-arms this partition
+     * with the restarted marker set, so the re-run skips the probe. */
     if (((intptr_t)arg & WT_SP_FAULT_PROBE_RESTARTED) == 0) {
+#if defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)
+        wt_memory_region_t probe;
+
+        wt_platform_busfault_probe_region(&probe);
+        (void)*(const volatile uint32_t*)(uintptr_t)probe.base;
+#else
         wt_arch_sp_fault_probe(0u);
+#endif
     }
     partition_id = (int32_t)((intptr_t)arg &
                              ~(intptr_t)WT_SP_FAULT_PROBE_RESTARTED);

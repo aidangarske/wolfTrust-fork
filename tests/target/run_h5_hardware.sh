@@ -42,7 +42,7 @@ set -o pipefail
 mode="${1:-all}"
 scenario="${2:-positive}"
 case "$mode" in build|flash|all) ;; *) echo "usage: $0 build|flash|all [scenario]" >&2; exit 2 ;; esac
-case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg" >&2; exit 2 ;; esac
+case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
@@ -172,6 +172,7 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "sealneg" ] && secure_flags="WT_SEAL_NEG_PROBE=1"
   [ "$scenario" = "sealpivotneg" ] && secure_flags="WT_SEAL_NEG_PROBE=4"
   [ "$scenario" = "mspovfneg" ] && secure_flags="WT_MSP_OVF_PROBE=1"
+  [ "$scenario" = "busfaultneg" ] && secure_flags="WT_BUSFAULT_NEG_PROBE=1"
   [ "$scenario" = "vnet" ] && secure_flags="CONFIG_VNET=y"
   [ "$scenario" = "vnetneg" ] && secure_flags="CONFIG_VNET=y WT_VNET_NEG_PROBE=1"
   # WT_CONF_DIAG_TRAP=0: the emulator-only hang-probe fault would become a
@@ -379,7 +380,7 @@ if [ "$mode" != "build" ]; then
     erase_verified 0x0C1FE000
     erase_verified 0x0C1FA000
     pyocd cmd -t "$PYOCD_TARGET" -c reset >/dev/null 2>&1 || true
-  elif [ "$scenario" = "positive" ] || [ "$scenario" = "bothpsa" ] || [ "$scenario" = "crossdomain" ] || [ "$scenario" = "keystoreneg" ] || [ "$scenario" = "panicneg" ] || [ "$scenario" = "fpneg" ] || [ "$scenario" = "sealneg" ] || [ "$scenario" = "sealpivotneg" ]; then
+  elif [ "$scenario" = "positive" ] || [ "$scenario" = "bothpsa" ] || [ "$scenario" = "crossdomain" ] || [ "$scenario" = "keystoreneg" ] || [ "$scenario" = "panicneg" ] || [ "$scenario" = "fpneg" ] || [ "$scenario" = "sealneg" ] || [ "$scenario" = "sealpivotneg" ] || [ "$scenario" = "busfaultneg" ]; then
     # Guest0's ITS+PS lifecycle persists vault objects across runs on silicon
     # (the emulator starts on fresh flash); blank the vault like the dev
     # scenarios do so the pool stays emulator-equivalent.
@@ -881,6 +882,40 @@ if [ "$mode" != "build" ]; then
         check_fail "recovery" "lifecycle 0x${lc:-none} after the FP fault, expected 0xFF"
       fi
       expect "guest1 alive through the FP fault" "freertos_guest1: heartbeat"
+      ;;
+    busfaultneg)
+      # The SERVICE_HSM relay SP reads the port's bus-error window (past the
+      # end of physical SRAM, MPU-permitted) on its first entry: a precise
+      # BusFault with BFAR, attributed to the partition, which restarts and
+      # then serves the full guest lifecycle; the platform never halts.
+      refute_re "BusFault did not escalate to HardFault" \
+        '^(\[HARDFLT\]|HardFault|SecureFault)'
+      fault_cnt=$(read_secure_u32 g_tasklet_fault_count)
+      fault_cfsr=$(read_secure_u32 g_tasklet_fault_cfsr)
+      fault_addr=$(read_secure_u32 g_last_fault_address)
+      if [ -n "$fault_cnt" ] && [ $((0x$fault_cnt)) -ge 1 ]; then
+        check_pass "relay SP took the contained fault (count=0x$fault_cnt)"
+      else
+        check_fail "partition fault" "SP fault count not captured (count=${fault_cnt:-none})"
+      fi
+      if [ -n "$fault_cfsr" ] && \
+         [ $(( (0x$fault_cfsr >> 8) & 0x82 )) -eq $((0x82)) ]; then
+        check_pass "fault was a precise BusFault with BFAR (CFSR=0x$fault_cfsr)"
+      else
+        check_fail "BusFault" "CFSR 0x${fault_cfsr:-none} lacks PRECISERR|BFARVALID"
+      fi
+      if [ -n "$fault_addr" ] && [ $((0x$fault_addr)) -eq $((0x300A0000)) ]; then
+        check_pass "BFAR names the probe's bus-error window (0x$fault_addr)"
+      else
+        check_fail "BFAR" "fault addr 0x${fault_addr:-none}, want 0x300A0000"
+      fi
+      lc=$(read_guest0_u32 g_guest0_lifecycle)
+      if [ -n "$lc" ] && [ $((0x$lc & 0xFF)) -eq 255 ]; then
+        check_pass "lifecycle completed after the partition restarted (0x$lc)"
+      else
+        check_fail "recovery" "lifecycle 0x${lc:-none} after the BusFault, expected 0xFF"
+      fi
+      expect "guest1 alive after the partition fault" "freertos_guest1: heartbeat"
       ;;
     mspovfneg)
       # The reset path pushes on the main stack until MSPLIM_S raises STKOF;
