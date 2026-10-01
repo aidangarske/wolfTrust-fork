@@ -34,8 +34,8 @@
 # IPC suite's panic tests stay cheap.
 #
 # Environment (all optional):
-#   M33MU               prebuilt emulator carrying tests/target/m33mu-imxrt700.patch;
-#                       otherwise M33MU_REF is built under /tmp
+#   M33MU               prebuilt emulator at M33MU_REF or later; otherwise
+#                       M33MU_REF is built under /tmp
 #   RT700_WOLFBOOT_DIR  wolfBoot tree holding wolfboot.bin, tools/keytools/sign
 #                       and wolfboot_signing_private_key.der, built with
 #                       tests/target/wolfboot-imxrt700-lifecycle.patch applied;
@@ -83,7 +83,7 @@ wolfboot_dir="${RT700_WOLFBOOT_DIR:-/tmp/wolfboot_rt700}"
 log="$repo/build/rt700_m33mu_$scenario.log"
 
 WOLFBOOT_REF=e6d169c7218d82e33bd04e2c086146ed37ec0cca
-M33MU_REF=9733c2bf99995f33e7b1d4aa31e2f17bfa2d13c1
+M33MU_REF=f3c03675260264cdec815adebe4b020bb6fe57b8
 
 # The guests' manifest restart budget (port/mimxrt700/partitions.c): ahbscneg
 # relaunches guest0 this many times before quarantining it.
@@ -103,21 +103,18 @@ GUEST_STARTED_RE='wolfTrust RT700 guest[01]: start'
 # shellcheck disable=SC2034
 GUEST_DONE_RE='wolfTrust RT700 guest[01]: FF-M connect ok, done'
 
-# --- The pinned M33MU with the model fix this chain needs: a Secure AHBSC
-#     SRAM rule keeps the SAU's NSC veneer band callable. Drop the patch once
-#     M33MU_REF carries it. ---
+# --- The pinned upstream M33MU. ---
 if [ -n "${M33MU:-}" ] && [ -x "$M33MU" ]; then
   log "Using prebuilt M33MU: $M33MU"
 elif [ -x /tmp/m33mu_rt700_src/build/m33mu ]; then
   M33MU=/tmp/m33mu_rt700_src/build/m33mu
   log "Reusing M33MU from a prior scenario: $M33MU"
 else
-  stage "build M33MU $M33MU_REF with m33mu-imxrt700.patch"
+  stage "build M33MU $M33MU_REF"
   rm -rf /tmp/m33mu_rt700_src
   git clone --no-checkout https://github.com/danielinux/m33mu.git /tmp/m33mu_rt700_src
   git -C /tmp/m33mu_rt700_src fetch --depth 1 origin "$M33MU_REF"
   git -C /tmp/m33mu_rt700_src checkout --detach "$M33MU_REF"
-  git -C /tmp/m33mu_rt700_src apply "$here/m33mu-imxrt700.patch"
   cmake -S /tmp/m33mu_rt700_src -B /tmp/m33mu_rt700_src/build \
         -DM33MU_ENABLE_WOLFSSL=OFF -DM33MU_BUILD_TESTS=OFF \
         -DM33MU_ENABLE_RUST_PLUGINS=OFF

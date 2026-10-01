@@ -121,8 +121,8 @@ jobs:
       WT_MAX_GUESTS: 2
       ZEPHYR_BOARD: nucleo_h563zi/stm32h563xx/ns
       WT_TEST_GUEST: ${{ matrix.guest }}
-      # Upstream master with danielinux/m33mu PR #19 (STM32H5 DBGMCU_IDCODE).
-      M33MU_REF: 5d7f854acd8bcb5b56a6dba391995f9373261b1c
+      # Upstream master with danielinux/m33mu PR #21 (deterministic USART IRQ timing).
+      M33MU_REF: f3c03675260264cdec815adebe4b020bb6fe57b8
     steps:
       - uses: actions/checkout@v4
 
