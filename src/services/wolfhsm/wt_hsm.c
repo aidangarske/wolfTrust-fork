@@ -732,6 +732,7 @@ int wt_hsm_relay_reinit_servers(void)
 {
     int             rc = WH_ERROR_OK;
     wt_hsm_guest_t *g;
+    wt_tasklet_t   *tasklet;
     wt_guest_id_t   gid;
 
     for (gid = 0; gid < WT_MAX_GUESTS; gid++) {
@@ -761,9 +762,10 @@ int wt_hsm_relay_reinit_servers(void)
         if (rc != 0) {
             wt_hsm_force_zero(&g->server, sizeof(g->server));
             wt_hsm_force_zero(&g->crypto, sizeof(g->crypto));
-            if (g->tasklet != NULL) {
-                wt_hsm_release_locks(g->tasklet);
-                wt_tasklet_mark_faulted(g->tasklet);
+            tasklet = wt_hsm_guest_tasklet(gid);
+            if (tasklet != NULL) {
+                wt_hsm_release_locks(tasklet);
+                wt_tasklet_mark_faulted(tasklet);
             }
             g->ready = false;
             break;
@@ -797,12 +799,7 @@ int wt_hsm_signal_fault(wt_guest_id_t guest_id)
                       sizeof(g_relay_bufs[guest_id]));
     wt_hsm_force_zero(&g->server, sizeof(g->server));
     wt_hsm_force_zero(&g->crypto, sizeof(g->crypto));
-    wt_hsm_force_zero(g_co_stack_slots[guest_id].guard,
-                      sizeof(g_co_stack_slots[guest_id].guard));
-    /* Keep the canary at stack[0] for do_switch's post-fault check. */
-    wt_hsm_force_zero(g_co_stack_slots[guest_id].stack + sizeof(uint32_t),
-                      sizeof(g_co_stack_slots[guest_id].stack) -
-                          sizeof(uint32_t));
+    wt_hsm_priv_wipe_stack(guest_id);
     g->ready = false;
     return WH_ERROR_OK;
 }

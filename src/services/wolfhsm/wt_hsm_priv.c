@@ -54,6 +54,25 @@ uint8_t *wt_hsm_priv_stack(wt_guest_id_t guest_id)
     return g_co_stack_slots[guest_id].stack;
 }
 
+void wt_hsm_priv_wipe_stack(wt_guest_id_t guest_id)
+{
+    volatile uint8_t *bytes;
+    uint32_t          i;
+
+    if (guest_id >= WT_MAX_GUESTS) {
+        return;
+    }
+    bytes = (volatile uint8_t *)g_co_stack_slots[guest_id].guard;
+    for (i = 0u; i < (uint32_t)sizeof(g_co_stack_slots[guest_id].guard); i++) {
+        bytes[i] = 0u;
+    }
+    bytes = (volatile uint8_t *)g_co_stack_slots[guest_id].stack;
+    for (i = (uint32_t)sizeof(uint32_t);
+         i < (uint32_t)sizeof(g_co_stack_slots[guest_id].stack); i++) {
+        bytes[i] = 0u;
+    }
+}
+
 void wt_hsm_priv_register(wt_guest_id_t guest_id, struct wt_co *tasklet)
 {
     if (guest_id < WT_MAX_GUESTS) {
