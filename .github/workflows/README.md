@@ -4,32 +4,17 @@ CI has a fast per-PR host lane, the tiered M33MU emulator matrix, and static
 analysis. M33MU runs a per-port smoke set on every pull request and the full
 matrix on labels, main pushes, and nightly.
 
-`codeql.yml` runs C security queries on pull requests, pushes to `main` and
-release branches, and weekly. `coverity.yml` submits builds weekly on Mondays
-at 00:00 UTC, or on manual dispatch from `wolfSSL/wolfTrust` only. Both trace
-host suite builds and secure-image builds for STM32H563 and MIMXRT700 with
-both crypto engines via `tools/ci-static-analysis-build.sh`.
+`codeql.yml` runs C security queries. `coverity.yml` runs on Sundays at
+00:00 UTC or by manual dispatch. Both build the host suites and secure images
+for STM32H563 and MIMXRT700 with both crypto engines.
 
-Before upload, `tools/ci-coverity-filter.py` removes compilation units whose
-primary source is under `lib/`, in any Git submodule, or outside the checkout,
-then the workflow recreates the archive. Submodule paths come from Git's index.
-Dependencies must reside under `lib/`; a new submodule elsewhere fails the job
-before upload so its headers cannot bypass the project exclusion. The scan covers
-wolfTrust runtime, ports, tests, and generated policy code. The job lists the
-retained units and refuses to upload an empty capture, an unrecognized listing,
-or one that still contains dependency source units.
+Coverity scans wolfTrust runtime, ports, tests, and generated policy code.
+`tools/ci-coverity-filter.py` removes dependency source units before upload
+and rejects an invalid capture. Keep submodules under `lib/` and enable
+**Ignore component in analysis** for the `Third party dependencies` component
+(`.*/lib/.*`) in Coverity Scan to exclude dependency headers too.
 
-Dependency headers remain available to parse wolfTrust sources. Source-unit
-filtering does not suppress findings in included dependency headers. In wolfTrust's
-Coverity Scan Analysis Settings, keep the `Third party dependencies` component
-with pattern `.*/lib/.*` and **Ignore component in analysis** enabled. This excludes
-dependency headers as well as sources; the CI guard keeps new submodules inside
-that scope. Component changes can take up to 15 minutes to appear in Scan.
-
-Coverity uploads must return HTTP 201 to pass. A refusal because an earlier
-build is still queued fails the submission step and shows the server response.
-An accepted upload is queued for server-side analysis; results appear on
-Coverity Scan after processing, with notifications sent to `COVERITY_SCAN_EMAIL`.
+An accepted upload queues analysis; results appear after Coverity processes it.
 
 ## At a glance
 
