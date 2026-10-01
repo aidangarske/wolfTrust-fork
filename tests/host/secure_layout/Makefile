@@ -23,6 +23,8 @@ all: run
 
 run:
 	@python3 ../../../tools/check_secure_layout.py --self-test
+	@python3 ../../../tools/check_no_fp_insn.py --self-test
+	@python3 ../../../tools/check_stack_seal.py --self-test
 	@out="$$( $(MAKE) --no-print-directory -C ../../.. \
 		WT_LTO=invalid -n secure-image 2>&1 )"; status=$$?; \
 	if [ $$status -eq 0 ]; then \

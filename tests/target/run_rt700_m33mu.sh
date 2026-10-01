@@ -12,12 +12,13 @@
 #             guest0 through its restart budget, quarantines it, and guest1
 #             keeps running.
 #
-# rollbackneg, remeasureneg, manifestneg, and spbudgetneg are the shared
+# rollbackneg, remeasureneg, manifestneg, spbudgetneg, and sealbootneg are the shared
 # Secure-verdict scenarios from lib/scenario.sh: each ends on the verdict
 # breakpoint its probe emits, asserted by the port-independent table.
 # crossdomain and keystoreneg fault the storage SP on an out-of-domain read;
 # spfaultneg and panicneg fault an SP on its first entry and prove the SPM
-# restarts it in place while both guests finish. restart spends guest0's
+# restarts it in place while both guests finish; fpneg proves only that the
+# relay's FP instruction takes a NOCP UsageFault. restart spends guest0's
 # restart budget on a launch-time fault; authneg refuses a tampered guest0 at
 # launch. guest1 runs on through all of them.
 #
@@ -251,7 +252,7 @@ boot_chain() {
         --timeout "$timeout_s" "$@" > "$out" 2>&1
     status=$?
     set -e
-    check "$([ "$status" -eq "$want" ]; echo $?)" \
+    check "$(printf '%s' "$status" | grep -qE "^($want)$"; echo $?)" \
         "M33MU exited with status $want (got $status)"
 }
 
@@ -261,10 +262,14 @@ case "$scenario" in
     # The val guest ends on its own breakpoint; the suite's panic tests reset
     # the whole chain mid-run and val resumes off its flash boot flag.
     end="bkpt:0x7f" ;;
+  fpneg)
+    # Containment only: M33MU ends the run when it raises NOCP.
+    end="fault" ;;
 esac
 stage "boot the chain under M33MU (--cpu imxrt700, ${timeout_s}s budget)"
 case "$end" in
   bkpt:*) boot_chain 0 "$log" --uart-stdout --expect-bkpt "${end#bkpt:}" ;;
+  fault)  boot_chain "0|1" "$log" --uart-stdout --quit-on-faults ;;
   *)      boot_chain 127 "$log" --uart-stdout ;;
 esac
 
@@ -280,6 +285,8 @@ if [ "$end" = "idle" ]; then
   expect "the run ended on the wall-clock budget, not a trap" "wall-clock limit"
 elif [ "${end}" = "bkpt:0x7f" ]; then
   expect "the val guest ran to its clean exit breakpoint" "[EXPECT BKPT] Success"
+elif [ "$end" = "fault" ]; then
+  expect "the run stopped at the first delivered fault" "Execution stopped"
 else
   expect "the emulator stopped on the expected verdict breakpoint" \
       "[EXPECT BKPT] Success"
@@ -346,6 +353,16 @@ case "$scenario" in
         expect_re "the fault was the SP's out-of-domain read at the band address" \
             "\[MEMFAULT_CAUSE\] sec=S type=READ addr=$neg_addr reason=mpu-ap"
     fi
+    ;;
+  fpneg)
+    # The relay's FP instruction must hit a disabled coprocessor: NOCP, not the
+    # fallback undefined-instruction fault. Restart and guest survival are the
+    # silicon leg's to show (docs/Testing.md).
+    expect_n_re "the relay took a Secure-Thread UsageFault" 1 \
+        '\[USGFLT\] enter sec=1 mode=0'
+    expect "the fault was the NOCP trap (Secure FP disabled)" \
+        "[USGFLT] CFSR=0x00080000"
+    refute_re "no HardFault escalation" '\[HARDFLT\]'
     ;;
   restart)
     faults=$((restart_limit + 1))

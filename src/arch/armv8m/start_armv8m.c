@@ -24,11 +24,32 @@
  * their own MPU-granted windows), then enter the neutral boot sequence. */
 
 #include "wolftrust/boot.h"
+#include "wolftrust/platform.h"
+#include "wolftrust/arch/armv8m/core_regs.h"
 
 #include <stdint.h>
 
+static void wt_reset_main(void) __attribute__((noreturn, used));
+
+/* Naked so nothing is pushed before MSP is moved below the two seal words
+ * and they are written; MSP moves first so an exception cannot stack over them. */
+__attribute__((naked, noreturn))
 void Reset_Handler(void)
 {
+    __asm volatile(
+        "ldr  r0, =_estack       \n"
+        "movw r1, #0xEDA5        \n"   /* WT_ARMV8M_STACK_SEAL low half */
+        "movt r1, #0xFEF5        \n"   /* WT_ARMV8M_STACK_SEAL high half */
+        "subs r0, r0, #8         \n"
+        "msr  msp, r0            \n"
+        "str  r1, [r0, #0]       \n"
+        "str  r1, [r0, #4]       \n"
+        "b    wt_reset_main      \n");
+}
+
+static void wt_reset_main(void)
+{
+    extern uint32_t _estack;
     extern uint32_t _sidata;
     extern uint32_t _sdata;
     extern uint32_t _edata;
@@ -51,8 +72,10 @@ void Reset_Handler(void)
     extern uint32_t _s_vnet_bss;
     extern uint32_t _e_vnet;
 #endif
+    const uint32_t* seal = (const uint32_t*)((uintptr_t)&_estack - 8u);
     uint32_t* src = &_sidata;
     uint32_t* dst = &_sdata;
+    uint32_t msp;
 
     while (dst < &_edata) {
         *dst++ = *src++;
@@ -92,6 +115,20 @@ void Reset_Handler(void)
         *dst = 0u;
     }
 #endif
+
+#if defined(WT_SEAL_NEG_PROBE) && (WT_SEAL_NEG_PROBE == 3)
+    /* sealbootneg: a damaged main-stack seal must stop the boot here. The
+     * store is opaque so the compiler cannot fold the check and drop the
+     * boot path behind it. */
+    __asm__ volatile ("str %1, [%0]" : : "r"(seal), "r"(0u) : "memory");
+#endif
+    /* Refuse to boot unless the reset entry sealed the main stack top and
+     * moved MSP below the seal words. */
+    __asm__ volatile ("mrs %0, msp" : "=r"(msp));
+    if (seal[0] != WT_ARMV8M_STACK_SEAL || seal[1] != WT_ARMV8M_STACK_SEAL ||
+        msp > (uint32_t)(uintptr_t)seal) {
+        wt_platform_panic();
+    }
 
     wt_boot_run();
 }

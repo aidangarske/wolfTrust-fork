@@ -115,6 +115,34 @@ This is writable-state isolation inside one linked image. Shared executable
 text is not per-partition code isolation, and the crypto, vault, and attestation
 domains share the keystore data band required by their backends.
 
+### Processor state
+
+Secure floating point is unsupported. Every Armv8-M port retires any FP
+context the loader left active (`CONTROL.FPCA`, `SFPA`, `FPCCR.LSPACT`), then
+clears CP10/CP11 access in
+`CPACR_S`, `CPACR_NS`, and `NSACR`, clears automatic and lazy FP state
+preservation in `FPCCR_S`, sets `LSPENS`, `CLRONRET`, and `CLRONRETS`, and
+halts unless every one of those bits reads back as programmed. The post-link
+check rejects FP instructions and soft-float runtime helpers in the Secure
+image, so an FP instruction in a partition raises a UsageFault instead of
+creating FP state another context could read.
+
+The top of the Secure main stack and of every Secure coroutine stack carries
+two seal words (`0xFEF5EDA5`), written when the stack is created; boot
+refuses to continue unless the main-stack seal is in place with MSP below it.
+The SPM checks both words of a coroutine stack when the coroutine yields or is
+preempted, and again when it is dispatched. A partition that damaged its own
+seal, or whose exception frame was stacked over it, is resumed on a trap
+instruction below the seal, so it alone faults and restarts under
+its recovery policy with a rebuilt stack; a seal found damaged at dispatch,
+while its owner was suspended, halts the platform. The post-link check fails
+the build if an allocated section reaches the main-stack seal.
+
+The seal words mark the fixed top of each stack. Secure stack pointers are not
+moved onto a seal while another context runs, so this check does not replace
+the integrity signature the processor places in, and checks on, the Secure
+frames it stacks itself.
+
 ### Link-time optimization
 
 The Secure image enables GCC link-time optimization by default. LTO can replace
@@ -241,6 +269,7 @@ engine images.
 
 - [FF-M gateway](../src/arch/armv8m/ffm_nsc.c)
 - [Secure Partition scheduler and SVC gates](../src/arch/armv8m/spm_svc.c)
+- [Secure stack sealing and context switch](../src/arch/armv8m/coroutine_armv8m.c)
 - [Guest verification](../src/guest_verify.c)
 - [HSM relay binding](../src/services/wolfhsm/wt_hsm.c)
 - [Native crypto dispatch](../src/services/native/crypto_native.c)

@@ -122,6 +122,27 @@ authenticated-boot failure, rollback, runtime remeasurement, Secure Partition
 recovery, key and vault isolation, storage recovery, attestation negatives,
 firmware update, manifest rejection, GTZC behavior, and VNET paths.
 
+Five scenarios cover processor-state isolation, and the emulator proves less
+than their names suggest:
+
+- `fpneg` proves containment only. A floating-point instruction in the
+  SERVICE_HSM partition takes the NOCP UsageFault and does not escalate.
+  M33MU ends the run when it raises NOCP, so partition restart and guest
+  survival are not shown here; the STM32H563 `fpneg` run checks them.
+- `sealneg` and `sealhaltneg` prove only the SPM's software check. In
+  `sealneg` a partition overwrites its own stack-top seal, that partition alone
+  faults at its next resume, and the guests keep running. In `sealhaltneg` a
+  partition's seal is overwritten before its first dispatch (the same check
+  runs on every dispatch) and the platform halts before that partition runs.
+  No architectural unstack fault is exercised, on the emulator or by the
+  STM32H563 `sealneg` run; M33MU models neither the seal nor the function
+  return integrity check.
+- `sealbootneg` damages one main-stack seal word in the reset path; the boot
+  halts on the production panic before any partition or guest runs.
+- `sealpivotneg` issues a partition's blocking wait with the stack pointer
+  parked on its stack top, so the exception frame lands on the seal words;
+  that partition alone faults and restarts, and the guests keep running.
+
 VNET has convenience targets:
 
 ```sh
@@ -201,6 +222,9 @@ runs an undefined instruction on its first entry, or the storage SP closes an
 error-status handle, which the SPM must panic it for. Either way the SP
 UsageFaults exactly once, the SPM restarts it in place, the restarted SP
 serves the guests that follow, and both guests finish with no escalation.
+`fpneg` proves containment only on M33MU: the relay's FP instruction takes
+the NOCP UsageFault and M33MU ends the run there. The STM32H563 hardware run
+also checks partition restart and guest survival.
 `restart` makes guest 0 read Secure RAM on every launch: the SAU refuses it,
 the monitor relaunches guest 0 through its restart budget and quarantines it,
 and guest 1 runs on. `authneg` flips one byte of guest 0's image after its

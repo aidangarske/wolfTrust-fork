@@ -85,6 +85,14 @@ void wt_arch_assert_privileged_thread(void)
  * the immediate is what the fault dump shows. */
 void wt_arch_sp_fault_probe(unsigned int code)
 {
+#if defined(WT_FP_NEG_PROBE) && (WT_FP_NEG_PROBE == 1)
+    /* fpneg: with Secure FP disabled the FP instruction (raw-encoded, since
+     * -mgeneral-regs-only refuses the mnemonic) takes a NOCP UsageFault;
+     * reaching the udf means FP was still enabled. */
+    __asm volatile(".inst.w 0xee000a10");   /* vmov s0, r0 */
+    __asm volatile("udf #0x4E");
+    return;
+#endif
     switch (code) {
     case 1u:
         __asm volatile("udf #1");
