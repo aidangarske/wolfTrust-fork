@@ -72,6 +72,9 @@ ports() {
     printf '%s ' "${f%.sh}"
   done
 }
+# Evidence (UART captures, image read-backs) stays in a private directory.
+wt_tmp="$(mktemp -d "${TMPDIR:-/tmp}/wolftrust.XXXXXX")"
+trap 'rm -rf "$wt_tmp"' EXIT
 [ -f "$port_file" ] || refuse "no provisioning port for TARGET=$target (have: $(ports))"
 # shellcheck source=provisioning_ctrl_stm32h563.sh
 . "$port_file"
@@ -215,7 +218,10 @@ case "$cmd" in
     lock_confirm "I ACCEPT $state" "Moving this $PORT_NAME to $(label "$state")" "$why"
     port_lock_write "$state"
     port_lock_verify "$state"
-    [ "$(field state "$rec")" != "$state" ] || rm -f "$state_dir/rehearsal-$state"
+    # Single use: a permanent step consumes even a rehearsal of another state.
+    if [ "$(field state "$rec")" = "$state" ] || [ "$(awk '{print $5}' <<<"$line")" = "permanent" ]; then
+      rm -f "$state_dir/rehearsal-$(field state "$rec")"
+    fi
     pass "$PORT_NAME is $(label "$state")"
     ;;
 

@@ -115,6 +115,9 @@ Every port runs the same gates, in this order, from one place in
 8. **The typed acceptance**, `I ACCEPT <code>`.
 9. **Read-back.** After the write, the new state must read back, or `lock`
    fails and says what state the part is in.
+10. **Single use.** A successful lock deletes the rehearsal it used. A
+    permanent step deletes it even when it stood in for another state, such
+    as the Closed rehearsal behind the STM32H5 Locked step.
 
 These follow the vendors' own provisioning tools:
 - NXP's Secure Provisioning tool offers a "Test life cycle" mode and lists

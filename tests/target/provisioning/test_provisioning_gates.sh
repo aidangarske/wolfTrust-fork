@@ -66,7 +66,7 @@ for a in "\$@"; do
            echo "     SECWM1_STRT  : 0x0 (0x8000000)"; echo "     SECWM1_END   : 0x4F  (0x809E000)"
            echo "     SECWM2_STRT  : 0x0 (0x8100000)"; echo "     SECWM2_END   : 0x7F  (0x81FE000)"
            echo "     WRPSGn1      : \$(cat $T/wrp) (0x\$RANDOM)" ;;
-    debugauth=2) case "\$ps" in 0xED) l=OPEN ;; 0x17) l=PROVISIONING ;; 0xC6) l=TZ_CLOSED ;; 0x72) l=CLOSED ;; *) exit 1 ;; esac
+    debugauth=2) case "\$ps" in 0xED) l=OPEN ;; 0x17) l=PROVISIONING ;; 0xC6) l=TZ_CLOSED ;; 0x72) l=CLOSED ;; 0x5C) l=LOCKED ;; *) exit 1 ;; esac
            echo "discovery: PSA lifecycle...................:ST_LIFECYCLE_\$l"
            echo "discovery: ST provisioning integrity status:\$(cat $T/da)"
            [ "\$(cat $T/da)" = 0xeaeaeaea ] && echo "discovery: permission if authorized........:(a/14) ==> Full Regression"; true ;;
@@ -220,9 +220,12 @@ done
 mv "$T/uart" "$T/uart.ok"; : > "$T/uart"
 out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 1 ] && grep -q "wolfTrust did not boot" <<<"$out" && [ -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   closing write without a boot fails and keeps the rehearsal"; } || { failn=$((failn+1)); echo "FAIL no-boot lock rc=$rc"; echo "$out" | tail -4; }
-mv "$T/uart.ok" "$T/uart"; : > "$T/writes"; echo 0x17 > "$T/ps"
+mv "$T/uart.ok" "$T/uart"; : > "$T/writes"; echo 0x17 > "$T/ps"; cp "$HS/rehearsal-0x72" "$T/keep72"
 out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 0 ] && [ "$(cat "$T/writes")" = "PRODUCT_STATE=0x72" ] && grep -q "STM32H563 is closed (0x72)" <<<"$out" && [ ! -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   exact phrase writes Closed (stub) and consumes the rehearsal"; } || { failn=$((failn+1)); echo "FAIL exact phrase rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -5; }
+: > "$T/writes"; echo 0x17 > "$T/ps"; cp "$T/keep72" "$HS/rehearsal-0x72"
+out="$(expect -c "set timeout 60; spawn $H5X lock 0x5C; expect \"to continue: \"; send \"I ACCEPT 0x5C\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+rc=$?; [ $rc = 0 ] && [ "$(cat "$T/writes")" = "PRODUCT_STATE=0x5C" ] && grep -q "STM32H563 is locked (0x5C)" <<<"$out" && [ ! -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   Locked (stub) consumes the Closed rehearsal it used"; } || { failn=$((failn+1)); echo "FAIL Locked consume rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -5; }
 : > "$T/writes"; echo 0x17 > "$T/ps"
 else
   echo "skip typed confirmation tests (no expect)"

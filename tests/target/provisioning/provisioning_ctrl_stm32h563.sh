@@ -141,14 +141,14 @@ images_on_device() {
   local a f n=0 rc=0
   local -a reads=()
   while read -r a f; do
-    reads+=(-u "$a" "$(wc -c < "$f" | tr -d ' ')" "/tmp/wt-readback.$n.bin")
+    reads+=(-u "$a" "$(wc -c < "$f" | tr -d ' ')" "$wt_tmp/readback.$n.bin")
     n=$((n + 1))
   done < <(flashed_images)
   "$CLI" -c port=SWD mode=UR "${reads[@]}" >/dev/null 2>&1 || rc=1
   "$CLI" -c port=SWD mode=UR -rst >/dev/null 2>&1 || true
   n=0
   while read -r a f; do
-    [ "$rc" = 0 ] && cmp -s "/tmp/wt-readback.$n.bin" "$f" || rc=1
+    [ "$rc" = 0 ] && cmp -s "$wt_tmp/readback.$n.bin" "$f" || rc=1
     n=$((n + 1))
   done < <(flashed_images)
   return "$rc"
@@ -252,10 +252,10 @@ flash_images() {
     | grep -iE "verified successfully|error|download" | tail -4
 }
 verify_boot() {
-  uart_capture 8 /tmp/wt-verify.log
+  uart_capture 8 "$wt_tmp/verify.log"
   "$CLI" -c port=SWD mode=UR -rst >/dev/null 2>&1 || true
   sleep 7
-  booted /tmp/wt-verify.log || fail "verify" "no wolfTrust boot markers on $SERIAL"
+  booted "$wt_tmp/verify.log" || fail "verify" "no wolfTrust boot markers on $SERIAL"
   pass "wolfTrust chain boots on silicon"
 }
 provision_da() {
@@ -324,7 +324,7 @@ port_advance() {
     fi
   fi
   echo "ADVANCING product state $(product_state || echo '?') -> $1 (regress is the only way back)"
-  uart_capture 12 /tmp/wt-advance.log
+  uart_capture 12 "$wt_tmp/advance.log"
   # The CLI fails its post-write reconnect once debug closes; the read-back decides.
   "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$1" 2>&1 | strip | tail -4 || true
   sleep 10
@@ -342,7 +342,7 @@ port_booted() {
   fi
   pass "the part reads back as $(label "$1")"
   if [ "$1" != "$PS_PROVISIONING" ]; then
-    booted /tmp/wt-advance.log || { echo "no wolfTrust boot markers on $SERIAL after the write"; return 1; }
+    booted "$wt_tmp/advance.log" || { echo "no wolfTrust boot markers on $SERIAL after the write"; return 1; }
     pass "wolfTrust chain boots in $(label "$1")"
   fi
   EVIDENCE="id=$(field id "$rb") image=$(field image "$rb") ob=$(field ob "$rb")"
@@ -412,7 +412,7 @@ port_consequence() {
   esac
 }
 port_lock_write() {
-  uart_capture 12 /tmp/wt-lock.log
+  uart_capture 12 "$wt_tmp/lock.log"
   "$CLI" -c port=SWD mode=HotPlug -ob PRODUCT_STATE="$1" 2>&1 | strip | tail -4 || true
   sleep 10
 }
@@ -426,7 +426,7 @@ port_lock_verify() {
   now="$(da_lifecycle || true)"
   [ "$now" = "$(st_lifecycle "$1")" ] ||
     fail "lock" "DA discovery reports ${now:-nothing} after the write, expected $(st_lifecycle "$1"); the write may still have landed, so do not repeat it"
-  booted /tmp/wt-lock.log ||
+  booted "$wt_tmp/lock.log" ||
     fail "lock" "the part is $(label "$1") but wolfTrust did not boot on $SERIAL; do not ship it"
   pass "wolfTrust chain boots in $(label "$1")"
 }
