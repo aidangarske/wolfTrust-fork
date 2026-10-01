@@ -86,6 +86,12 @@ full matrix on a PR, add its `ci:` label; off-PR against a branch,
 The local box gate `run_m33mu.sh` (a Zephyr+FreeRTOS lifecycle) and the
 `make test-target` loop remain the pre-push mirror of the M33MU jobs.
 
+H5 guest0 marker checks use `tests/target/lib/m33mu_console.py` to rejoin
+lines interrupted by complete UART attach banners or tagged FreeRTOS guest1
+records. Normal line endings remain intact; raw logs still drive guest1 and
+fault checks. Run `python3 tests/scripts/test_m33mu_console.py` for the
+regression cases; `make test` and the unit-test discovery job also run them.
+
 ## Host unit suites (per-suite checks)
 
 `unit-tests.yml` reads `UNIT_SUITES` from `tests/host/Makefile` (via
