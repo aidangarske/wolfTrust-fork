@@ -1362,6 +1362,7 @@ static void exercise_mpu_bypass_probe(void)
  * its Non-secure alias, then aims a Non-secure GPDMA channel at the Secure
  * image and Secure SRAM. Each must read nothing and change nothing. */
 #define PERIPH_RNG_CR_NS     ((volatile uint32_t *)0x420C0800u)
+#define PERIPH_RNG_CR_IE     (1u << 3)
 #define PERIPH_RCC_AHB1ENR   ((volatile uint32_t *)0x44020C88u)
 #define PERIPH_GPDMA1_NS     0x40020000u
 #define PERIPH_CH0(off)      ((volatile uint32_t *)(PERIPH_GPDMA1_NS + 0x50u + (off)))
@@ -1490,8 +1491,15 @@ static void exercise_periph_neg_probe(void)
 		LOG_ERR("wolfTrust periph probe: Secure RNG readable from NS");
 		leaked = 1;
 	}
-	*PERIPH_RNG_CR_NS = 0u;
+	/* A NS-writable alias reads back what NS wrote, whatever the Secure
+	 * side has CR set to; RAZ/WI reads 0. */
+	*PERIPH_RNG_CR_NS = PERIPH_RNG_CR_IE;
 	__asm volatile("dsb");
+	if ((*PERIPH_RNG_CR_NS & PERIPH_RNG_CR_IE) != 0u) {
+		LOG_ERR("wolfTrust periph probe: Secure RNG writable from NS");
+		leaked = 1;
+		*PERIPH_RNG_CR_NS = 0u;
+	}
 	if (periph_dma_control_ok() == 0) {
 		LOG_ERR("wolfTrust periph probe: NS DMA control copy failed");
 		inconclusive = 1;
