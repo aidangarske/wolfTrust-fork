@@ -327,6 +327,18 @@ static void test_guest_init_retry(void)
     check(wc_CryptoCb_RandomBlock(&rng, output, sizeof(output)) == WC_HW_E,
           "HSM callback remains retryable after repeated failures");
     g_connect_error = PSA_SUCCESS;
+    wt_hsm_relay_set_submit(NULL, NULL);
+    closed_count = g_close_count;
+    check(wc_CryptoCb_RandomBlock(&rng, output, sizeof(output)) == WC_HW_E,
+          "WT-FFM-0054 failed retry handshake fails closed");
+    check(g_close_count == closed_count + 1U,
+          "failed retry handshake closes the client connection");
+    check(wc_CryptoCb_IsDeviceRegistered(WH_DEV_ID) != 0,
+          "failed retry handshake restores the retry callback");
+    check(wc_CryptoCb_RandomBlock(&rng, output, sizeof(output)) == WC_HW_E &&
+              wc_CryptoCb_IsDeviceRegistered(WH_DEV_ID) != 0,
+          "repeated handshake failures preserve automatic retry");
+    wt_hsm_relay_set_submit(test_relay_submit, NULL);
     (void)memset(output, 0, sizeof(output));
     check(wc_CryptoCb_RandomBlock(&rng, output, sizeof(output)) == 0 &&
               buf_is_zero(output, sizeof(output)) == 0,

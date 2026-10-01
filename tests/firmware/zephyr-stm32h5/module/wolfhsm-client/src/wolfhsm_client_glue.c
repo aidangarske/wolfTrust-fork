@@ -89,6 +89,9 @@ static int wolfhsm_guest_connect(void)
     }
     if (rc != WH_ERROR_OK) {
         (void)wh_Client_Cleanup(&g_client_ctx);
+        if (g_retry_crypto_initialized != 0) {
+            (void)wolfhsm_guest_register_retry();
+        }
         return rc;
     }
 
