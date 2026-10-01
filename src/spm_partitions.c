@@ -173,6 +173,9 @@ static void wt_spm_its_entry(void* arg)
 {
     int32_t partition_id = (int32_t)(intptr_t)arg;
     wt_storage_service_ctx_t ctx;
+#if defined(WT_PERIPH_SP_NEG_PROBE) && (WT_PERIPH_SP_NEG_PROBE == 1)
+    volatile uint32_t periph_probe;
+#endif
 
 #if defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1)
     /* Secure-caller-misuse proof (target/panicneg): closing an error-status
@@ -240,6 +243,13 @@ static void wt_spm_its_entry(void* arg)
         probe = *(const volatile uint32_t*)
             wt_platform_probe_address(WT_PROBE_OUT_OF_DOMAIN);
         (void)probe;
+#endif
+#if defined(WT_PERIPH_SP_NEG_PROBE) && (WT_PERIPH_SP_NEG_PROBE == 1)
+        /* WT-FFM-0068 negative: the SPM's own RNG is not in this partition's
+         * domain, so an unprivileged read of it must MemManage-fault. */
+        periph_probe = *(const volatile uint32_t*)
+            wt_platform_probe_address(WT_PROBE_SPM_PERIPHERAL);
+        (void)periph_probe;
 #endif
         (void)wt_storage_service_dispatch(&ctx, NULL, partition_id);
     }

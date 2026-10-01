@@ -42,7 +42,7 @@ set -o pipefail
 mode="${1:-all}"
 scenario="${2:-positive}"
 case "$mode" in build|flash|all) ;; *) echo "usage: $0 build|flash|all [scenario]" >&2; exit 2 ;; esac
-case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg" >&2; exit 2 ;; esac
+case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
@@ -165,6 +165,7 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "writeonce" ] && guest_flags="WT_WRITE_ONCE_RESET_PROBE=1"
   [ "$scenario" = "hsmattackneg" ] && guest_flags="WT_HSM_ATTACK_PROBE=1"
   [ "$scenario" = "gtzcneg" ] && guest_flags="WT_MPU_BYPASS_PROBE=1"
+  [ "$scenario" = "periphneg" ] && guest_flags="WT_PERIPH_NEG_PROBE=1"
   [ "$scenario" = "bootupdate" ] && secure_flags="WT_BOOTUPDATE_PROBE=1"
   # Architectural-context negatives on silicon.
   [ "$scenario" = "fpneg" ] && secure_flags="WT_SP_FAULT_PROBE=1 WT_FP_NEG_PROBE=1"
@@ -815,6 +816,27 @@ if [ "$mode" != "build" ]; then
       expect "guest1 alive through the quarantine" "vnet-guest1: alive"
       expect "mediated ping completes after both restarts" \
         "ping reply from 10.0.0.2"
+      ;;
+    periphneg)
+      # WT-FFM-0068 on silicon: SWD latch 2 = NS RNG poke and NS DMA copies
+      # denied with Secure entropy intact, 3 = leaked, 4 = inconclusive.
+      probe=$(read_guest0_u32 g_guest0_periph_probe)
+      if [ -n "$probe" ] && [ $((0x$probe)) -eq 2 ]; then
+        check_pass "NS peripheral and DMA access blocked (latch=0x$probe)"
+      else
+        check_fail "NS peripheral and DMA access" \
+          "periph probe latch 0x${probe:-none}, want 2"
+      fi
+      # The probe latches before the rest of the lifecycle; require it all.
+      refute_re "no fault markers in UART" \
+        '^(\[MEMFAULT\]|\[HARDFLT\]|HardFault|SecureFault|BusFault|UsageFault)'
+      lc=$(read_guest0_u32 g_guest0_lifecycle)
+      if [ -n "$lc" ] && [ $((0x$lc & 0xFF)) -eq 255 ]; then
+        check_pass "guest0 lifecycle completes after the probe (0x$lc)"
+      else
+        check_fail "guest0 lifecycle after the probe" \
+          "latched 0x${lc:-none}, expected all milestones 0xFF"
+      fi
       ;;
     gtzcneg)
       # GTZC curtain on silicon (WT-FFM-0011): guest0 disables its own NS MPU

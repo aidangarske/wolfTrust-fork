@@ -63,6 +63,11 @@ size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max);
  * not intersect any partition-writable band, or a partition could own a
  * privileged frame (WT-FFM-0011). The scheduler refuses creation otherwise. */
 int wt_platform_priv_stack_ok(const void *stack, size_t size);
+
+/* Peripherals a Secure Partition may own through a DEVICE resource
+ * (WT-FFM-0068). NULL with *count 0 refuses every partition DEVICE region. */
+struct wt_periph;
+const struct wt_periph* wt_platform_sp_peripherals(size_t* count);
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
 size_t wt_platform_conf_sp_grants(int32_t partition_id,
                                   wt_memory_region_t* regions,
@@ -70,11 +75,13 @@ size_t wt_platform_conf_sp_grants(int32_t partition_id,
 #endif
 #if (defined(WT_FFM_NEGATIVE_PROBE) && (WT_FFM_NEGATIVE_PROBE == 1)) || \
     (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1)) || \
-    (defined(WT_KEYSTORE_NEG_PROBE) && (WT_KEYSTORE_NEG_PROBE == 1))
+    (defined(WT_KEYSTORE_NEG_PROBE) && (WT_KEYSTORE_NEG_PROBE == 1)) || \
+    (defined(WT_PERIPH_SP_NEG_PROBE) && (WT_PERIPH_SP_NEG_PROBE == 1))
 /* Addresses the negative probes touch; test builds only. */
 #define WT_PROBE_OUT_OF_DOMAIN   0u
 #define WT_PROBE_KEYSTORE_BAND   1u
 #define WT_PROBE_VNET_DATA_BAND  2u
+#define WT_PROBE_SPM_PERIPHERAL  3u
 uintptr_t wt_platform_probe_address(unsigned int target);
 #endif
 

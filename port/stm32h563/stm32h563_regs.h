@@ -36,6 +36,7 @@
 #define WT_DBGMCU_IDCODE         (*(volatile uint32_t*)0x44024000u)
 
 #define WT_USART3_BASE_NS        0x40004800u
+#define WT_RNG_BASE_S            0x520C0800u
 #define WT_USART_CR1(base)       (*(volatile uint32_t*)((base) + 0x00u))
 #define WT_USART_BRR(base)       (*(volatile uint32_t*)((base) + 0x0Cu))
 #define WT_USART_ISR(base)       (*(volatile uint32_t*)((base) + 0x1Cu))

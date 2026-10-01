@@ -88,6 +88,10 @@ if(WT_MPU_BYPASS_PROBE)
     target_compile_definitions(app PRIVATE WT_MPU_BYPASS_PROBE=1)
 endif()
 
+if(WT_PERIPH_NEG_PROBE)
+    target_compile_definitions(app PRIVATE WT_PERIPH_NEG_PROBE=1)
+endif()
+
 if(WT_M33MU_EXPECT_BKPT)
     target_compile_definitions(app PRIVATE WT_M33MU_EXPECT_BKPT=1)
 endif()

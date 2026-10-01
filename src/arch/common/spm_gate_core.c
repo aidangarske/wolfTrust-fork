@@ -30,6 +30,7 @@
 #include "wolftrust/ffm_domain.h"
 #include "wolftrust/monitor.h"
 #include "wolftrust/platform.h"
+#include "wolftrust/periph.h"
 #include "wolftrust/arch.h"
 #include "wolftrust/sched/coroutine.h"
 #include "wolftrust/sched/coroutine_internal.h"
@@ -225,6 +226,29 @@ static void wt_spm_fault_scrub(void* ctx)
     }
 }
 
+/* WT-FFM-0069: a partition's lines stay disabled, cleared, and Secure-routed
+ * until its own psa_irq_enable, at first bring-up and on every restart. */
+static int wt_spm_claim_irqs(const wt_ffm_runtime_t* runtime,
+                             uint16_t partition_index)
+{
+    const wt_partition_manifest_t* manifest;
+    size_t i;
+
+    if (runtime == NULL || partition_index >= runtime->partition_count) {
+        return -1;
+    }
+    manifest = runtime->partitions[partition_index].manifest;
+    if (manifest == NULL) {
+        return -1;
+    }
+    for (i = 0u; i < manifest->interrupt_count; i++) {
+        if (wt_arch_secure_irq_claim(manifest->interrupts[i].interrupt) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int wt_spm_fault_restart(void* ctx)
 {
     wt_spm_fault_ctx_t* c = (wt_spm_fault_ctx_t*)ctx;
@@ -244,6 +268,9 @@ static int wt_spm_fault_restart(void* ctx)
     slot->arg = (void*)((intptr_t)slot->arg | WT_SP_FAULT_PROBE_RESTARTED);
     arg = slot->arg;
 #endif
+    if (wt_spm_claim_irqs(g_spm_svc_runtime, slot->partition_index) != 0) {
+        return -1;
+    }
     if (wt_co_reinit(slot->co, slot->entry, arg) != 0) {
         return -1;
     }
@@ -903,6 +930,8 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
 {
     wt_spm_sp_t* slot;
     const wt_memory_region_t* stack_region;
+    const wt_periph_t* periph;
+    size_t periph_count;
     size_t region_count;
     size_t i;
 
@@ -947,6 +976,15 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
     }
     if (stack_region == NULL) {
         return WT_FFM_ERROR_STATE;
+    }
+
+    /* WT-FFM-0068: MMIO maps only as a DEVICE peripheral the port lets a
+     * partition own, so no manifest can hand a partition SPM hardware. */
+    periph = wt_platform_sp_peripherals(&periph_count);
+    if (wt_periph_sp_domain_ok(periph, periph_count, g_spm_sp_domain.regions,
+                               g_spm_sp_domain.region_count,
+                               wt_arch_range_is_mmio) != 1) {
+        return WT_FFM_ERROR_RESOURCE;
     }
 
     slot = &g_spm_sp[g_spm_sp_count];
@@ -1026,6 +1064,9 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
     }
     if (i >= runtime->partition_count) {
         return WT_FFM_ERROR_STATE;
+    }
+    if (wt_spm_claim_irqs(runtime, slot->partition_index) != 0) {
+        return WT_FFM_ERROR_RESOURCE;
     }
 
     /* Transport and compute reach an SP through a dispatch context it builds

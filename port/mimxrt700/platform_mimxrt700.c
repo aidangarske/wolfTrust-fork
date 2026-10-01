@@ -342,6 +342,16 @@ void wt_platform_program_memory_windows(const wt_memory_window_t* windows,
 
 extern char _e_secure_text[];
 
+/* No peripheral is assignable to a Secure Partition yet: the SPM drives every
+ * Secure peripheral itself, so every partition DEVICE resource is refused. */
+const struct wt_periph* wt_platform_sp_peripherals(size_t* count)
+{
+    if (count != NULL) {
+        *count = 0U;
+    }
+    return NULL;
+}
+
 size_t wt_platform_sp_shared_regions(wt_memory_region_t* regions, size_t max)
 {
     if (max < 2u) {
@@ -426,12 +436,15 @@ size_t wt_platform_conf_sp_grants(int32_t partition_id,
 
 #if (defined(WT_FFM_NEGATIVE_PROBE) && (WT_FFM_NEGATIVE_PROBE == 1)) || \
     (defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1)) || \
-    (defined(WT_KEYSTORE_NEG_PROBE) && (WT_KEYSTORE_NEG_PROBE == 1))
+    (defined(WT_KEYSTORE_NEG_PROBE) && (WT_KEYSTORE_NEG_PROBE == 1)) || \
+    (defined(WT_PERIPH_SP_NEG_PROBE) && (WT_PERIPH_SP_NEG_PROBE == 1))
 uintptr_t wt_platform_probe_address(unsigned int target)
 {
     switch (target) {
     case WT_PROBE_KEYSTORE_BAND:
         return (uintptr_t)WT_KEYSTORE_BASE;
+    case WT_PROBE_SPM_PERIPHERAL:
+        return (uintptr_t)WT_TRNG_BASE_S;
 #if defined(CONFIG_VNET)
     case WT_PROBE_VNET_DATA_BAND:
         return (uintptr_t)WT_VNET_DATA_BASE;

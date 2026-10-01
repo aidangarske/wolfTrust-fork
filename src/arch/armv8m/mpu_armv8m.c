@@ -26,6 +26,7 @@
 #include "wolftrust/arch.h"
 #include "wolftrust/arch/armv8m/armv8m.h"
 #include "wolftrust/arch/armv8m/core_regs.h"
+#include "wolftrust/arch/armv8m/mmio_map.h"
 #include "wolftrust/types.h"
 
 #include <stdbool.h>
@@ -240,4 +241,9 @@ static void wt_program_ns_mpu_regions(const wt_memory_region_t* regions,
 void wt_arch_program_guest_domain(const wt_memory_region_t* regions, size_t count)
 {
     wt_program_ns_mpu_regions(regions, count);
+}
+
+int wt_arch_range_is_mmio(uintptr_t base, size_t size)
+{
+    return wt_armv8m_range_is_mmio(base, size);
 }

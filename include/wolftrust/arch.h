@@ -64,6 +64,13 @@ void wt_arch_return_to_secure_thread(
 
 uintptr_t wt_arch_read_fault_address(void);
 
+/* Nonzero when [base, base + size) overlaps a range the architecture's
+ * default memory map treats as peripheral, device, or system space. */
+int wt_arch_range_is_mmio(uintptr_t base, size_t size);
+
+/* Disable, clear, and route a partition's line to Secure, then read it back
+ * (WT-FFM-0069). Nonzero when the line is out of range or did not stick. */
+int wt_arch_secure_irq_claim(uint32_t irq);
 void wt_arch_secure_irq_enable(uint32_t irq);
 void wt_arch_secure_irq_disable(uint32_t irq);
 void wt_arch_route_irq_to_guest(uint32_t irq);

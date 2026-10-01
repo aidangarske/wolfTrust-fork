@@ -23,6 +23,8 @@
  * masks, Secure-targeted partition interrupts, and guest-targeted routing. */
 
 #include "wolftrust/arch.h"
+#include "wolftrust/irq_claim.h"
+#include "wolftrust/arch/armv8m/armv8m.h"
 #include "wolftrust/arch/armv8m/core_regs.h"
 
 #include <stdbool.h>
@@ -67,38 +69,82 @@ void wt_arch_quarantine_pending_irqs(const wt_irq_mask_t* allowed_mask)
     }
 }
 
+#define WT_NVIC_ISER ((volatile uint32_t*)0xE000E100u)
+#define WT_NVIC_ICER ((volatile uint32_t*)0xE000E180u)
+#define WT_NVIC_ICPR ((volatile uint32_t*)0xE000E280u)
+#define WT_NVIC_ITNS ((volatile uint32_t*)0xE000E380u)
+
+static void wt_nvic_disable(uint32_t word, uint32_t mask)
+{
+    WT_NVIC_ICER[word] = mask;
+}
+
+static void wt_nvic_clear_pending(uint32_t word, uint32_t mask)
+{
+    WT_NVIC_ICPR[word] = mask;
+}
+
+static void wt_nvic_route_secure(uint32_t word, uint32_t mask)
+{
+    WT_NVIC_ITNS[word] &= ~mask;
+}
+
+static uint32_t wt_nvic_enabled(uint32_t word)
+{
+    return WT_NVIC_ISER[word];
+}
+
+static uint32_t wt_nvic_non_secure(uint32_t word)
+{
+    return WT_NVIC_ITNS[word];
+}
+
+static void wt_nvic_barrier(void)
+{
+    __asm volatile("dsb\nisb" ::: "memory");
+}
+
+static const wt_nvic_ops_t g_wt_nvic_ops = {
+    wt_nvic_disable,
+    wt_nvic_clear_pending,
+    wt_nvic_route_secure,
+    wt_nvic_enabled,
+    wt_nvic_non_secure,
+    wt_nvic_barrier
+};
+
+int wt_arch_secure_irq_claim(uint32_t irq)
+{
+    return wt_irq_claim(&g_wt_nvic_ops, irq, WT_ARMV8M_SECURE_IRQS / 32u);
+}
+
 void wt_arch_secure_irq_enable(uint32_t irq)
 {
-    volatile uint32_t* iser = (volatile uint32_t*)0xE000E100u;
-    volatile uint32_t* icpr = (volatile uint32_t*)0xE000E280u;
-    volatile uint32_t* itns = (volatile uint32_t*)0xE000E380u;
     uint32_t word = irq >> 5;
-    uint32_t bit = irq & 31u;
+    uint32_t bit = 1u << (irq & 31u);
 
-    if (word >= WT_MAX_IRQ_WORDS) {
+    if (irq >= WT_ARMV8M_SECURE_IRQS) {
         return;
     }
     /* Route to Secure, drop any stale pending, lowest priority so the line
      * never preempts the active SVC gate, then unmask. */
-    itns[word] &= ~(1u << bit);
-    icpr[word] = (1u << bit);
+    WT_NVIC_ITNS[word] &= ~bit;
+    WT_NVIC_ICPR[word] = bit;
     WT_NVIC_IPR_BASE[irq] = 0xFFu;
     __asm volatile("dsb\nisb" ::: "memory");
-    iser[word] = (1u << bit);
+    WT_NVIC_ISER[word] = bit;
 }
 
 void wt_arch_secure_irq_disable(uint32_t irq)
 {
-    volatile uint32_t* icer = (volatile uint32_t*)0xE000E180u;
-    volatile uint32_t* icpr = (volatile uint32_t*)0xE000E280u;
     uint32_t word = irq >> 5;
-    uint32_t bit = irq & 31u;
+    uint32_t bit = 1u << (irq & 31u);
 
-    if (word >= WT_MAX_IRQ_WORDS) {
+    if (irq >= WT_ARMV8M_SECURE_IRQS) {
         return;
     }
-    icer[word] = (1u << bit);
-    icpr[word] = (1u << bit);
+    WT_NVIC_ICER[word] = bit;
+    WT_NVIC_ICPR[word] = bit;
     __asm volatile("dsb\nisb" ::: "memory");
 }
 
