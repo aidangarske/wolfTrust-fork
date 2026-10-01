@@ -20,14 +20,20 @@ jobs:
     if: github.repository == 'wolfSSL/wolfTrust'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    container:
+      image: ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.15
     steps:
       - uses: actions/checkout@v4
       - name: Initialize dependencies
+        timeout-minutes: 10
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global url."https://github.com/".insteadOf git@github.com:
           git submodule update --init --recursive --depth 1 --jobs 4
-          sudo apt-get update
-          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Check build toolchains
+        run: |
+          cc --version
+          arm-none-eabi-gcc --version
       - name: Check Coverity configuration
         env:
           COVERITY_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
