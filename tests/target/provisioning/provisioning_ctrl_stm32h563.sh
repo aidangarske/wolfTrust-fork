@@ -135,14 +135,7 @@ booted() { strip < "$1" | grep -aqE "guest0_psa|heartbeat|TEE client"; }
 flashed_images() {
   printf '%s %s\n' "$WOLFBOOT" "$wb" "$WOLFTRUST" "$wt" "$GUEST0" "$g0" "$GUEST1" "$g1"
 }
-port_image_digest() {
-  local a f
-  while read -r a f; do [ -s "$f" ] || return 1; done < <(flashed_images)
-  flashed_images | while read -r a f; do
-    printf '%s %s\n' "$a" "$(wc -c < "$f" | tr -d ' ')"
-    cat "$f"
-  done | sha256 | cut -c1-64
-}
+port_image_digest() { framed_digest; }
 # The running chain hides guest flash from the debugger, so read under reset.
 images_on_device() {
   local a f n=0 rc=0
@@ -342,6 +335,12 @@ port_booted() {
   local rb
   rb="$(cat "$state_dir/readback" 2>/dev/null || true)"
   [ -n "$rb" ] || return 1
+  if [ "$(product_state || true)" != "$1" ] &&
+     [ "$(da_lifecycle || true)" != "$(st_lifecycle "$1")" ]; then
+    echo "the part does not read back as $(label "$1") after the write"
+    return 1
+  fi
+  pass "the part reads back as $(label "$1")"
   if [ "$1" != "$PS_PROVISIONING" ]; then
     booted /tmp/wt-advance.log || { echo "no wolfTrust boot markers on $SERIAL after the write"; return 1; }
     pass "wolfTrust chain boots in $(label "$1")"

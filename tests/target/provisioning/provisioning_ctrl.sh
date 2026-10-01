@@ -54,6 +54,17 @@ fresh() {
   [ "$age" -ge 0 ] && [ "$age" -le "$rehearsal_max_age" ]
 }
 
+# The port's flashed_images, each address and length ahead of its bytes, so
+# moving bytes between images changes the digest.
+framed_digest() {
+  local a f
+  while read -r a f; do [ -s "$f" ] || return 1; done < <(flashed_images)
+  flashed_images | while read -r a f; do
+    printf '%s %s\n' "$a" "$(wc -c < "$f" | tr -d ' ')"
+    cat "$f"
+  done | sha256 | cut -c1-64
+}
+
 ports() {
   local f
   for f in "$here"/provisioning_ctrl_*.sh; do

@@ -149,11 +149,7 @@ flashed_images() {
     0x28080000 "$repo/tests/firmware/mimxrt700-baremetal/build/guest0.bin" \
     0x28100000 "$repo/tests/firmware/mimxrt700-baremetal/build/guest1.bin"
 }
-port_image_digest() {
-  local a f
-  while read -r a f; do [ -s "$f" ] || return 1; done < <(flashed_images)
-  flashed_images | while read -r a f; do cat "$f"; done | sha256 | cut -c1-64
-}
+port_image_digest() { framed_digest; }
 images_on_device() {
   local a f
   while read -r a f; do

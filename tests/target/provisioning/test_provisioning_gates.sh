@@ -72,7 +72,7 @@ for a in "\$@"; do
            [ "\$(cat $T/da)" = 0xeaeaeaea ] && echo "discovery: permission if authorized........:(a/14) ==> Full Regression"; true ;;
     debugauth=1) echo 0xED > $T/ps; echo "Debug Authentication Success" ;;
     -sdp) echo 0xeaeaeaea > $T/da; echo "OBKey Provisioned successfully" ;;
-    PRODUCT_STATE=*) echo "\$a" >> $T/writes; echo "\${a#PRODUCT_STATE=}" > $T/ps; echo "Error: failed to reconnect after reset !"; exit 1 ;;
+    PRODUCT_STATE=*) echo "\$a" >> $T/writes; [ -e $T/stuck ] || echo "\${a#PRODUCT_STATE=}" > $T/ps; echo "Error: failed to reconnect after reset !"; exit 1 ;;
   esac
 done
 EOF
@@ -158,6 +158,10 @@ echo 0xeaeaeaea > "$T/da"
 mv "$T/uart" "$T/uart.ok"; : > "$T/uart"
 check "advance without a boot records nothing" 0 "no rehearsal recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 echo 0x17 > "$T/ps"; mv "$T/uart.ok" "$T/uart"
+touch "$T/stuck"
+check "a write that did not land records nothing" 0 "does not read back as closed (0x72)" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance closed
+[ ! -e "$HS/pending" ] && { pass=$((pass+1)); echo "ok   no pending rehearsal for an unconfirmed state"; } || { failn=$((failn+1)); echo "FAIL pending after a stuck write"; }
+rm -f "$T/stuck"
 check "advance Closed, boot captured" 0 "rehearsal of closed (0x72) recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance closed
 : > "$T/writes"
 check "lock while Closed (link down)" 2 "cannot read the product state" -- "${H5[@]}" lock 0x5C
@@ -232,9 +236,14 @@ RT=(env TARGET=mimxrt700 RT700_SPSDK_VENV="$T/venv" WT_PROVISION_STATE="$T/st" P
 RS="$T/st/mimxrt700"
 ISP=(RT700_ISP="-u 0x1fc9,0x014f")
 fuse() { echo "$2" > "$T/fuse.$(($1))"; }
-edig() { cat "$R/build/rt700/flash_wolfboot.bin" "$R/build/wolftrust_v1_signed.bin" \
-  "$R/tests/firmware/mimxrt700-baremetal/build/guest0.bin" \
-  "$R/tests/firmware/mimxrt700-baremetal/build/guest1.bin" | sha | cut -c1-64; }
+edig() {
+  local a f
+  for a in 0x28000000:build/rt700/flash_wolfboot.bin 0x28040000:build/wolftrust_v1_signed.bin \
+           0x28080000:tests/firmware/mimxrt700-baremetal/build/guest0.bin \
+           0x28100000:tests/firmware/mimxrt700-baremetal/build/guest1.bin; do
+    f="$R/${a#*:}"; printf '%s %s\n' "${a%%:*}" "$(wc -c < "$f" | tr -d ' ')"; cat "$f"
+  done | sha | cut -c1-64
+}
 # rec <state> <fused> <image> <fence> <completed> [probe]
 rec() { mkdir -p "$RS"; echo "state=$1 run=r id=${6:-PROBEA} image=$3 fused=$2 fence=$4 time=$5 cred=none completed=$5" > "$RS/rehearsal-$1"; }
 now() { date +%s; }
@@ -248,6 +257,11 @@ fuse 0x25 0x03
 check "unrehearsed"          2 "no rehearsal for develop2" -- env "${ISP[@]}" "${RT[@]}" lock develop2
 rec 0x07 0x03 0000 armed "$(now)"
 check "rehearsed other images" 2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
+G="$R/tests/firmware/mimxrt700-baremetal/build"
+rec 0x07 0x03 "$(edig)" armed "$(now)"
+printf 'rg0\nr' > "$G/guest0.bin"; printf 'g1\n' > "$G/guest1.bin"
+check "bytes moved between images" 2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
+echo rg0 > "$G/guest0.bin"; echo rg1 > "$G/guest1.bin"
 rec 0x07 0x03 "$(edig)" armed $(( $(now) - 7200 ))
 check "stale rehearsal"      2 "in the last 3600s" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
 rec 0x07 0x03 "$(edig)" armed $(( $(now) + 600 ))

@@ -257,8 +257,10 @@ Debug Authentication: Discovery Success
 ADVANCING product state 0x17 -> 0x72 (regress is the only way back)
 Error: failed to reconnect after reset !
 Error: Unable to reconnect after setting the Option Bytes
-  [check] PASS  wolfTrust chain boots in Closed
 now: ST_LIFECYCLE_CLOSED
+  [check] PASS  the part reads back as closed (0x72)
+  [check] PASS  wolfTrust chain boots in closed (0x72)
+rehearsal of closed (0x72) recorded; 'regress' completes it
 ```
 
 > **Warning:** only close the part when discovery shows integrity
@@ -270,9 +272,10 @@ now: ST_LIFECYCLE_CLOSED
 Open: Provisioning closes Secure debug, so this is the last point where the
 Secure images can be read. A closing `advance` requires that read-back for the
 current images, and `flash` or `regress` discards it. `advance` also captures
-the UART across the reset that the write causes. The
-`[check]` line proves the images booted in Closed, with debug closed. That is
-what records the Closed rehearsal.
+the UART across the reset that the write causes. The two `[check]` lines
+prove the part reached Closed (read back by DA discovery) and that the images
+booted there, with debug closed. Only both together record the Closed
+rehearsal.
 
 ### Stage 3: validate, then regress
 
