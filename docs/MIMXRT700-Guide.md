@@ -583,7 +583,11 @@ USB to one socket. On top of [the shared gates](Provisioning.md#the-lock-gates),
   16-23; that burn encoding is not validated, so `discover` and `lock` refuse
   those parts.
 - It needs a rehearsal of that exact state, with the SHA-256 of the four
-  images the runner flashes, from a fused state earlier in the ladder.
+  images the runner flashes, from a fused state earlier in the ladder. The
+  rehearsal read those images back from the part; the burn runs over ISP and
+  does not read them again. Develop2 leaves the flash writable after the burn,
+  so this binds nothing that a later reflash could not change. A burn into
+  In Field or later will need a live read-back at burn time.
 - The rehearsal must have run through the same debug probe that is attached
   now, and that probe must be the only one attached. The EVK's MCU-Link is
   soldered to the board, so this binds the record to the board; on a

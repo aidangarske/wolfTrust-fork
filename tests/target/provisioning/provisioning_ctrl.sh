@@ -149,7 +149,7 @@ case "$cmd" in
       put pending "state=$state run=$run $EVIDENCE time=$(date +%s)"
       echo "rehearsal of $(label "$state") recorded; 'regress' completes it"
     else
-      echo "no rehearsal recorded: $(label "$state") did not show the evidence above"
+      fail "advance" "no rehearsal recorded: $(label "$state") did not show the evidence above"
     fi
     ;;
 

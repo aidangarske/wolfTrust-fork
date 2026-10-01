@@ -150,7 +150,7 @@ check "lock unrehearsed"     2 "no rehearsal for provisioning (0x17)" -- "${H5[@
 check "advance Closed from Open" 2 "runs only from Provisioning" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 nowrite
 echo x >> "$R/build/wolftrust_v1_signed.bin"
-check "advance with host images not on the part" 0 "could not read back" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x17
+check "advance with host images not on the part" 1 "could not read back" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x17
 echo 0xeaeaeaea > "$T/da"
 check "closing advance without a read-back" 2 "no recent read-back" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 echo 0xf5f5f5f5 > "$T/da"
@@ -159,10 +159,10 @@ check "advance by name reads the part back in Open" 0 "the images on device $UID
 check "closed advance without DA" 2 "cannot be regressed" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 echo 0xeaeaeaea > "$T/da"
 rm -f "$T/boots"
-check "advance without a boot records nothing" 0 "no rehearsal recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
+check "advance without a boot records nothing" 1 "no rehearsal recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 echo 0x17 > "$T/ps"; touch "$T/boots"
 touch "$T/stuck"
-check "a write that did not land records nothing" 0 "does not read back as closed (0x72)" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance closed
+check "a write that did not land records nothing" 1 "does not read back as closed (0x72)" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance closed
 [ ! -e "$HS/pending" ] && { pass=$((pass+1)); echo "ok   no pending rehearsal for an unconfirmed state"; } || { failn=$((failn+1)); echo "FAIL pending after a stuck write"; }
 rm -f "$T/stuck"
 check "advance Closed, boot captured" 0 "rehearsal of closed (0x72) recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance closed
