@@ -106,7 +106,8 @@ fails, with exit status 2 and nothing written:
 3. **A rehearsal of that state exists for the current images.** It holds the
    SHA-256 of the images that are flashed, so a rebuild invalidates it. On the
    MIMXRT700 the rehearsal also read those images back off the part, required
-   every guest to launch verified, and must be at most an hour old. On the
+   every guest to launch verified, and must have run through the same single
+   debug probe, at most an hour ago. On the
    STM32H5 `advance` first reads the four images back off the part before a
    closing write, and the regression record holds a fingerprint of every DA
    input it used: key, certificate chain, OBK, and password.

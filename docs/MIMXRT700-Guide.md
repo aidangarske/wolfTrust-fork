@@ -576,10 +576,15 @@ checks four things on this port:
   from the shadows that `advance` changes.
 - It needs a rehearsal of that exact state, with the SHA-256 of the four
   images the runner flashes, from a fused state earlier in the ladder.
+- The rehearsal must have run through the same debug probe that is attached
+  now, and that probe must be the only one attached. The EVK's MCU-Link is
+  soldered to the board, so this binds the record to the board; on a
+  production fixture with its own probe, it binds the record to the station.
 - The rehearsal must be recent: at most `RT700_REHEARSAL_MAX_AGE` seconds old,
-  one hour by default. No silicon UID is documented to bind a record to one
-  part, so a fresh, single-use rehearsal on the part at the station stands in
-  for that binding.
+  one hour by default, and not dated in the future. No silicon UID is
+  documented to bind a record to the part itself. On a fixture, the probe plus
+  a fresh, single-use rehearsal stands in for that binding: rehearse the part
+  in the fixture right before its own burn.
 - Each burn uses its rehearsal up.
 
 The steps below mix three kinds of output:
@@ -631,7 +636,16 @@ The steps below mix three kinds of output:
    - It refuses life cycle words that do not carry the requested state.
    - It refuses a life cycle word locked before the final step.
    - It refuses a configuration that programs only some of the 12 RKTH words.
-   - It moves the two life cycle words to the end.
+   - It refuses any life cycle word that is not exactly the requested state,
+     including upper bits.
+   - It refuses setting `LIFE_CYCLE_LOCK` (`LOCK_CFG3`) before the final step,
+     since it would stop every later life cycle step.
+   - It moves the two life cycle words after the other fuses, and the lock
+     words (`0x00`-`0x03`) after those, so nothing is locked before it is
+     written.
+
+   After the burn, `lock` requires the low byte of both life cycle words to
+   be the new state, with the upper bits unchanged.
 
 4. **Burn it**, on the production station only:
 

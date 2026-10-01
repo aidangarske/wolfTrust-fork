@@ -110,6 +110,14 @@ image_digest() {
     flashed_images | while read -r a f; do cat "$f"; done | sha256 | cut -c1-64
 }
 
+# The one attached debug probe; the EVK's MCU-Link is soldered to the board,
+# and a production fixture's probe identifies the station.
+probe_uid() {
+    local ids
+    ids="$(timeout 30 pyocd list 2>/dev/null | awk '$1 ~ /^[0-9]+$/ { print $(NF-1) }')"
+    [ "$(printf '%s\n' "$ids" | grep -c .)" = "1" ] && echo "$ids"
+}
+
 # The flashed images read back over SWD match the host build.
 images_on_device() {
     local a f
@@ -362,7 +370,8 @@ PYEOF
     digest="$(image_digest)" || fail "advance" "missing a flashed image to fingerprint the rehearsal"
     images_on_device || fail "advance" "the images on the part differ from the host build: run 'restore'"
     pass "the images on the part match the host build (${digest:0:16})"
-    echo "fused=$(fused_lc) image=$digest fence=$fence time=$(date +%s)" > "$state_dir/rt700-booted-$value"
+    probe="$(probe_uid)" || fail "advance" "attach exactly one debug probe to bind the rehearsal to"
+    echo "fused=$(fused_lc) image=$digest fence=$fence probe=$probe time=$(date +%s)" > "$state_dir/rt700-booted-$value"
     echo "rehearsal of $value recorded; 'regress' completes it"
     ;;
 
@@ -436,6 +445,9 @@ PYEOF
     age=$(($(date +%s) - ${rtime:-0}))
     [ -n "$rtime" ] && [ "$age" -ge 0 ] && [ "$age" -le "$rehearsal_max_age" ] || \
         refuse "the rehearsal of $value is not from the last ${rehearsal_max_age}s: rehearse this part again right before its burn."
+    probe="$(probe_uid)" || refuse "attach exactly one debug probe: the one this part was rehearsed through."
+    [[ "$rec" == *" probe=$probe "* ]] || \
+        refuse "the rehearsal of $value was not run through this part's probe ($probe): rehearse this part."
     [ "$value" = "0x07" ] || [[ "$rec" == *" fence=armed "* ]] || \
         refuse "the rehearsal of $value ran without the guest fence: 'restore' the fenced chain and rehearse again."
 
@@ -475,12 +487,19 @@ if bad:
 lc = [c for c in cmds if int(c.split()[1], 0) in (0x25, 0x8F)]
 if sorted(int(c.split()[1], 0) for c in lc) != [0x25, 0x8F]:
     sys.exit("the burn must write both life cycle words exactly once")
+final = target in (0xCF, 0x1F)
 for c in lc:
-    if int(c.split()[2], 16) & 0xFF != target:
-        sys.exit("life cycle word does not carry 0x%02X: %s" % (target, c))
-    if c.endswith(" lock") and target not in (0xCF, 0x1F):
+    if int(c.split()[2], 16) != target:
+        sys.exit("life cycle word does not carry exactly 0x%02X: %s" % (target, c))
+    if c.endswith(" lock") and not final:
         sys.exit("locking a life cycle word before the last step: %s" % c)
-cmds = [c for c in cmds if c not in lc] + lc
+# Words 0x00-0x03 lock other fuses (LOCK_CFG3 bit 0..2 is LIFE_CYCLE_LOCK),
+# so they burn after everything they would lock.
+lockw = [c for c in cmds if int(c.split()[1], 0) in (0, 1, 2, 3)]
+for c in lockw:
+    if int(c.split()[1], 0) == 3 and int(c.split()[2], 16) & 0x7 and not final:
+        sys.exit("LIFE_CYCLE_LOCK would stop every later life cycle step: %s" % c)
+cmds = [c for c in cmds if c not in lc and c not in lockw] + lc + lockw
 open(sys.argv[2], "w").write("".join(c + "\n" for c in cmds))
 print(len({int(c.split()[1], 0) for c in cmds if 0x58 <= int(c.split()[1], 0) <= 0x63}))
 PYEOF
@@ -501,7 +520,7 @@ PYEOF
     fi
 
     echo "Lock step: fused $(lc_name "$cur") ($cur) -> $(lc_name "$value") ($value)"
-    checked="order, rehearsal of $value with images ${digest:0:16} (${age}s ago)"
+    checked="order, rehearsal of $value with images ${digest:0:16} through probe $probe (${age}s ago)"
     [ "$value" = "0x07" ] || checked="$checked, guest fence, root key hash"
     echo "  checked: $checked"
     echo "  will run: blhost $RT700_ISP batch $script"
@@ -513,13 +532,16 @@ PYEOF
     lock_confirm "I ACCEPT $value" \
         "Burning life cycle $(lc_name "$value") ($value) into this MIMXRT700's fuses" \
         "This is IRREVERSIBLE: fuses cannot be unburned, and the part never returns to $(lc_name "$cur")." || exit 2
+    lc0="$lc"
+    lcr0="$lcr"
     # shellcheck disable=SC2086  # RT700_ISP is a blhost option list
     blhost $RT700_ISP batch "$script"
     if ! lc="$(fuse_word "$FUSE_LC")" || ! lcr="$(fuse_word "$FUSE_LC_RED")"; then
         fail "lock" "cannot read the life cycle fuses back"
     fi
-    [ "$(lc_hex "$lc")" = "$value" ] && [ "$(lc_hex "$lcr")" = "$value" ] || \
-        fail "lock" "fuses read LC $lc, RED $lcr after the burn, expected $value"
+    [ "$(lc_hex "$lc")" = "$value" ] && [ "$(lc_hex "$lcr")" = "$value" ] &&
+        [ $((lc >> 8)) -eq $((lc0 >> 8)) ] && [ $((lcr >> 8)) -eq $((lcr0 >> 8)) ] || \
+        fail "lock" "fuses read LC $lc, RED $lcr after the burn (before: $lc0, $lcr0), expected $value"
     rm -f "$state_dir/rt700-rehearsed-$value"
     pass "life cycle fuses are $(lc_name "$value") ($value); reset the part, then run: $0 status"
     ;;
