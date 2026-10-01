@@ -73,12 +73,12 @@ for a in "\$@"; do
            [ "\$(cat $T/da)" = 0xeaeaeaea ] && echo "discovery: permission if authorized........:(a/14) ==> Full Regression"; true ;;
     debugauth=1) echo 0xED > $T/ps; echo "Debug Authentication Success" ;;
     -sdp) echo 0xeaeaeaea > $T/da; echo "OBKey Provisioned successfully" ;;
-    PRODUCT_STATE=*) echo "\$a" >> $T/writes; [ -e $T/stuck ] || echo "\${a#PRODUCT_STATE=}" > $T/ps; echo "Error: failed to reconnect after reset !"; exit 1 ;;
+    PRODUCT_STATE=*) echo "\$a" >> $T/writes; [ -e $T/stuck ] || echo "\${a#PRODUCT_STATE=}" > $T/ps; [ ! -e $T/boots ] || echo "guest0_psa heartbeat" >> $T/uart; echo "Error: failed to reconnect after reset !"; exit 1 ;;
   esac
 done
 EOF
 printf '#!/bin/sh\nshift\nexec "$@"\n' > "$T/bin/timeout"; chmod +x "$T/bin/timeout"
-echo "guest0_psa heartbeat" > "$T/uart"; echo 0xf5f5f5f5 > "$T/da"
+echo "guest0_psa heartbeat" > "$T/uart"; touch "$T/boots"; echo 0xf5f5f5f5 > "$T/da"
 # blhost stub: fuses in $T/fuse.<index-decimal>; batch logs to $T/writes.
 cat > "$T/venv/bin/blhost" <<EOF
 #!/usr/bin/env bash
@@ -114,6 +114,7 @@ check() { # check <name> <expected-rc> <grep-in-output> -- cmd...
   if [ "$rc" = "$want" ] && grep -q -- "$pat" <<<"$out"; then pass=$((pass+1)); echo "ok   $name"
   else failn=$((failn+1)); echo "FAIL $name (rc=$rc want=$want)"; echo "$out" | sed 's/^/     /' | tail -6; fi
 }
+field_of() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" "$2"; }
 nowrite() { if [ -s "$T/writes" ]; then failn=$((failn+1)); echo "FAIL a refusal wrote: $(cat "$T/writes")"; : > "$T/writes"; fi; }
 
 P="$R/tests/target/provisioning/provisioning_ctrl.sh"
@@ -157,9 +158,9 @@ echo wt > "$R/build/wolftrust_v1_signed.bin"; echo 0xED > "$T/ps"; : > "$T/write
 check "advance by name reads the part back in Open" 0 "the images on device $UID1 match" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance provisioning
 check "closed advance without DA" 2 "cannot be regressed" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 echo 0xeaeaeaea > "$T/da"
-mv "$T/uart" "$T/uart.ok"; : > "$T/uart"
+rm -f "$T/boots"
 check "advance without a boot records nothing" 0 "no rehearsal recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
-echo 0x17 > "$T/ps"; mv "$T/uart.ok" "$T/uart"
+echo 0x17 > "$T/ps"; touch "$T/boots"
 touch "$T/stuck"
 check "a write that did not land records nothing" 0 "does not read back as closed (0x72)" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance closed
 [ ! -e "$HS/pending" ] && { pass=$((pass+1)); echo "ok   no pending rehearsal for an unconfirmed state"; } || { failn=$((failn+1)); echo "FAIL pending after a stuck write"; }
@@ -190,6 +191,8 @@ check "expired rehearsal"    2 "in the last 3600s" -- "${H5[@]}" lock 0x17
 cp "$T/keep" "$HS/rehearsal-0x72"
 nowrite
 echo 0x17 > "$T/ps"
+check "closing preview before provision-da" 2 "not installed by 'provision-da'" -- "${H5[@]}" lock 0x72
+check "provision-da records the install" 0 "DA provisioned and recorded" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" provision-da
 check "closing preview: identity unreadable, sample DA noted" 2 "identity not readable here (needs WT_FIXTURE_BOUND=1)" -- "${H5[@]}" lock 0x72
 check "closing preview lists DA checks" 2 "DA credential is ST's sample or unset" -- "${H5[@]}" lock closed
 check "Locked preview"       2 "provisioning (0x17) -> locked (0x5C)" -- "${H5[@]}" lock locked
@@ -206,6 +209,11 @@ subst "cred=$SFP" "cred=$MFP" "$HS/rehearsal-0x72"
 check "production DA without WT_DA_PWD" 2 "needs its own DA credential" -- env WT_DA_OBK="$T/prodda/obk" WT_DA_KEY="$T/prodda/key" WT_DA_CERT="$T/prodda/cert" WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" lock 0x72
 subst "cred=$MFP" "cred=$PFP" "$HS/rehearsal-0x72"
 check "DA key swapped after the rehearsal" 2 "no rehearsal for" -- env "${PROD[@]}" WT_DA_KEY="$T/prodda/key2" "${H5[@]}" lock 0x72
+check "DA installed with other credentials" 2 "not installed by 'provision-da'" -- env "${PROD[@]}" "${H5[@]}" lock 0x72
+env WT_LOCK_CONFIRM=1 "${PROD[@]}" "${H5[@]}" provision-da >/dev/null
+subst "time=[0-9]*" "time=$(( $(field_of completed "$HS/rehearsal-0x72") - 10 ))" "$HS/da-provisioned"
+check "DA provisioned before the rehearsal" 2 "not installed by 'provision-da'" -- env "${PROD[@]}" "${H5[@]}" lock 0x72
+env WT_LOCK_CONFIRM=1 "${PROD[@]}" "${H5[@]}" provision-da >/dev/null
 check "production DA preview" 2 "production DA credential" -- env "${PROD[@]}" "${H5[@]}" lock 0x72
 check "piped confirmation"   2 "interactive terminal" -- env "${PROD[@]}" WT_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 "${H5[@]}" lock 0x72
 check "TZ-Closed unrehearsed" 2 "no rehearsal for tz-closed" -- env "${PROD[@]}" "${H5[@]}" lock 0xC6
@@ -219,10 +227,10 @@ for phrase in "yes" "LOCK 0x72" "I ACCEPT 0x5C" "i accept 0x72"; do
   expect -c "set timeout 5; spawn $H5X lock 0x72; expect \"to continue: \"; send \"$phrase\r\"; expect eof; catch wait r; exit [lindex \$r 3]" >/dev/null
   rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && { pass=$((pass+1)); echo "ok   wrong phrase '$phrase' refused"; } || { failn=$((failn+1)); echo "FAIL phrase '$phrase' rc=$rc"; }
 done
-mv "$T/uart" "$T/uart.ok"; : > "$T/uart"
+rm -f "$T/boots"
 out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
-rc=$?; [ $rc = 1 ] && grep -q "wolfTrust did not boot" <<<"$out" && [ -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   closing write without a boot fails and keeps the rehearsal"; } || { failn=$((failn+1)); echo "FAIL no-boot lock rc=$rc"; echo "$out" | tail -4; }
-mv "$T/uart.ok" "$T/uart"; : > "$T/writes"; echo 0x17 > "$T/ps"; cp "$HS/rehearsal-0x72" "$T/keep72"
+rc=$?; [ $rc = 1 ] && grep -q "wolfTrust did not boot" <<<"$out" && [ -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   stale UART markers without a post-write boot fail the lock and keep the rehearsal"; } || { failn=$((failn+1)); echo "FAIL no-boot lock rc=$rc"; echo "$out" | tail -4; }
+touch "$T/boots"; : > "$T/writes"; echo 0x17 > "$T/ps"; cp "$HS/rehearsal-0x72" "$T/keep72"
 out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 0 ] && [ "$(cat "$T/writes")" = "PRODUCT_STATE=0x72" ] && grep -q "STM32H563 is closed (0x72)" <<<"$out" && [ ! -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   exact phrase writes Closed (stub) and consumes the rehearsal"; } || { failn=$((failn+1)); echo "FAIL exact phrase rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -5; }
 : > "$T/writes"; echo 0x17 > "$T/ps"; cp "$T/keep72" "$HS/rehearsal-0x72"

@@ -126,11 +126,23 @@ da_ready() {
 }
 # A closed part drops the debug link, so its state is read by DA discovery.
 da_lifecycle() { da_discovery | grep -oE "ST_LIFECYCLE_[A-Z_]+" | head -1; }
+# Only output that arrives after the capture starts counts as a boot: a tty is
+# drained first, and a file (a replay or test) is read from its current end.
 uart_capture() {
-  stty -F "$SERIAL" 115200 raw -echo 2>/dev/null || true
-  ( timeout "$1" cat "$SERIAL" > "$2" 2>/dev/null & )
+  rm -f "$2.from"
+  if [ -c "$SERIAL" ]; then
+    stty -F "$SERIAL" 115200 raw -echo 2>/dev/null || true
+    timeout 1 cat "$SERIAL" >/dev/null 2>&1 || true
+    ( timeout "$1" cat "$SERIAL" > "$2" 2>/dev/null & )
+  else
+    : > "$2"
+    wc -c < "$SERIAL" | tr -d ' ' > "$2.from"
+  fi
 }
-booted() { strip < "$1" | grep -aqE "guest0_psa|heartbeat|TEE client"; }
+booted() {
+  if [ -s "$1.from" ]; then tail -c +$(( $(cat "$1.from") + 1 )) "$SERIAL"; else cat "$1"; fi |
+    strip | grep -aqE "guest0_psa|heartbeat|TEE client"
+}
 
 flashed_images() {
   printf '%s %s\n' "$WOLFBOOT" "$wb" "$WOLFTRUST" "$wt" "$GUEST0" "$g0" "$GUEST1" "$g1"
@@ -269,6 +281,9 @@ provision_da() {
   "$CLI" $DA_CONN -sdp "$DA_OBK" 2>&1 | strip | tail -2
   # shellcheck disable=SC2086
   "$CLI" $DA_CONN_RST >/dev/null 2>&1 || true
+  da_ready || fail "provision-da" "discovery does not show an intact OBK offering Full Regression"
+  put da-provisioned "cred=$(port_cred_fp) time=$(date +%s)"
+  pass "DA provisioned and recorded for this credential set"
 }
 
 port_status() {
@@ -349,7 +364,7 @@ port_booted() {
 }
 port_regress() {
   local after uid
-  rm -f "$state_dir/readback"
+  rm -f "$state_dir/readback" "$state_dir/da-provisioned"
   echo "DA certificate Full Regression -> Open (mass-erase):"
   "$CLI" -c port=SWD mode=HotPlug -rst 2>&1 | strip | tail -1 || true
   "$CLI" -c port=SWD per=a key="$DA_KEY" cert="$DA_CERT" pwd="$DA_PWD" \
@@ -381,6 +396,7 @@ port_rehearsal_for() {
 }
 port_record_ok() { [ "$(ob_snapshot || true)" = "$(field ob "$1")" ]; }
 port_ready() {
+  local dp dt rt
   if [ "$cur" = "$PS_OPEN" ]; then
     images_on_device || refuse "the images on this part differ from the rehearsed build: 'restore' it first."
     CHECKED="$CHECKED, images read back"
@@ -402,7 +418,14 @@ port_ready() {
     CHECKED="$CHECKED, DA credential is ST's sample or unset (a production lock refuses it)"
   fi
   da_ready || refuse "Debug Authentication is not provisioned (no intact OBK offering Full Regression): run 'provision-da' and 'discover'."
-  CHECKED="$CHECKED, DA provisioned"
+  # Regression wipes the DA, so the one on the part must be this tool's install
+  # of the rehearsed credentials since that rehearsal; discovery cannot tell.
+  dp="$(cat "$state_dir/da-provisioned" 2>/dev/null || true)"
+  dt="$(field time "$dp")"; rt="$(field completed "$rec")"
+  if [ "$(field cred "$dp")" != "$(port_cred_fp)" ] || [ "${dt:-0}" -lt "${rt:-0}" ]; then
+    refuse "the DA on this part was not installed by 'provision-da' with these credentials since the rehearsal: run 'provision-da'."
+  fi
+  CHECKED="$CHECKED, DA provisioned with the rehearsed credentials"
 }
 port_lock_plan() { echo "$CLI -c port=SWD mode=HotPlug -ob PRODUCT_STATE=$1"; }
 port_consequence() {

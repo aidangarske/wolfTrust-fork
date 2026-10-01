@@ -397,15 +397,21 @@ On top of [the shared gates](Provisioning.md#the-lock-gates), this port checks:
 - **Safe option bytes.** The perimeter values must be wolfTrust's (TZEN,
   BOOT_UBE, SWAP_BANK, SECWM1 and SECWM2), with the guest WRP
   (`WRPSGn1=0x000FFFFF`) for a closed state, and must match the rehearsal.
-- **Production DA,** for TrustZone Closed and Closed. `WT_DA_OBK`, `WT_DA_KEY`,
+- **Production DA,** for every closed state. `WT_DA_OBK`, `WT_DA_KEY`,
   `WT_DA_CERT`, and `WT_DA_PWD` must be set, must not match ST's sample, and
   must be the same four the rehearsal regressed with. The script carries the
   SHA-256 of every file in ST's NUCLEO-H563ZI sample DA material, so a renamed
   copy is caught. DA discovery must show an intact OBK offering Full
   Regression.
+- **The DA this script installed.** A regression wipes the DA, so step 3 below
+  is required: `lock` needs a record that `provision-da` installed these four
+  files after the rehearsal. Discovery cannot authenticate the OBK on the
+  part, so a key installed with other tools in between is not caught; provision
+  DA on the station only through this script.
 - **Read-back.** After a closed state's write, DA discovery must report it and
   the wolfTrust boot must show on the UART, or `lock` fails without repeating
-  the write.
+  the write. The serial port is drained before the write, so only output from
+  the boot after the write counts.
 
 The steps, one manual command each. The preview output is from the board.
 
