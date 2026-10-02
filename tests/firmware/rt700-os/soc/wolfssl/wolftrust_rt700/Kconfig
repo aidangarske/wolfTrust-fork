@@ -1,0 +1,4 @@
+config SOC_WOLFTRUST_RT700
+    select ARM
+    select CPU_CORTEX_M33
+    select CPU_HAS_ARM_SAU

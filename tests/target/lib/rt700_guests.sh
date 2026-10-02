@@ -2,6 +2,9 @@
 # Shared RT700 guest selection and build recipe for emulator and EVK runners.
 
 rt700_guest_kind() {
+    case "$1:${WT_RT700_GUEST_FIXTURE:-baremetal}" in
+        bothpsa:os|bothiso:os) echo os; return ;;
+    esac
     case "$1" in
         bothpsa|bothiso|attestneg|hsmattackneg|fwustage) echo psa ;;
         confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec)
@@ -12,6 +15,7 @@ rt700_guest_kind() {
 
 rt700_set_guest_paths() {
     case "$(rt700_guest_kind "$scenario")" in
+        os) guest_dir=tests/firmware/rt700-os; guest1_dir="$guest_dir" ;;
         psa) guest_dir=tests/firmware/psa-guest; guest1_dir="$guest_dir" ;;
         conformance)
             guest_dir=tests/firmware/psa-guest
@@ -46,8 +50,21 @@ rt700_guest_flags() {
 
 rt700_build_guests() {
     local flags="$1" lifecycle="$2"
+    case "${WT_RT700_GUEST_FIXTURE:-baremetal}" in
+        baremetal) ;;
+        os)
+            case "$scenario" in
+                bothpsa|bothiso) ;;
+                *) fail "OS fixture supports bothpsa and bothiso" ;;
+            esac ;;
+        *) fail "unknown RT700 guest fixture" ;;
+    esac
     rt700_set_guest_paths
     stage "build the Non-secure guests from $guest_dir ${flags:-(no probes)}"
+    if [ "$(rt700_guest_kind "$scenario")" = os ]; then
+        WT_EXPECTED_LIFECYCLE="$lifecycle" "$repo/$guest_dir/build.sh"
+        return
+    fi
     make -s -C "$repo/$guest_dir" clean
     # Flags come only from rt700_guest_flags, not from arbitrary shell input.
     # shellcheck disable=SC2086

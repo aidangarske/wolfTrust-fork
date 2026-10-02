@@ -288,6 +288,14 @@ GUEST0_CFLAGS := -DGUEST_NAME=\"guest0\" -DWT_WOLFHSM_CLIENT_ID=1u \
 GUEST1_CFLAGS := -DGUEST_NAME=\"guest1\" -DWT_WOLFHSM_CLIENT_ID=2u \
     -DGUEST_PEER_RAM=$(GUEST0_RAM_ORIGIN)u -DWT_ATTEST_EXPECTED_CLIENT_ID=-2
 
+ifeq ($(WT_GUEST_OS),1)
+CFLAGS += -DWT_GUEST_OS=1
+endif
+ifeq ($(WT_GUEST_OS),zephyr)
+CFLAGS += -DWT_GUEST_OS=1
+SHARED_SRCS := $(filter-out guest_libc.c,$(SHARED_SRCS))
+endif
+
 SHARED_OBJS := $(patsubst %.c,$(BUILD)/shared_%.o,$(notdir $(SHARED_SRCS)))
 GUEST0_OBJS := $(patsubst %.c,$(BUILD)/g0_%.o,$(notdir $(GUEST0_SRCS)))
 GUEST1_OBJS := $(patsubst %.c,$(BUILD)/g1_%.o,$(notdir $(GUEST_SRCS)))
@@ -354,3 +362,10 @@ clean:
 
 .PHONY: all clean FORCE
 FORCE:
+
+# The same client bodies run inside either real Non-secure operating system.
+$(BUILD)/guest0.a: $(GUEST0_OBJS) $(SHARED_OBJS)
+	$(TOOLPREFIX)ar rcs $@ $^
+
+$(BUILD)/guest1.a: $(GUEST1_OBJS) $(SHARED_OBJS)
+	$(TOOLPREFIX)ar rcs $@ $^

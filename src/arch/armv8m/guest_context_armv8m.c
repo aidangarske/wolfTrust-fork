@@ -93,6 +93,11 @@ typedef struct wt_virtual_systick {
     uint32_t injected_ticks;
     uint32_t coalesced_ticks;
     uint32_t max_owed_ticks;
+    uint32_t primask;
+    uint32_t basepri;
+    uint32_t faultmask;
+    uint32_t shpr[3];
+    uint32_t pendsv;
 } wt_virtual_systick_t;
 
 static wt_virtual_systick_t g_guest_systick[WT_MAX_GUESTS];
@@ -465,6 +470,14 @@ static void wt_virtual_systick_save_departing(void)
     }
 
     systick = &g_guest_systick[g_active_guest];
+    __asm volatile("mrs %0, primask_ns" : "=r"(systick->primask));
+    __asm volatile("mrs %0, basepri_ns" : "=r"(systick->basepri));
+    __asm volatile("mrs %0, faultmask_ns" : "=r"(systick->faultmask));
+    systick->shpr[0] = WT_SCB_SHPR1_NS;
+    systick->shpr[1] = WT_SCB_SHPR2_NS;
+    systick->shpr[2] = WT_SCB_SHPR3_NS;
+    systick->pendsv = WT_SCB_ICSR_NS & WT_SCB_ICSR_PENDSVSET;
+    WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSVCLR;
     csr = WT_SYST_NS_CSR;
     hw_pending = (WT_SCB_ICSR_NS & WT_SCB_ICSR_PENDSTSET) != 0u;
 
@@ -589,6 +602,7 @@ static void wt_virtual_systick_restore_arriving(wt_guest_id_t guest_id)
 static void wt_virtual_systick_arm_arriving(void) __attribute__((used));
 static void wt_virtual_systick_arm_arriving(void)
 {
+    wt_virtual_systick_t* bank = &g_guest_systick[g_active_guest];
     uint32_t csr = g_arriving_systick_csr;
     uint32_t reload = g_arriving_systick_rvr;
     uint32_t polls;
@@ -636,6 +650,17 @@ static void wt_virtual_systick_arm_arriving(void)
         wt_dsb();
         wt_isb();
     }
+    WT_SCB_SHPR1_NS = bank->shpr[0];
+    WT_SCB_SHPR2_NS = bank->shpr[1];
+    WT_SCB_SHPR3_NS = bank->shpr[2];
+    __asm volatile("msr basepri_ns, %0\nmsr faultmask_ns, %1\n"
+                   "msr primask_ns, %2\nisb 0xF"
+                   : : "r"(bank->basepri), "r"(bank->faultmask),
+                       "r"(bank->primask) : "memory");
+    if (bank->pendsv != 0u) {
+        WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSVSET;
+        bank->pendsv = 0u;
+    }
     if (g_arriving_systick_inject != 0u) {
         g_arriving_systick_inject = 0u;
         WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTSET;
@@ -667,6 +692,13 @@ static void wt_virtual_systick_reset(wt_guest_id_t guest_id)
     systick->injected_ticks = 0u;
     systick->coalesced_ticks = 0u;
     systick->max_owed_ticks = 0u;
+    systick->primask = 0u;
+    systick->basepri = 0u;
+    systick->faultmask = 0u;
+    systick->shpr[0] = 0u;
+    systick->shpr[1] = 0u;
+    systick->shpr[2] = 0u;
+    systick->pendsv = 0u;
 }
 
 void wt_arch_guest_context_prepare(wt_guest_id_t guest_id,
@@ -838,6 +870,7 @@ void wt_arch_restore_guest_bank(const wt_guest_context_t* context)
         :
         : "r"(context->psp_ns), "r"(context->msp_ns),
           "r"(context->psplim_ns), "r"(zero), "r"(context->control_ns));
+    wt_virtual_systick_arm_arriving();
 }
 
 uint32_t wt_arch_active_guest_id(void)

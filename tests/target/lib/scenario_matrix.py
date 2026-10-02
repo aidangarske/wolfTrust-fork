@@ -162,6 +162,13 @@ def entries(port, tier, engine):
         for key, name in port_def["groups"]:
             for eng in engines_for(key.split(), engine):
                 out.append(entry(port, tier, eng, key, name))
+    if port == "mimxrt700":
+        for eng in engines_for(["bothpsa", "bothiso"], engine):
+            os_entry = entry(port, tier, eng, "bothpsa bothiso",
+                             "RT700 Zephyr + FreeRTOS lifecycle and timers")
+            os_entry["fixture"] = "os"
+            os_entry["job"] += "_os"
+            out.append(os_entry)
     return out
 
 

@@ -318,6 +318,7 @@ jobs:
     env:
       WT_ENGINE: ${{ matrix.engine }}
       WT_MANIFEST_NEG_PROBE: ${{ matrix.scenario.probe }}
+      WT_RT700_GUEST_FIXTURE: ${{ matrix.fixture }}
     steps:
       - uses: actions/checkout@v4
 
@@ -356,6 +357,11 @@ jobs:
           cd mcuxpresso-sdk
           sed -i '/se_hostlib\|emwin/d' manifests/boards/mimxrt700evk.yml
           west update_board --set board mimxrt700evk
+
+      - name: Fetch RT700 OS guest dependencies
+        if: matrix.fixture == 'os'
+        run: |
+          tests/firmware/rt700-os/setup.sh
 
       - name: Run target scenarios
         env:

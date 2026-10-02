@@ -366,6 +366,7 @@ static void wt_dispatch_hsm_tasklet(wt_guest_id_t guest_id)
         wt_platform_panic();
     }
 
+    wt_arch_guest_context_prepare(guest_id, runtime->context);
     wt_apply_partition(guest_id);
     g_scheduler.current_guest = guest_id;
     g_scheduler.current_rep = WT_SCHED_REP_HSM;

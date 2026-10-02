@@ -1,0 +1,4 @@
+config SOC_WOLFTRUST_RT700
+    bool
+config SOC
+    default "wolftrust_rt700" if SOC_WOLFTRUST_RT700

@@ -1,0 +1,6 @@
+board:
+  name: wolftrust_rt700_ns
+  full_name: wolfTrust RT700 Non-secure guest
+  vendor: wolfssl
+  socs:
+  - name: wolftrust_rt700

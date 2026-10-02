@@ -26,6 +26,7 @@ jobs:
           python3 tests/scripts/test_rt700_suite.py
           python3 tests/scripts/test_conformance_reports.py
           python3 tests/scripts/test_rt700_swd.py
+          python3 tests/scripts/test_os_timers.py
       - id: s
         # Single source of truth: the Makefile's UNIT_SUITES. Adding a suite
         # there makes it a new CI check automatically — no workflow edit.

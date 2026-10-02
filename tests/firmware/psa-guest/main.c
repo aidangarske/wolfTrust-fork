@@ -131,9 +131,12 @@ WT_STATIC_ASSERT(offsetof(guest_mailbox_t, measurement) == 44u,
 WT_STATIC_ASSERT(offsetof(guest_mailbox_t, conformance_status) == 76u,
                  "conformance result offset changed");
 
+#if !defined(WT_GUEST_OS)
 __attribute__((section(".shared"), used))
+#endif
 volatile guest_mailbox_t g_guest_mailbox;
 
+#if !defined(WT_GUEST_OS)
 extern uint32_t _estack;
 extern uint32_t _sidata;
 extern uint32_t _sdata;
@@ -167,6 +170,8 @@ static void Default_Handler(void)
     for (;;) {
     }
 }
+
+#endif /* WT_GUEST_OS */
 
 /* ---- console ---------------------------------------------------------- */
 
@@ -1160,11 +1165,12 @@ static void exercise_fwu(void)
 
 /* ---- entry -------------------------------------------------------------- */
 
-void Reset_Handler(void)
+void wt_guest_lifecycle(void)
 {
+    size_t i;
+#if !defined(WT_GUEST_OS)
     uint32_t* src;
     uint32_t* dst;
-    size_t i;
 
     src = &_sidata;
     for (dst = &_sdata; dst < &_edata; ) {
@@ -1176,6 +1182,8 @@ void Reset_Handler(void)
         *dst = 0u;
         dst++;
     }
+
+#endif
 
     g_guest_mailbox.signature = GUEST_SIGNATURE;
     g_guest_mailbox.lifecycle = 0u;
@@ -1238,7 +1246,25 @@ void Reset_Handler(void)
     __asm volatile("bkpt #0x7f");
 #endif
 
+#if !defined(WT_GUEST_OS)
     for (;;) {
         g_guest_mailbox.beat++;
     }
+#endif
 }
+
+#if !defined(WT_GUEST_OS)
+void Reset_Handler(void)
+{
+    wt_guest_lifecycle();
+}
+#endif
+
+#if defined(WT_GUEST_OS)
+int wt_guest_timer_crypto(void)
+{
+    g_guest_mailbox.lifecycle &= ~GUEST_LC_CRYPTO;
+    exercise_ffm_crypto();
+    return (g_guest_mailbox.lifecycle & GUEST_LC_CRYPTO) != 0u;
+}
+#endif

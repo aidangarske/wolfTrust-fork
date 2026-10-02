@@ -535,4 +535,8 @@ case "$scenario" in
     ;;
 esac
 
+if [ "${WT_RT700_GUEST_FIXTURE:-baremetal}" = os ]; then
+    python3 tests/scripts/check_os_timers.py "$log"
+fi
+
 log "PASS: rt700-m33mu/$scenario"

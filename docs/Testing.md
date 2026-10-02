@@ -548,3 +548,13 @@ output must come from the STM32H563 runner attached to a board.
   scenario log.
 - Confirm that Secure, guest, manifest, flash, and emulator addresses were
   built from the same configuration.
+
+## RT700 Zephyr and FreeRTOS clients
+
+Use `WT_RT700_GUEST_FIXTURE=os` with RT700 `bothpsa` and `bothiso` to run
+real OS clients. The default remains the portable bare-metal fixture.
+[The OS fixture](../tests/firmware/rt700-os/README.md) documents pinned
+dependencies, timer/task evidence and the ELF-resolved hardware result ABI.
+CI runs both OS scenarios on both engines and rejects missing sleep progress
+or missing peer crypto. Emulator results and physical EVK results remain
+separate qualification records.
