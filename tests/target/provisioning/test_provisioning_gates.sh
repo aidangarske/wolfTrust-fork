@@ -330,6 +330,7 @@ check "no probe attached"    2 "no rehearsal for" -- env "${ISP[@]}" "${RT[@]}" 
 echo PROBEA > "$T/probe"
 check "Develop2 preview"     2 "efuse-program-once 0x8F 00000007" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
 check "SPSDK venv off PATH"  2 "efuse-program-once 0x8F 00000007" -- env "${ISP[@]}" TARGET=mimxrt700 RT700_SPSDK_VENV="$T/venv" WT_PROVISION_STATE="$T/st" PATH="$T/bin:/usr/bin:/bin" "$P" lock 0x07
+check "SPSDK installed system-wide" 2 "efuse-program-once 0x8F 00000007" -- env "${ISP[@]}" TARGET=mimxrt700 RT700_SPSDK_VENV="$T/no-venv" WT_PROVISION_STATE="$T/st" PATH="$T/venv/bin:$T/bin:/usr/bin:/bin" "$P" lock 0x07
 check "preview names the probe" 2 "same debug probe PROBEA" -- env "${ISP[@]}" "${RT[@]}" lock 0x07
 check "burn without a bound fixture" 2 "set WT_FIXTURE_BOUND=1 there" -- env WT_LOCK_CONFIRM=1 "${ISP[@]}" "${RT[@]}" lock 0x07
 check "no production opt-in" 2 "Only a production station" -- env WT_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 "${ISP[@]}" "${RT[@]}" lock 0x07

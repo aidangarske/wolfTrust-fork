@@ -35,6 +35,13 @@ pyocd_target="${RT700_TARGET:-mimxrt798sgfob}"
 spsdk_venv="${RT700_SPSDK_VENV:-$HOME/spsdk-venv}"
 # Set here, not in a helper: the controller runs many port calls in subshells.
 [ ! -d "$spsdk_venv/bin" ] || PATH="$spsdk_venv/bin:$PATH"
+# The Python that runs SPSDK: the venv's, else the one behind pyocd on PATH.
+if [ -x "$spsdk_venv/bin/python" ]; then
+  spsdk_py="$spsdk_venv/bin/python"
+else
+  spsdk_py="$(sed -n '1s/^#! *\([^ ]*python[^ ]*\).*/\1/p' "$(command -v pyocd 2>/dev/null || echo /dev/null)" 2>/dev/null)"
+  spsdk_py="${spsdk_py:-python3}"
+fi
 guest_mask="${RT700_GUEST_MASK:-0x3}"
 case "$guest_mask" in
   0x1|0x2|0x3|1|2|3) ;;
@@ -208,7 +215,7 @@ probe_uid() {
 fuse_word() {
   # shellcheck disable=SC2086  # RT700_ISP is a blhost option list
   blhost $RT700_ISP -j efuse-read-once "$1" 2>/dev/null |
-    "$spsdk_venv/bin/python" -c '
+    "$spsdk_py" -c '
 import json, sys
 r = json.load(sys.stdin)
 if r.get("status", {}).get("value") != 0 or len(r.get("response", [])) != 2:
@@ -290,7 +297,7 @@ port_advance() {
   [ -n "$entry" ] && [ "$entry" != "00000000" ] && [ "$entry" != "ffffffff" ] ||
     fail "advance" "no wolfBoot reset vector at 0x28004004 (flash the chain first)"
   echo "ADVANCING the life cycle shadow to $1 ($(state_name "$1")); regress or any reset undoes it"
-  "$spsdk_venv/bin/python" - "0x$entry" "$1" "$LC_STATE" "$LC_STATE_RED" "$pyocd_target" \
+  "$spsdk_py" - "0x$entry" "$1" "$LC_STATE" "$LC_STATE_RED" "$pyocd_target" \
     "$vm" "$rf" 0x30180000 <<'PYEOF'
 import sys
 import time
