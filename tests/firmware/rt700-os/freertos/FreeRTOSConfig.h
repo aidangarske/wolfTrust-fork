@@ -1,4 +1,4 @@
-/* main.c
+/* FreeRTOSConfig.h
  *
  * Copyright (C) 2026 wolfSSL Inc.
  *
@@ -18,13 +18,7 @@
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
 
-/* Portable bare-metal PSA test guest: the Non-secure client lifecycle the
- * STM32H563 Zephyr guest runs, on no operating system, so every port can
- * prove the same PSA behaviour from a guest that needs only a linker window
- * and a console. Crypto rides wolfPSA over the SPM-mediated client, storage
- * and attestation ride the OS-neutral FF-M clients, and each milestone prints
- * one marker line prefixed with the guest's name. The same source links into
- * both guest windows. */
+/* RT700 guest1 kernel settings for the Secure monitor's virtual NS timer. */
 
 #ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H

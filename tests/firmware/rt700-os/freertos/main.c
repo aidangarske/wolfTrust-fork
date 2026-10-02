@@ -18,13 +18,7 @@
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
 
-/* Portable bare-metal PSA test guest: the Non-secure client lifecycle the
- * STM32H563 Zephyr guest runs, on no operating system, so every port can
- * prove the same PSA behaviour from a guest that needs only a linker window
- * and a console. Crypto rides wolfPSA over the SPM-mediated client, storage
- * and attestation ride the OS-neutral FF-M clients, and each milestone prints
- * one marker line prefixed with the guest's name. The same source links into
- * both guest windows. */
+/* RT700 FreeRTOS guest1 runs the shared PSA lifecycle and two timer tasks. */
 
 #include <stdint.h>
 #include <stddef.h>
