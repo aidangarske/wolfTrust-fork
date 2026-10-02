@@ -652,8 +652,7 @@ case "$scenario" in
         "$conf_want was not recorded for psa-arch-tests $conf_rev"
     fi
     conf_got="$repo/build/ffm-ipc-results.txt"
-    sed 's/freertos_guest1:.*$//' "$log" | tr -d '\r\n' | \
-      grep -aoE 'Num=[0-9]+|Result=[A-Za-z]+' | \
+    grep -aoE 'Num=[0-9]+|Result=[A-Za-z]+' "$guest0_log" | \
       awk -F= '$1 == "Num" { num = $2 }
                $1 == "Result" { if (num != "") print num, $2; num = "" }' | \
       sort -n -u > "$conf_got"
