@@ -441,6 +441,9 @@ wt_co_t *wt_co_current(void)
 
 wt_co_state_t wt_co_state(const wt_co_t *co)
 {
+    if (co == (const wt_co_t *)0) {
+        return WT_CO_FAULTED;
+    }
     return co->state;
 }
 
