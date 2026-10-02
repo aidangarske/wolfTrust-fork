@@ -60,7 +60,7 @@ static whNvmContext g_nvm_ctx;
 
 static int g_failures;
 
-static void check(int ok, const char* what)
+static int check(int ok, const char* what)
 {
     if (ok) {
         (void)printf("PASS: %s\n", what);
@@ -69,6 +69,7 @@ static void check(int ok, const char* what)
         (void)printf("FAIL: %s\n", what);
         g_failures++;
     }
+    return ok;
 }
 
 static int test_store_up(void)
@@ -322,10 +323,12 @@ static void test_aes_gcm(void)
     rc = wire(TEST_NS_GUEST0, WT_CRYPTO_OP_KEY_ENCRYPT, 0x2004ULL, 0U, 0U,
               plaintext, sizeof(plaintext), ct, sizeof(ct), &ct_len,
               &status);
-    check(rc == 0 && status == PSA_SUCCESS &&
+    if (!check(rc == 0 && status == PSA_SUCCESS &&
           ct_len == sizeof(plaintext) + WT_VAULT_KEY_NONCE_LEN +
                         WT_VAULT_KEY_TAG_LEN,
-          "encrypt frames nonce || ciphertext || tag");
+          "encrypt frames nonce || ciphertext || tag")) {
+        return;
+    }
 
     rc = wire(TEST_NS_GUEST0, WT_CRYPTO_OP_KEY_DECRYPT, 0x2004ULL, 0U, 0U,
               ct, ct_len, pt, sizeof(pt), &pt_len, &status);
@@ -438,10 +441,20 @@ static void test_malformed(void)
           "an undersized output buffer yields BUFFER_TOO_SMALL and no data");
 }
 
-int main(void)
+int main(int argc, char* argv[])
 {
     if (test_store_up() != 0) {
         (void)fprintf(stderr, "NVM/keyvault bring-up failed\n");
+        return 1;
+    }
+
+    if (argc == 2 && strcmp(argv[1], "--aes-setup-failure") == 0) {
+        /* The key is absent, so the failed prerequisite must stop the test. */
+        test_aes_gcm();
+        if (g_failures != 1) {
+            return 2;
+        }
+        (void)printf("PASS: AES-GCM setup failure returns safely\n");
         return 1;
     }
 
