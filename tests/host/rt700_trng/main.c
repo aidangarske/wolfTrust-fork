@@ -18,7 +18,7 @@
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
 
-/* The MIMXRT700 entropy callback against a TRNG model: reading ENT[15] ends a
+/* The MIMXRT700 entropy callback against a TRNG model: reading ENT[7] ends a
  * page and starts the next generation, ERR latches a health failure. No
  * request may serve words an earlier request already saw, and a latched ERR
  * fails every request even while a page is still valid. */
@@ -33,6 +33,7 @@
 int wolftrust_rng_generate_block(unsigned char *output, unsigned int sz);
 
 #define GENERATION_POLLS  3
+#define MODEL_ENT_WORDS   8u
 
 static int checks;
 static int failures;
@@ -44,6 +45,27 @@ static int g_generating;
 static int g_polls_left;
 static int g_fail_next;
 static unsigned int g_ent_reads;
+static unsigned int g_invalid_ent_reads;
+static uint32_t g_config[64];
+static int g_clock_failure;
+static int g_close_failure;
+static unsigned int g_clock_closes;
+
+int wt_rt700_trng_prepare(void)
+{
+    return g_clock_failure != 0 ? -1 : 0;
+}
+
+int wt_rt700_trng_complete(void)
+{
+    ++g_clock_closes;
+    return g_close_failure != 0 ? -1 : 0;
+}
+
+volatile uint32_t* wt_mock_trng_config(uint32_t offset)
+{
+    return &g_config[offset / 4u];
+}
 
 static void check(int ok, const char* what)
 {
@@ -80,12 +102,17 @@ volatile uint32_t* wt_mock_trng_mctl(void)
 volatile uint32_t* wt_mock_trng_ent(uint32_t index)
 {
     g_ent_reads++;
+    if (index >= MODEL_ENT_WORDS) {
+        g_invalid_ent_reads++;
+        g_ent_latch = 0u;
+        return &g_ent_latch;
+    }
     if ((g_mctl & WT_TRNG_MCTL_ENT_VAL) == 0u) {
         g_ent_latch = 0u;
     }
     else {
         g_ent_latch = 0xA5000000u | (g_page << 8) | index;
-        if (index == WT_TRNG_ENT_COUNT - 1u) {
+        if (index == MODEL_ENT_WORDS - 1u) {
             g_mctl &= ~WT_TRNG_MCTL_ENT_VAL;
             g_generating = 1;
             g_polls_left = GENERATION_POLLS;
@@ -108,6 +135,7 @@ static void model_reset(uint32_t mctl)
     g_polls_left = 0;
     g_fail_next = 0;
     g_ent_reads = 0u;
+    g_invalid_ent_reads = 0u;
 }
 
 static int words_disjoint(const unsigned char* a, size_t a_len,
@@ -132,39 +160,62 @@ static int words_disjoint(const unsigned char* a, size_t a_len,
 
 int main(void)
 {
-    unsigned char first[32];
-    unsigned char second[32];
+    unsigned char first[16];
+    unsigned char second[16];
     unsigned char span[100];
     unsigned int reads;
     int rc;
 
     printf("RUN: unit/rt700_trng\n");
 
+    model_reset(WT_TRNG_MCTL_PRGM);
+    g_clock_failure = 1;
+    rc = wolftrust_rng_generate_block(first, sizeof(first));
+    check(rc != 0 && g_ent_reads == 0u,
+          "a refused protected clock fails without serving entropy");
+    g_clock_failure = 0;
+
     /* A health failure latched before the first page fails init. */
     model_reset(WT_TRNG_MCTL_PRGM | WT_TRNG_MCTL_ERR);
     rc = wolftrust_rng_generate_block(first, sizeof(first));
     check(rc != 0 && g_ent_reads == 0u,
           "ERR at init fails the request without reading ENT");
+    check((g_mctl & WT_TRNG_MCTL_ERR) != 0u && g_clock_closes == 1u,
+          "a startup health error remains latched and closes clock access");
+
+    model_reset(WT_TRNG_MCTL_PRGM);
+    g_close_failure = 1;
+    rc = wolftrust_rng_generate_block(first, sizeof(first));
+    check(rc != 0 && g_ent_reads == 0u,
+          "failure to close clock access refuses the request");
+    g_close_failure = 0;
 
     model_reset(WT_TRNG_MCTL_PRGM);
     rc = wolftrust_rng_generate_block(first, sizeof(first));
-    check(rc == 0, "first 32-byte request succeeds");
+    check(rc == 0, "first 16-byte request succeeds");
     check((g_mctl & WT_TRNG_MCTL_PRGM) == 0u, "init leaves programming mode");
-    check(g_ent_reads == WT_TRNG_ENT_COUNT,
+    check(g_config[0x10u / 4u] == ((8192u << 16) | 1024u) &&
+              g_config[0x18u / 4u] == 8000u &&
+              g_config[0x1Cu / 4u] == 15000u &&
+              (g_config[0xECu / 4u] & 0xFu) == 1u,
+          "startup configures the RT700 dual-oscillator sample profile");
+    check(g_ent_reads == MODEL_ENT_WORDS && g_invalid_ent_reads == 0u,
           "a short request consumes its whole page");
 
     reads = g_ent_reads;
     rc = wolftrust_rng_generate_block(second, sizeof(second));
-    check(rc == 0 && g_ent_reads - reads == WT_TRNG_ENT_COUNT,
-          "second 32-byte request reads a fresh page");
+    check(rc == 0 && g_ent_reads - reads == MODEL_ENT_WORDS &&
+              g_invalid_ent_reads == 0u,
+          "second 16-byte request reads a fresh page");
     check(memcmp(first, second, sizeof(first)) != 0 &&
               words_disjoint(first, sizeof(first), second, sizeof(second)),
           "back-to-back short requests share no entropy word");
 
     reads = g_ent_reads;
     rc = wolftrust_rng_generate_block(span, sizeof(span));
-    check(rc == 0 && g_ent_reads - reads == 2u * WT_TRNG_ENT_COUNT,
-          "a 100-byte request spans two pages");
+    check(rc == 0 && g_ent_reads - reads == 4u * MODEL_ENT_WORDS &&
+              g_invalid_ent_reads == 0u,
+          "a 100-byte request spans four 32-byte pages");
     check(words_disjoint(span, sizeof(span), span, sizeof(span)) &&
               words_disjoint(span, sizeof(span), second, sizeof(second)),
           "no word repeats within or across requests");
@@ -179,7 +230,7 @@ int main(void)
     model_reset(WT_TRNG_MCTL_ENT_VAL);
     g_fail_next = 1;
     rc = wolftrust_rng_generate_block(span, sizeof(span));
-    check(rc != 0 && g_ent_reads == WT_TRNG_ENT_COUNT,
+    check(rc != 0 && g_ent_reads == MODEL_ENT_WORDS,
           "ERR on the next generation fails a multi-page request");
 
     /* A generation that never completes times out. */

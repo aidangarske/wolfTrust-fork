@@ -32,6 +32,7 @@
 #define WT_RSTCTL0_BASE_S        0x50000000u
 #define WT_CLKCTL0_BASE_S        0x50001000u
 #define WT_SYSCON0_BASE_S        0x50002000u
+#define WT_GLIKEY3_BASE_S        0x50002C00u
 #define WT_IOPCTL0_BASE_S        0x50004000u
 #define WT_ITRC_BASE_S           0x50012000u
 #define WT_OCOTP_BASE_S          0x50018000u
@@ -56,13 +57,26 @@
 #define WT_REG32(address)        (*(volatile uint32_t*)(address))
 
 /* TRNG (NXP TRNG block). */
+#define WT_TRNG_REG(offset)      WT_REG32(WT_TRNG_BASE_S + (offset))
 #define WT_TRNG_MCTL             WT_REG32(WT_TRNG_BASE_S + 0x000u)
 #define WT_TRNG_MCTL_RST_DEF     (1u << 6)
 #define WT_TRNG_MCTL_ENT_VAL     (1u << 10)
 #define WT_TRNG_MCTL_ERR         (1u << 12)
 #define WT_TRNG_MCTL_PRGM        (1u << 16)
 #define WT_TRNG_ENT(index)       WT_REG32(WT_TRNG_BASE_S + 0x040u + 4u * (index))
-#define WT_TRNG_ENT_COUNT        16u
+#define WT_TRNG_ENT_COUNT        8u
+#define WT_TRNG_SCMISC           WT_TRNG_REG(0x004u)
+#define WT_TRNG_SDCTL            WT_TRNG_REG(0x010u)
+#define WT_TRNG_FRQMIN           WT_TRNG_REG(0x018u)
+#define WT_TRNG_FRQMAX           WT_TRNG_REG(0x01Cu)
+#define WT_TRNG_SCML             WT_TRNG_REG(0x020u)
+#define WT_TRNG_SCR1L            WT_TRNG_REG(0x024u)
+#define WT_TRNG_SCR2L            WT_TRNG_REG(0x028u)
+#define WT_TRNG_SCR3L            WT_TRNG_REG(0x02Cu)
+#define WT_TRNG_OSC2_CTL         WT_TRNG_REG(0x0ECu)
+
+int wt_rt700_trng_prepare(void);
+int wt_rt700_trng_complete(void);
 
 /* GLIKEY write-enable state machine guarding each AHBSC instance. */
 #define WT_GLIKEY_CTRL_0(base)   WT_REG32((base) + 0x0u)
@@ -83,6 +97,7 @@
 #define WT_GLIKEY_STATUS_ERROR_MASK    0x1Cu
 #define WT_GLIKEY_STATUS_FSM_SHIFT     19u
 #define WT_GLIKEY_FSM_WR_EN            0x1802u
+#define WT_GLIKEY_FSM_INIT             0x16u
 /* GLIKEY0 write index guarding AHBSC0 MISC_CTRL bits 11:2. */
 #define WT_GLIKEY0_INDEX_MISC_CTRL     1u
 

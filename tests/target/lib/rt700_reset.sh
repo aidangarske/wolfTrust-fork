@@ -19,7 +19,7 @@ case "$RT700_POWER_GPIO" in
 esac
 
 gpio() {
-    ssh -o BatchMode=yes -o ConnectTimeout=8 "$RT700_POWER_HOST" \
+    ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$RT700_POWER_HOST" \
         "raspi-gpio $*"
 }
 

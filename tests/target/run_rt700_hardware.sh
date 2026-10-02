@@ -69,6 +69,43 @@ check() {
     if [ "$1" -eq 0 ]; then log "  [check] PASS  $2"; else log "  [check] FAIL  $2"; fail "$2"; fi
 }
 
+uart_pid=""
+stop_uart() {
+    if [ -n "$uart_pid" ]; then
+        kill "$uart_pid" 2>/dev/null || true
+        wait "$uart_pid" 2>/dev/null || true
+        uart_pid=""
+    fi
+}
+trap stop_uart EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+start_uart() {
+    local device="${RT700_UART:-/dev/ttyACM0}"
+    stty -F "$device" 115200 raw -echo || fail "could not configure UART $device"
+    timeout "${RT700_UART_TIMEOUT:-180}" cat "$device" > "$work/uart.log" &
+    uart_pid=$!
+    log "  [uart] capturing $device at 115200 to $work/uart.log"
+}
+
+record_build() {
+    {
+        printf 'date_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf 'commit=%s\n' "$(git -C "$repo" rev-parse HEAD)"
+        printf 'scenario=%s\nengine=%s\n' "$scenario" "${WT_ENGINE:-native}"
+        printf 'attestation=%s\nsecure_header=%s\n' \
+            "${WT_ATTEST_COSE:-0}" "${WT_SECURE_IMAGE_HEADER_SIZE:-0}"
+        printf 'guest_flags=%s\n' "$1"
+        printf 'reset=hardware reset plus GPIO20, retained SRAM\n'
+        printf 'vault_policy=%s\n' "${2:-unchanged}"
+        git -C "$repo" status --short --untracked-files=no
+        git -C "$repo" submodule status
+        arm-none-eabi-gcc --version | sed -n '1p'
+        pyocd --version
+    } > "$work/build-record.txt"
+}
+
 # Serialize direct invocations as well as suites. The suite holds this lock
 # across all cases and passes its already-held descriptor to the runner.
 if [ "${WT_RT700_LOCK_HELD:-0}" != 1 ]; then
@@ -91,7 +128,7 @@ ensure_spsdk() {
 # test.
 dap() {
     timeout 60 pyocd cmd -t cortex_m "$@" 2>&1 |
-        grep -viE "rom table|APB-AP|coresight|cidr"
+        tee -a "$work/swd.log" | grep -viE "rom table|APB-AP|coresight|cidr"
 }
 
 wrap_xip() {
@@ -123,11 +160,12 @@ YAML
 
 # Read an image back through XIP once the chain has booted and compare it.
 verify_at() {
-    local addr="$1" image="$2" size
+    local addr="$1" image="$2" size readback
     size="$(wc -c < "$image" | tr -d ' ')"
-    timeout 120 pyocd cmd -t cortex_m -c "savemem $addr $size $work/readback.bin" \
+    readback="$work/readback-$(printf '%08x' "$((addr))").bin"
+    timeout 120 pyocd cmd -t cortex_m -c "savemem $addr $size $readback" \
         >/dev/null 2>&1 || fail "readback of $addr failed"
-    cmp -s "$work/readback.bin" "$image" || \
+    cmp -s "$readback" "$image" || \
         fail "flash verify mismatch at $addr ($(basename "$image"))"
     log "  [flash] verified $(basename "$image") @ $addr"
 }
@@ -250,6 +288,7 @@ run_chain() {
     make -s -C "$repo" TARGET=mimxrt700 secure-image TOOLPREFIX=arm-none-eabi-
 
     rt700_build_guests "$guest_flags" 0x1000u
+    record_build "$guest_flags" fresh
 
     # Keep the ELFs that define this run's result addresses, even when the next
     # case rebuilds the image. The suite log records the actual readbacks.
@@ -283,6 +322,7 @@ run_chain() {
     erase_range "$(printf '0x%08x-0x%08x' "$hsm_nvm_addr" $((hsm_nvm_addr + hsm_nvm_size)))"
     clear_mailboxes
 
+    start_uart
     reset_board
     sleep 2
     verify_at "$xspi0_base" "$work/flash_wolfboot.bin"
@@ -376,9 +416,10 @@ check_peer_progress() {
 elf_sym() {
     local addr
     addr="$(arm-none-eabi-nm "$repo/build/wolftrust.elf" |
-        awk -v s="$1" '$3 == s && !f { print "0x" $1; f = 1 }'
-    )"
-    [ -n "$addr" ] || fail "required symbol $1 missing from wolftrust.elf"
+        awk -v s="$1" '$3 == s || $3 ~ "^" s "\\.lto_priv\\.[0-9]+$" {
+            addr = "0x" $1; n++
+        } END { if (n != 1) exit 1; print addr }'
+    )" || fail "required symbol $1 missing or ambiguous in wolftrust.elf"
     printf '%s\n' "$addr"
 }
 
@@ -462,6 +503,8 @@ romsmoke)
     wrap_xip "$work/smoke/smoke.bin" "$work/flash_smoke.bin" \
         "$(printf '0x%08x' $((xspi0_base + mbi_offset)))"
     flash_at "$xspi0_base" "$work/flash_smoke.bin"
+    record_build "romsmoke"
+    start_uart
     reset_board
     verify_at "$xspi0_base" "$work/flash_smoke.bin"
     s1="$(dap -c 'read32 0x20180000 8' | tail -1)"

@@ -348,6 +348,11 @@ can set `RT700_WORK`. Use `WT_ENGINE=native` or `WT_ENGINE=hsm` explicitly and
 retain both runs. The basic guests check framework/service entry only; these
 cases do not qualify the full PSA or OS integration suites.
 
+Each case also retains UART output, raw SWD output, a readback of each flashed
+image, and a build record with configuration and tool versions. UART capture
+uses `RT700_UART` (default `/dev/ttyACM0`) and `RT700_UART_TIMEOUT` (default
+180 seconds); it supports diagnosis while result assertions use SWD records.
+
 `ahbscneg` requires three guest0 restarts followed by one quarantine, the
 Secure fault address of its denied store, unchanged peer memory, and a moving
 guest1 heartbeat. Quarantine clears guest0 RAM, so its former mailbox cannot

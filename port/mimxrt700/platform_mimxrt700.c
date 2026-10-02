@@ -249,6 +249,54 @@ static int wt_glikey_write_enable(uintptr_t base, uint32_t index)
     return ret;
 }
 
+int wt_rt700_trng_complete(void)
+{
+    /* End the write-enable operation without locking a reset-only index. */
+    WT_GLIKEY_CTRL_0(WT_GLIKEY3_BASE_S) =
+        (WT_GLIKEY_CTRL_0(WT_GLIKEY3_BASE_S) & ~WT_GLIKEY_CTRL_WR_EN_MASK) |
+        (2u << WT_GLIKEY_CTRL_WR_EN_SHIFT);
+    wt_dsb();
+    return (WT_GLIKEY_STATUS(WT_GLIKEY3_BASE_S) >>
+            WT_GLIKEY_STATUS_FSM_SHIFT) == WT_GLIKEY_FSM_INIT ? 0 : -1;
+}
+
+int wt_rt700_trng_prepare(void)
+{
+    uint32_t spins = 0u;
+    int ret;
+
+    /* NXP's RT700 TRNG example selects FRO1/2 (96 MHz), with no further
+     * division. Enable that output without changing any other FRO output. */
+    WT_REG32(WT_CLKCTL0_BASE_S + 0x040u) = 1u << 15; /* GLIKEY3 clock */
+    ret = wt_glikey_write_enable(WT_GLIKEY3_BASE_S, 1u);
+    if (ret == 0 && (WT_REG32(WT_CLKCTL0_BASE_S + 0x118u) & 1u) == 0u) {
+        ret = -1;
+    }
+    if (ret == 0) {
+        WT_REG32(WT_CLKCTL0_BASE_S + 0x204u) = 2u << 8; /* FRO1 / 2 */
+        WT_REG32(WT_CLKCTL0_BASE_S + 0xAC0u) = 5u; /* enable + FRO1 / 2 */
+        WT_REG32(WT_CLKCTL0_BASE_S + 0xAC4u) = 1u << 29;
+        WT_REG32(WT_CLKCTL0_BASE_S + 0xAC4u) = 0u;
+        while ((WT_REG32(WT_CLKCTL0_BASE_S + 0xAC4u) &
+                ((1u << 31) | (1u << 28))) != 0u && spins < 0x10000u) {
+            ++spins;
+        }
+        WT_REG32(WT_SYSCON0_BASE_S + 0x004u) = 1u << 2;
+        wt_dsb();
+        if ((WT_REG32(WT_CLKCTL0_BASE_S + 0x200u) & (2u << 8)) == 0u ||
+                WT_REG32(WT_CLKCTL0_BASE_S + 0xAC0u) != 5u ||
+                WT_REG32(WT_CLKCTL0_BASE_S + 0xAC4u) != 0u ||
+                (WT_REG32(WT_SYSCON0_BASE_S) & (1u << 2)) == 0u) {
+            ret = -1;
+        }
+    }
+    if (ret != 0) {
+        WT_GLIKEY_CTRL_0(WT_GLIKEY3_BASE_S) |= WT_GLIKEY_CTRL_0_SFT_RST;
+        wt_dsb();
+    }
+    return ret;
+}
+
 /* Reset leaves AHBSC0 secure checking off, so no memory or peripheral rule is
  * enforced until MISC_CTRL (and its duplicate) turn it on behind GLIKEY0. */
 static int wt_ahbsc_enable_checking(void)

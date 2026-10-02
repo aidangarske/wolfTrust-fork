@@ -57,10 +57,43 @@ static int wt_trng_wait_page(void)
 
 static int wt_trng_init(void)
 {
-    /* Leave the ROM's ring-oscillator tuning in place; a generation is
-     * requested by dropping PRGM and waiting for the entropy-valid flag. */
-    WT_TRNG_MCTL &= ~WT_TRNG_MCTL_PRGM;
-    return wt_trng_wait_page();
+    int ret = wt_rt700_trng_prepare();
+
+    if (ret == 0) {
+        /* Preserve a latched health failure. These are the RT700 defaults
+         * from NXP's TRNG driver: 1024 samples, an 8192-cycle delay, and
+         * dual oscillators with the hardware health tests enabled. */
+        if ((WT_TRNG_MCTL & WT_TRNG_MCTL_ERR) != 0u) {
+            ret = -1;
+        }
+        else {
+            /* ERR is write-one-to-clear, so never echo a concurrent health
+             * error back while changing the programming-mode bit. */
+            WT_TRNG_MCTL = (WT_TRNG_MCTL & ~WT_TRNG_MCTL_ERR) |
+                           WT_TRNG_MCTL_PRGM;
+            WT_TRNG_SCMISC = (1u << 16) | 32u;
+            WT_TRNG_SDCTL = (8192u << 16) | 1024u;
+            WT_TRNG_FRQMIN = 8000u;
+            WT_TRNG_FRQMAX = 15000u;
+            WT_TRNG_SCML = (169u << 16) | 596u;
+            WT_TRNG_SCR1L = (112u << 16) | 187u;
+            WT_TRNG_SCR2L = (77u << 16) | 105u;
+            WT_TRNG_SCR3L = (64u << 16) | 97u;
+            WT_TRNG_OSC2_CTL = (WT_TRNG_OSC2_CTL & ~0xFu) | 1u;
+            if ((WT_TRNG_MCTL & WT_TRNG_MCTL_PRGM) == 0u ||
+                    WT_TRNG_SDCTL != ((8192u << 16) | 1024u)) {
+                ret = -1;
+            }
+            else {
+                WT_TRNG_MCTL &= ~(WT_TRNG_MCTL_PRGM | WT_TRNG_MCTL_ERR);
+                ret = wt_trng_wait_page();
+            }
+        }
+        if (wt_rt700_trng_complete() != 0) {
+            ret = -1;
+        }
+    }
+    return ret;
 }
 
 /* Every page is read whole: reading its last word starts the next

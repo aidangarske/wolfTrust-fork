@@ -1,6 +1,14 @@
 diff --git a/cpu/imxrt700/imxrt700_secure.c b/cpu/imxrt700/imxrt700_secure.c
 --- a/cpu/imxrt700/imxrt700_secure.c
 +++ b/cpu/imxrt700/imxrt700_secure.c
+@@ -325,6 +325,6 @@ static void els_reset(void)
+ #define TRNG_MCTL 0x00u
+ #define TRNG_ENT0 0x40u
+-#define TRNG_ENT_COUNT 16u
++#define TRNG_ENT_COUNT 8u
+ #define MCTL_RST_DEF (1u << 6)
+ #define MCTL_ENT_VAL (1u << 10)
+ #define MCTL_ERR (1u << 12)
 @@ -407,6 +407,9 @@ static void fuses_seed(void)
      /* Unique ID words, stable across runs. */
      fuses[0x10] = 0x52543730u; /* "RT70" */

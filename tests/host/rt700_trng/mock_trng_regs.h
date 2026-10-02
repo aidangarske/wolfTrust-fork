@@ -29,10 +29,13 @@
 
 volatile uint32_t* wt_mock_trng_mctl(void);
 volatile uint32_t* wt_mock_trng_ent(uint32_t index);
+volatile uint32_t* wt_mock_trng_config(uint32_t offset);
 
 #undef WT_TRNG_MCTL
 #undef WT_TRNG_ENT
 #define WT_TRNG_MCTL        (*wt_mock_trng_mctl())
 #define WT_TRNG_ENT(index)  (*wt_mock_trng_ent(index))
+#undef WT_TRNG_REG
+#define WT_TRNG_REG(offset) (*wt_mock_trng_config(offset))
 
 #endif /* WT_TEST_MOCK_TRNG_REGS_H */
