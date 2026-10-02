@@ -113,8 +113,9 @@ Every port runs the same gates, in this order, from one place in
 6. **`WT_LOCK_CONFIRM=1`** and **`WT_PRODUCTION_LOCK=1`**.
 7. **An interactive terminal**, never a pipe or script.
 8. **The typed acceptance**, `I ACCEPT <code>`. Right after it, `lock` reads
-   the state and the part again and reruns the port checks, so a part swapped
-   at the prompt is not written.
+   the state and the part again, repeats every rehearsal check (images,
+   credentials, part, age), and reruns the port checks, so nothing that changed
+   at the prompt is written.
 9. **Read-back.** After the write, the new state must read back, or `lock`
    fails and says what state the part is in.
 10. **Single use.** A successful lock deletes the rehearsal it used. A

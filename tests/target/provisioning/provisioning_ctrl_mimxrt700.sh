@@ -33,6 +33,8 @@ PORT_NAME="MIMXRT700"
 target_dir="$here/.."
 pyocd_target="${RT700_TARGET:-mimxrt798sgfob}"
 spsdk_venv="${RT700_SPSDK_VENV:-$HOME/spsdk-venv}"
+# Set here, not in a helper: the controller runs many port calls in subshells.
+[ ! -d "$spsdk_venv/bin" ] || PATH="$spsdk_venv/bin:$PATH"
 guest_mask="${RT700_GUEST_MASK:-0x3}"
 case "$guest_mask" in
   0x1|0x2|0x3|1|2|3) ;;

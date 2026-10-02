@@ -65,6 +65,12 @@ framed_digest() {
   done | sha256 | cut -c1-64
 }
 
+# A rehearsal record binds these images, credentials, and part, recently.
+rehearsal_ok() {
+  [ -n "$1" ] && [ "$(field image "$1")" = "$2" ] && [ "$(field cred "$1")" = "$3" ] &&
+    fresh "$(field completed "$1")" && port_record_ok "$1"
+}
+
 ports() {
   local f
   for f in "$here"/provisioning_ctrl_*.sh; do
@@ -184,8 +190,7 @@ case "$cmd" in
     rec=""
     for s in $(port_rehearsal_for "$state"); do
       r="$(cat "$state_dir/rehearsal-$s" 2>/dev/null || true)"
-      if [ "$(field image "$r")" = "$image" ] && [ "$(field cred "$r")" = "$cred" ] &&
-         fresh "$(field completed "$r")" && port_record_ok "$r"; then
+      if rehearsal_ok "$r" "$image" "$cred"; then
         rec="$r"
         break
       fi
@@ -220,6 +225,10 @@ case "$cmd" in
     lock_confirm "I ACCEPT $state" "Moving this $PORT_NAME to $(label "$state")" "$why"
     # The prompt can wait a long time: check the part again right before the write.
     [ "$(port_lock_current)" = "$cur" ] || refuse "the part changed while waiting for the acceptance; nothing was changed."
+    if [ "$(cat "$state_dir/rehearsal-$(field state "$rec")" 2>/dev/null || true)" != "$rec" ] ||
+       ! rehearsal_ok "$rec" "$(port_image_digest || true)" "$(port_cred_fp)"; then
+      refuse "the rehearsal no longer matches these images, credentials, and part, or it expired while waiting; nothing was changed."
+    fi
     [ -z "$id" ] || [ "$(port_lock_identity)" = "$id" ] ||
       refuse "a different part is attached than the one checked; nothing was changed."
     port_ready "$state"
