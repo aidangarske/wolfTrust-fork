@@ -1,0 +1,129 @@
+name: M33MU console stress for issue 34
+'on':
+  push:
+    branches:
+    - ci/m33mu-console-stress-34
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  stress:
+    name: console_stress_${{ matrix.guest }}_${{ matrix.engine }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        guest:
+        - zephyr
+        - freertos
+        engine:
+        - native
+        - hsm
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.15
+    env:
+      WOLFBOOT_REF: d85fa9dbdf6c36f47b7e96eba5c9df750ad3c963
+      WT_ENGINE: ${{ matrix.engine }}
+      CROSS_COMPILE: /usr/local/bin/arm-none-eabi-
+      ZEPHYR_TOOLCHAIN_VARIANT: cross-compile
+      WT_SECURE_FLASH_BASE: 201719808
+      WT_SECURE_FLASH_SIZE: 262144
+      WOLFBOOT_PARTITION_SIZE: 262144
+      WOLFBOOT_PARTITION_SWAP_ADDRESS: 202637312
+      WT_SECURE_IMAGE_HEADER_SIZE: 1024
+      WT_GUEST0_FLASH_BASE: 134873088
+      WT_GUEST1_FLASH_BASE: 135135232
+      WT_GUEST0_FLASH_SIZE: 262144
+      WT_GUEST_RAM_SIZE: 65536
+      WT_GUEST1_RAM_BASE: 536936448
+      WT_ZEPHYR_DTC_OVERLAY_FILE: boards/wolfboot-stm32h563.overlay
+      WT_MAX_GUESTS: 2
+      ZEPHYR_BOARD: nucleo_h563zi/stm32h563xx/ns
+      WT_TEST_GUEST: ${{ matrix.guest }}
+      M33MU_REF: f3c03675260264cdec815adebe4b020bb6fe57b8
+    steps:
+    - uses: actions/checkout@v4
+    - name: Trust the checked-out workspace
+      run: 'git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+        git config --global url."https://github.com/".insteadOf git@github.com:
+
+        '
+    - name: Build pinned upstream M33MU
+      run: 'git clone --no-checkout https://github.com/danielinux/m33mu.git m33mu
+
+        git -C m33mu fetch --depth 1 origin "$M33MU_REF"
+
+        git -C m33mu checkout --detach "$M33MU_REF"
+
+        cmake -S m33mu -B m33mu/build -DM33MU_ENABLE_WOLFSSL=OFF
+
+        cmake --build m33mu/build --target m33mu -j2
+
+        echo "M33MU=$GITHUB_WORKSPACE/m33mu/build/m33mu" >> "$GITHUB_ENV"
+
+        '
+    - name: Initialize wolfTrust dependencies
+      run: git submodule update --init --single-branch
+    - name: Prepare Zephyr and FreeRTOS workspaces
+      working-directory: tests/firmware/zephyr-stm32h5
+      run: make clone
+    - name: Fetch secure-app wolfBoot
+      run: 'git clone --no-checkout https://github.com/aidangarske/wolfBoot.git wolfBoot
+
+        git -C wolfBoot fetch --depth 1 origin "$WOLFBOOT_REF"
+
+        git -C wolfBoot checkout --detach "$WOLFBOOT_REF"
+
+        git -C wolfBoot submodule update --init --single-branch
+
+        '
+    - name: Build wolfBoot secure first stage
+      working-directory: wolfBoot
+      run: 'cp config/examples/stm32h5-tz-wolftrust.config .config
+
+        # keytools serially first: wolfBoot''s host keytools Makefile has a
+
+        # parallel dependency race (sp_ModExp_*, sp_Rsa* link before their
+
+        # objects), so a -j build intermittently fails to link.
+
+        make keytools
+
+        # Force -j1: wolfBoot FORCE-regenerates include/target.h in place and
+
+        # its objects don''t depend on it, so -j reads it half-written.
+
+        make -j1 wolfboot.bin wolfboot_signing_private_key.der
+
+        '
+    - name: Build relocated wolfTrust
+      run: 'make build/wolftrust.bin build/secure_cmse_implib.o
+
+        '
+    - name: Build Zephyr and FreeRTOS PSA guests
+      run: "make -C tests/firmware/zephyr-stm32h5 \\\n  WT_REUSE_SECURE_BUILD=1 \\\n  WT_EXPECTED_LIFECYCLE=0x1000u\
+        \ \\\n  WT_ATTESTATION_DEVELOPMENT_PROFILE=1 \\\n  WT_M33MU_EXPECT_BKPT=1 \\\n  build-guest0-psa build-freertos-guest1\n"
+    - name: Pin guest measurements into the secure image
+      run: "python3 tools/measure/patch_guest_digests.py build/wolftrust.bin \\\n  \"0:1:tests/firmware/zephyr-stm32h5/build/guest0_psa/zephyr/zephyr.bin\"\
+        \ \\\n  \"1:1:tests/firmware/zephyr-stm32h5/build/freertos_guest1/freertos_guest1.bin\"\n"
+    - name: Sign wolfTrust secure runtime
+      working-directory: wolfBoot
+      run: "IMAGE_HEADER_SIZE=1024 \\\nWOLFBOOT_PARTITION_SIZE=0x40000 \\\nWOLFBOOT_SECTOR_SIZE=0x2000 \\\n  ./tools/keytools/sign\
+        \ --ecc256 \\\n    \"$GITHUB_WORKSPACE/build/wolftrust.bin\" \\\n    wolfboot_signing_private_key.der 1\n\
+        test -s \"$GITHUB_WORKSPACE/build/wolftrust_v1_signed.bin\"\n"
+    - name: Read the wolfBoot authenticated measurement
+      run: "measurement=$(python3 tests/scripts/read_wolfboot_measurement.py \\\n  build/wolftrust_v1_signed.bin)\n\
+        echo \"WT_EXPECTED_MEASUREMENT_HEX=$measurement\" >> \"$GITHUB_ENV\"\n"
+    - name: Repeat real lifecycle with current main and fixed assertions
+      shell: bash
+      run: python3 tests/scripts/stress_m33mu_console.py --iterations 50
+    - name: Preserve every raw capture and comparison
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: console-stress-${{ matrix.guest }}-${{ matrix.engine }}
+        path: ${{ runner.temp }}/console-stress/
+        if-no-files-found: error
+        retention-days: 14
