@@ -25,6 +25,11 @@
 
 static wt_spm_transport_fn g_attest_transport = wt_spm_transport_direct;
 
+#if defined(WT_RESTART_NEG_PROBE) && (WT_RESTART_NEG_PROBE != 0)
+#include "wolftrust/spm_transport.h"
+WT_RESTART_PROBE_DEFINE(wt_attestation_restart_probe)
+#endif
+
 void wt_attestation_service_set_transport(wt_spm_transport_fn fn)
 {
     g_attest_transport = (fn != NULL) ? fn : wt_spm_transport_direct;

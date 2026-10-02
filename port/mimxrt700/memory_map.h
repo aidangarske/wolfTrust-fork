@@ -117,8 +117,18 @@
 #define WT_SP_FWU_STACK_BASE     (WT_RAM_S_BASE + 0x00061000u)  /* 0x301E9000 */
 #define WT_SP_FWU_STACK_SIZE     WT_SP_SECURE_STACK_SIZE
 
+/* Keystore data bands: the vault, attestation, and crypto partitions each own
+ * one private writable band inside the KEYSTORE envelope (isolation level 3). */
 #define WT_KEYSTORE_BASE         (WT_RAM_S_BASE + 0x0004D000u)  /* 0x301D5000 */
 #define WT_KEYSTORE_SIZE         0x00014000u
+#define WT_SP_VAULT_DATA_BASE    WT_KEYSTORE_BASE               /* 0x301D5000 */
+#define WT_SP_VAULT_DATA_SIZE    0x00002000u                    /* 8 KiB */
+#define WT_SP_ATTEST_DATA_BASE \
+    (WT_SP_VAULT_DATA_BASE + WT_SP_VAULT_DATA_SIZE)             /* 0x301D7000 */
+#define WT_SP_ATTEST_DATA_SIZE   0x00000800u                    /* 2 KiB */
+#define WT_SP_HSM_DATA_BASE \
+    (WT_SP_ATTEST_DATA_BASE + WT_SP_ATTEST_DATA_SIZE)           /* 0x301D7800 */
+#define WT_SP_HSM_DATA_SIZE      0x00011800u                    /* 70 KiB */
 
 #define WT_SP_VNET_STACK_BASE    (WT_RAM_S_BASE + 0x0006B000u)  /* 0x301F3000 */
 #define WT_SP_VNET_STACK_SIZE    WT_SP_SECURE_STACK_SIZE

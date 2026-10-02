@@ -1,4 +1,4 @@
-/* boot.h
+/* hsm_flash_ctx.c
  *
  * Copyright (C) 2026 wolfSSL Inc.
  *
@@ -15,19 +15,14 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <https://www.gnu.org/licenses/>.
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#ifndef WOLFTRUST_BOOT_H
-#define WOLFTRUST_BOOT_H
+#include "hsm_flash.h"
 
-struct wt_boot_handoff;
+wt_hsm_flash_context_t g_hsm_flash_ctx;
 
-/* Entered by the arch reset handler once data and bss are initialized. */
-void wt_boot_run(void) __attribute__((noreturn));
-
-/* The boot handoff the SPM consumed, kept in SPM RAM so a restarted partition
- * is rebuilt from it; NULL when boot received no valid handoff. */
-const struct wt_boot_handoff* wt_boot_handoff_retained(void);
-
-#endif /* WOLFTRUST_BOOT_H */
+/* Gate-path forensics (SWD-readable), counted in the vault's own thread. */
+volatile uint32_t g_wt_flash_gate_aborts __attribute__((used));
+volatile uint32_t g_wt_flash_gate_abort_info __attribute__((used));

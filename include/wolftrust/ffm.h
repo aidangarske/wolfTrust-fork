@@ -35,6 +35,12 @@
 /* Per-client connection quota: no single client may hold more than half the
  * shared pool, so one guest cannot exhaust it and starve peers (CWE-400). */
 #define WT_FFM_MAX_CONNECTIONS_PER_CLIENT (WT_FFM_MAX_CONNECTIONS / 2U)
+/* Non-secure clients together never take the whole pool either: this many
+ * slots stay for Secure Partitions' own dependency connections (the storage,
+ * keystore, and attestation doors), so guests cannot starve them. */
+#define WT_FFM_SECURE_RESERVED_CONNECTIONS 4U
+#define WT_FFM_MAX_NS_CONNECTIONS \
+    (WT_FFM_MAX_CONNECTIONS - WT_FFM_SECURE_RESERVED_CONNECTIONS)
 #define WT_FFM_MAX_MESSAGES       8U
 #define WT_FFM_TRANSFER_BYTES     1024U
 #define WT_FFM_QUEUE_NONE         UINT16_MAX
@@ -59,6 +65,7 @@ typedef struct wt_ffm_partition_runtime {
     wt_ffm_dispatch_fn dispatch;
     void* dispatch_context;
     psa_signal_t asserted_signals;
+    uint32_t instance;     /* bumped on every restart of the partition */
     uint8_t initialized;
 } wt_ffm_partition_runtime_t;
 
@@ -73,6 +80,7 @@ typedef struct wt_ffm_connection_runtime {
     wt_ipc_connection_state_t state;
     psa_client_id_t caller;
     uint32_t generation;
+    uint32_t client_instance; /* the client partition instance that connected */
     uintptr_t rhandle;
     uint16_t service_index;
     uint8_t allocated;
@@ -128,7 +136,8 @@ typedef enum wt_ffm_result {
     WT_FFM_ERROR_HANDLE = -604,
     WT_FFM_ERROR_STATE = -605,
     WT_FFM_ERROR_NOT_READY = -606,
-    WT_FFM_ERROR_BUFFER = -607
+    WT_FFM_ERROR_BUFFER = -607,
+    WT_FFM_ERROR_ISOLATION = -608
 } wt_ffm_result_t;
 
 int wt_ffm_init(wt_ffm_runtime_t* runtime,
@@ -179,6 +188,13 @@ int wt_ffm_fail_partition_messages(wt_ffm_runtime_t* runtime,
  * client that terminated abnormally and can no longer close its handles. */
 int wt_ffm_fail_client_connections(wt_ffm_runtime_t* runtime,
                                    psa_client_id_t caller);
+/* A restarted partition keeps nothing its previous instance held: every
+ * message it was serving completes with status, every connection to it drops
+ * to the error state, every connection and request it held as a client is
+ * released, and its asserted signals are cleared. Returns the number of
+ * served messages failed, or a negative WT_FFM error. */
+int wt_ffm_partition_restarted(wt_ffm_runtime_t* runtime,
+                               int32_t partition_id, psa_status_t status);
 
 /* Dispatch one queued-but-undelivered message inline. The scheduler wake
  * loop does this on target; the direct transport uses it as the host

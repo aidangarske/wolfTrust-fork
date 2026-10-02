@@ -121,6 +121,33 @@ class GeneratorTest(unittest.TestCase):
             self.assertIn("overlap", result.stderr)
             self.assertFalse(output.exists())
 
+    def test_level3_refuses_writable_sharing_between_partitions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "shared.json"
+            output = root / "output"
+            manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+            manifest["profile_capabilities"][
+                "max_memory_resources_per_domain"] = 3
+            for domain in manifest["domains"][1:]:
+                domain["memory_resources"].append({
+                    "base": 0xD000, "size": 0x1000,
+                    "attributes": 0x23, "share_id": 7})
+            source.write_text(json.dumps(manifest), encoding="utf-8")
+
+            result = self.run_generator(source, output)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("isolation level 3 forbids a writable memory "
+                          "resource shared between partitions",
+                          result.stderr)
+            self.assertFalse(output.exists())
+
+            for domain in manifest["domains"][1:]:
+                domain["memory_resources"][-1]["attributes"] = 0x21
+            source.write_text(json.dumps(manifest), encoding="utf-8")
+            result = self.run_generator(source, output)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_address_width_is_enforced(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

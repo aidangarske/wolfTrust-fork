@@ -43,6 +43,12 @@ static int wt_hsm_lock_init(void *context, const void *config)
 {
     if (context == NULL) return WH_ERROR_BADARGS;
     (void)config;
+#if defined(WT_TARGET_BUILD)
+    /* The mutex is SPM state; a confined partition leaves it alone. */
+    if (wt_arch_thread_unprivileged()) {
+        return WH_ERROR_OK;
+    }
+#endif
     wt_mutex_init((wt_mutex_t *)context);
     return WH_ERROR_OK;
 }
@@ -50,6 +56,11 @@ static int wt_hsm_lock_init(void *context, const void *config)
 static int wt_hsm_lock_cleanup(void *context)
 {
     if (context == NULL) return WH_ERROR_BADARGS;
+#if defined(WT_TARGET_BUILD)
+    if (wt_arch_thread_unprivileged()) {
+        return WH_ERROR_OK;
+    }
+#endif
     /* Mutex has no resources to free; re-init for safety. */
     wt_mutex_init((wt_mutex_t *)context);
     return WH_ERROR_OK;

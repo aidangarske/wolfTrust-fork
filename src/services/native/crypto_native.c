@@ -39,6 +39,7 @@
 #include "wolftrust/services/hsm_relay.h"
 #include "wolftrust/services/vault_service.h"
 #include "wolftrust/services/crypto_native.h"
+#include "wolftrust/static_assert.h"
 
 #include "wolftrust/port_nvm.h"
 #include "psa/lifecycle.h"
@@ -50,6 +51,9 @@
 /* The IAK vault home: owner/sub 0 is reachable by no SPM-stamped caller
  * (partitions are positive, NS clients negative), so only the boot and
  * attestation paths below can address it. */
+WT_STATIC_ASSERT(WT_HSM_ATTEST_NOT_READY == WH_ERROR_NOTREADY,
+               "attestation door not-ready code must match wolfHSM");
+
 #define WT_NATIVE_IAK_OWNER 0
 #define WT_NATIVE_IAK_SUB   0
 #define WT_NATIVE_IAK_UID   0xF0u
@@ -65,50 +69,33 @@ int wt_native_init(void)
         return rc;
     }
 
-    rc = g_wt_hsm_flash_cb.Init(wt_hsm_flash_context(),
-                                wt_hsm_flash_config());
-    if (rc != 0) {
-        return rc;
-    }
-
-    /* Initialise the shared NVM lock once, before wh_Nvm_Init wires it in. */
+    /* Initialise the NVM lock once, before wh_Nvm_Init wires it in. */
     wt_mutex_init(&g_wt_nvm_lock_mutex);
 
-    rc = wt_nvm_store_bind();
+    rc = wt_nvm_vault_bind();
     if (rc != WH_ERROR_OK) {
         return rc;
     }
-
-    if (wt_hsm_vault_init(&g_wt_nvm_ctx) == 0) {
-        wt_vault_service_set_backend(&wt_hsm_vault_backend);
-        if (wt_hsm_seal_init(&g_wt_nvm_ctx) == 0) {
-            wt_hsm_vault_set_sealer(&wt_hsm_sealer);
-        }
-        else {
-            wt_hsm_vault_set_sealer(NULL);
-        }
-        if (wt_hsm_keyvault_init(&g_wt_nvm_ctx) == 0) {
-            wt_vault_service_set_key_backend(&wt_hsm_key_backend);
-        }
-        wt_vault_service_set_rng(wt_hsm_keyvault_random);
+    /* Keys live in the crypto partition's keyvault, reached through the
+     * SERVICE_HSM native wire. Boot provisions on the direct store;
+     * wt_native_bind_nvm rebinds before scheduling. */
+    if (wt_hsm_keyvault_init(&g_wt_nvm_ctx) != 0) {
+        return -1;
     }
 
     return 0;
 }
 
-/* Native-engine fault-recovery hook (WT-SYS-0008): invalidate the shared vault
- * DRBG a torn request may have left mid-draw so the restart re-seeds from clean
- * state. Per-operation wolfCrypt contexts are stack-local and die with the
- * scrubbed coroutine, so the DRBG is the only mutable crypto state to reset. */
-void wt_native_reinit(void)
+int wt_native_bind_nvm(whNvmContext* nvm)
 {
-    wt_hsm_keyvault_reset();
+    return wt_hsm_keyvault_init(nvm);
 }
 
 /* =========================================================================
  * Attestation (native): the IAK is a vault key object, provisioned at boot
- * and exercised through the key backend so private material never leaves
- * the privileged vault domain. Same wire forms as the hsm engine: 64-byte
+ * and exercised through the key backend inside the crypto partition, so
+ * private material never reaches the attestation partition. Same wire forms
+ * as the hsm engine: 64-byte
  * r||s signatures, 65-byte X9.63 public point.
  * ====================================================================== */
 static psa_status_t wt_native_iak_generate(void)
@@ -184,6 +171,14 @@ int wt_hsm_attest_init(void)
         return WH_ERROR_ABORTED;
     }
     g_native_attest_ready = true;
+    return WH_ERROR_OK;
+}
+
+int wt_hsm_attest_restore(const uint8_t* publicKey, size_t publicKeySize)
+{
+    /* The IAK stays in the store; only the readiness boot established is
+     * carried across the band reset. */
+    g_native_attest_ready = (publicKey != NULL) && (publicKeySize != 0u);
     return WH_ERROR_OK;
 }
 

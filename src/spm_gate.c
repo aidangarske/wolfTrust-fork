@@ -79,14 +79,11 @@ static int wt_spm_check_sp_vectors(const wt_secure_domain_t* domain,
     return WT_FFM_SUCCESS;
 }
 
-int wt_spm_gate(wt_ffm_runtime_t* runtime,
-                const wt_secure_domain_t* caller_domain,
-                wt_spm_call_t* call)
+static int wt_spm_gate_held(wt_ffm_runtime_t* runtime,
+                            const wt_secure_domain_t* caller_domain,
+                            wt_spm_call_t* call)
 {
     int ret;
-
-    if (runtime == NULL || call == NULL)
-        return WT_FFM_ERROR_ARGUMENT;
 
     call->ret_status = PSA_ERROR_PROGRAMMER_ERROR;
     call->ret_size = 0U;
@@ -364,6 +361,24 @@ int wt_spm_gate(wt_ffm_runtime_t* runtime,
     }
 
     return WT_FFM_SUCCESS;
+}
+
+int wt_spm_gate(wt_ffm_runtime_t* runtime,
+                const wt_secure_domain_t* caller_domain,
+                wt_spm_call_t* call)
+{
+    wt_spm_call_t held;
+    int ret;
+
+    if (runtime == NULL || call == NULL)
+        return WT_FFM_ERROR_ARGUMENT;
+
+    /* The block lives in the caller's memory: read it once, so every check
+     * and every use sees the same vectors, handles and resume state. */
+    held = *call;
+    ret = wt_spm_gate_held(runtime, caller_domain, &held);
+    *call = held;
+    return ret;
 }
 
 int wt_spm_call_would_block(const wt_spm_call_t* call)

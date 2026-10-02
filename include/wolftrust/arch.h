@@ -53,6 +53,9 @@ uintptr_t wt_arch_trap_pc(const wt_trap_frame_t* frame);
 /* UINT32_MAX when no guest is running; never trust a guest-supplied id. */
 uint32_t wt_arch_active_guest_id(void);
 void wt_arch_zero_guest_memory(uintptr_t base, size_t size);
+/* Return a partition's data band to its link-time image: zero it, then
+ * reload the .data the image carries for it. */
+void wt_arch_sp_band_reset(uintptr_t base, size_t size);
 /* The blocked-tasklet resume path skips the normal context restore. */
 void wt_arch_restore_guest_bank(const wt_guest_context_t* context);
 

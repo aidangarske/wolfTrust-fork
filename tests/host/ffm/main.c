@@ -492,15 +492,24 @@ static void test_bounded_resources(void)
     }
     EXPECT_INT(wt_ffm_connect(&runtime, TEST_NS_CLIENT, TEST_SERVICE_SID, 3U),
                PSA_ERROR_CONNECTION_BUSY);
-    /* A peer is not starved: it can still reach its own quota from the
-     * remainder the first client could not take. */
+    /* A peer is not starved: it takes the rest of the Non-secure share, and
+     * the slots reserved for Secure Partitions stay out of both their reach. */
     for (i = WT_FFM_MAX_CONNECTIONS_PER_CLIENT;
-            i < WT_FFM_MAX_CONNECTIONS; i++) {
+            i < WT_FFM_MAX_NS_CONNECTIONS; i++) {
         handles[i] = wt_ffm_connect(&runtime, TEST_OTHER_NS_CLIENT,
                                     TEST_SERVICE_SID, 3U);
         EXPECT_TRUE(PSA_HANDLE_IS_VALID(handles[i]));
     }
-    for (i = 0U; i < WT_FFM_MAX_CONNECTIONS; i++) {
+    EXPECT_INT(wt_ffm_connect(&runtime, TEST_OTHER_NS_CLIENT,
+                              TEST_SERVICE_SID, 3U),
+               PSA_ERROR_CONNECTION_BUSY);
+    handles[WT_FFM_MAX_NS_CONNECTIONS] = wt_ffm_connect(&runtime,
+        TEST_CLIENT_PARTITION, TEST_SERVICE_SID, 3U);
+    EXPECT_TRUE(PSA_HANDLE_IS_VALID(handles[WT_FFM_MAX_NS_CONNECTIONS]));
+    EXPECT_INT(wt_ffm_close(&runtime, TEST_CLIENT_PARTITION,
+                            handles[WT_FFM_MAX_NS_CONNECTIONS]),
+               WT_FFM_SUCCESS);
+    for (i = 0U; i < WT_FFM_MAX_NS_CONNECTIONS; i++) {
         EXPECT_INT(wt_ffm_close(&runtime,
                        (i < WT_FFM_MAX_CONNECTIONS_PER_CLIENT) ?
                            TEST_NS_CLIENT : TEST_OTHER_NS_CLIENT,
@@ -927,6 +936,127 @@ static void test_client_connection_release(void)
     (void)printf("PASS: WT-FFM-0026 abnormal client release frees its slots\n");
 }
 
+/* WT-FFM-0017/0026: a restarted partition keeps nothing its previous instance
+ * held. As a client: its connections and requests are released, a reply it
+ * never harvested is gone, and a handle from the old instance is refused even
+ * if its connection row survived. As a server: pinned clients unblock, and
+ * an interrupt signal asserted for the old instance is never delivered. */
+static void test_partition_restart(void)
+{
+    static const uint8_t request[] = { 'a', 'b', 'c' };
+    wt_ffm_runtime_t runtime;
+    test_context_t context;
+    wt_ffm_connection_runtime_t survivor;
+    psa_invec input = { request, sizeof(request) };
+    uint8_t response[2] = { 0U, 0U };
+    psa_outvec output = { response, sizeof(response) };
+    psa_signal_t asserted = 0U;
+    psa_handle_t queued_on;
+    psa_handle_t replied_on;
+    psa_handle_t pinned_on;
+    psa_handle_t fresh;
+    uint16_t queued = 0U;
+    uint16_t replied = 0U;
+    uint16_t pinned = 0U;
+    size_t idx = 0U;
+
+    test_init(&runtime, &context);
+    queued_on = wt_ffm_connect(&runtime, TEST_CLIENT_PARTITION,
+                               TEST_SERVICE_SID, 3U);
+    replied_on = wt_ffm_connect(&runtime, TEST_CLIENT_PARTITION,
+                                TEST_SERVICE_SID, 3U);
+    EXPECT_TRUE(PSA_HANDLE_IS_VALID(queued_on));
+    EXPECT_TRUE(PSA_HANDLE_IS_VALID(replied_on));
+    EXPECT_TRUE(find_connection(&runtime, TEST_CLIENT_PARTITION, &idx));
+    EXPECT_INT(runtime.connections[idx].state, WT_IPC_CONNECTION_IDLE);
+    survivor = runtime.connections[idx];
+
+    /* One request served and replied but not yet harvested, one still
+     * queued for the service. */
+    EXPECT_INT(wt_ffm_call_begin(&runtime, TEST_CLIENT_PARTITION, replied_on,
+                                 PSA_IPC_CALL, &input, 1U, &output, 1U,
+                                 &replied), PSA_SUCCESS);
+    EXPECT_INT(wt_ffm_dispatch_pending(&runtime, replied), WT_FFM_SUCCESS);
+    EXPECT_INT(wt_ffm_msg_complete(&runtime, replied), 1);
+    EXPECT_INT(wt_ffm_call_begin(&runtime, TEST_CLIENT_PARTITION, queued_on,
+                                 PSA_IPC_CALL, &input, 1U, &output, 1U,
+                                 &queued), PSA_SUCCESS);
+    EXPECT_INT(runtime.partitions[0].asserted_signals & TEST_SERVICE_SIGNAL,
+               (int)TEST_SERVICE_SIGNAL);
+
+    EXPECT_INT(wt_ffm_partition_restarted(&runtime, TEST_CLIENT_PARTITION,
+                                          PSA_ERROR_COMMUNICATION_FAILURE),
+               0);
+    EXPECT_INT((int)runtime.partitions[1].instance, 1);
+    EXPECT_TRUE(!find_connection(&runtime, TEST_CLIENT_PARTITION, &idx));
+    EXPECT_INT(runtime.messages[replied].allocated, 0);
+    EXPECT_INT(runtime.messages[queued].allocated, 0);
+    EXPECT_INT(wt_ffm_msg_complete(&runtime, replied), 0);
+    /* The queued request left the service's queue with its client. */
+    EXPECT_INT(runtime.partitions[0].asserted_signals & TEST_SERVICE_SIGNAL,
+               0);
+    EXPECT_INT(wt_ffm_call(&runtime, TEST_CLIENT_PARTITION, queued_on,
+                           PSA_IPC_CALL, &input, 1U, &output, 1U),
+               PSA_ERROR_PROGRAMMER_ERROR);
+    EXPECT_INT(wt_ffm_close(&runtime, TEST_CLIENT_PARTITION, replied_on),
+               WT_FFM_ERROR_HANDLE);
+
+    /* A connection row that outlived the release is still the old
+     * instance's: its handle resolves to the idle row and is refused. */
+    runtime.connections[idx] = survivor;
+    EXPECT_INT(wt_ffm_call(&runtime, TEST_CLIENT_PARTITION, queued_on,
+                           PSA_IPC_CALL, &input, 1U, &output, 1U),
+               PSA_ERROR_PROGRAMMER_ERROR);
+    runtime.connections[idx].client_instance = runtime.partitions[1].instance;
+    EXPECT_INT(wt_ffm_call(&runtime, TEST_CLIENT_PARTITION, queued_on,
+                           PSA_IPC_CALL, &input, 1U, &output, 1U),
+               PSA_SUCCESS);
+    EXPECT_INT(wt_ffm_close(&runtime, TEST_CLIENT_PARTITION, queued_on),
+               WT_FFM_SUCCESS);
+
+    /* The new instance connects afresh. */
+    fresh = wt_ffm_connect(&runtime, TEST_CLIENT_PARTITION, TEST_SERVICE_SID,
+                           3U);
+    EXPECT_TRUE(PSA_HANDLE_IS_VALID(fresh));
+    EXPECT_TRUE(fresh != queued_on && fresh != replied_on);
+    EXPECT_INT(wt_ffm_call(&runtime, TEST_CLIENT_PARTITION, fresh,
+                           PSA_IPC_CALL, &input, 1U, &output, 1U),
+               PSA_SUCCESS);
+
+    /* As a server, with an interrupt signal asserted and a client pinned. */
+    pinned_on = wt_ffm_connect(&runtime, TEST_NS_CLIENT, TEST_SERVICE_SID,
+                               3U);
+    EXPECT_TRUE(PSA_HANDLE_IS_VALID(pinned_on));
+    EXPECT_INT(wt_ffm_call_begin(&runtime, TEST_NS_CLIENT, pinned_on,
+                                 PSA_IPC_CALL, &input, 1U, &output, 1U,
+                                 &pinned), PSA_SUCCESS);
+    EXPECT_INT(wt_ffm_assert_signal(&runtime, TEST_PARTITION_ID,
+                                    TEST_IRQ_SIGNAL), WT_FFM_SUCCESS);
+    EXPECT_INT(wt_ffm_partition_restarted(&runtime, TEST_PARTITION_ID,
+                                          PSA_ERROR_COMMUNICATION_FAILURE),
+               1);
+    EXPECT_INT((int)runtime.partitions[0].instance, 1);
+    EXPECT_INT((int)runtime.partitions[0].asserted_signals, 0);
+    EXPECT_INT(wt_ffm_wait(&runtime, TEST_PARTITION_ID, PSA_WAIT_ANY,
+                           &asserted), WT_FFM_ERROR_NOT_READY);
+    EXPECT_INT((int)asserted, 0);
+    EXPECT_INT(wt_ffm_call_finish(&runtime, pinned, &output, 1U),
+               PSA_ERROR_COMMUNICATION_FAILURE);
+    /* The restarted client's fresh connection dropped to the error state
+     * with every other connection to the restarted server. */
+    EXPECT_INT(wt_ffm_call(&runtime, TEST_CLIENT_PARTITION, fresh,
+                           PSA_IPC_CALL, &input, 1U, &output, 1U),
+               PSA_ERROR_PROGRAMMER_ERROR);
+
+    EXPECT_INT(wt_ffm_partition_restarted(&runtime, 99,
+                                          PSA_ERROR_COMMUNICATION_FAILURE),
+               WT_FFM_ERROR_POLICY);
+    EXPECT_INT(wt_ffm_partition_restarted(NULL, TEST_PARTITION_ID,
+                                          PSA_ERROR_COMMUNICATION_FAILURE),
+               WT_FFM_ERROR_POLICY);
+    (void)printf("PASS: WT-FFM-0017 a restarted partition keeps nothing\n");
+}
+
 /* FF-M Appendix A: a client PROGRAMMER ERROR against a connection latches it
  * into the error state even when the in-flight request later completes
  * normally, and it stays a PROGRAMMER ERROR until close. Also covers psa_write
@@ -1282,6 +1412,7 @@ int main(void)
     test_fault_unblock();
     test_idle_connection_fault();
     test_client_connection_release();
+    test_partition_restart();
     if (g_failures != 0U) {
         (void)fprintf(stderr, "FF-M checks failed: %u/%u\n",
                       g_failures, g_checks);

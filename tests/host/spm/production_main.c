@@ -83,8 +83,12 @@ int main(void)
     const wt_guest_config_t* configs;
     const wt_domain_descriptor_t* guest_domain;
     wt_secure_domain_t crypto_domain;
+    wt_secure_domain_t tables[WT_MANIFEST_MAX_PARTITIONS];
+    size_t table_count;
     size_t config_count;
     size_t domain_count;
+    size_t i;
+    size_t j;
     int result;
 
     result = wt_spm_init(&spm, wt_generated_manifest_get(),
@@ -186,6 +190,90 @@ int main(void)
 
     domain_count = wt_spm_manifest(&spm)->domain_count;
     if (domain_count > sizeof(invalid_domains) / sizeof(invalid_domains[0])) {
+        return 1;
+    }
+
+    /* WT-FFM-0011: the production partitions' tables are isolated from each
+     * other and from SPM RAM, and none reaches the conformance window. */
+    table_count = 0U;
+    for (i = 0U; i < domain_count; i++) {
+        const wt_domain_descriptor_t* domain =
+            &wt_spm_manifest(&spm)->domains[i];
+
+        if (domain->domain_class != WT_DOMAIN_CLASS_SECURE_PARTITION) {
+            continue;
+        }
+        if (table_count >= sizeof(tables) / sizeof(tables[0]) ||
+                wt_ffm_resolve_secure_domain(wt_spm_manifest(&spm),
+                    domain->id, &tables[table_count]) !=
+                    WT_SECURE_DOMAIN_OK) {
+            (void)fprintf(stderr, "partition table not resolved\n");
+            return 1;
+        }
+        table_count++;
+    }
+    if (table_count < 3U) {
+        (void)fprintf(stderr, "production partitions missing\n");
+        return 1;
+    }
+    for (i = 0U; i < table_count; i++) {
+        if (!wt_secure_domain_excludes(&tables[i], WT_RAM_S_BASE,
+                WT_SP_VAULT_DATA_BASE - WT_RAM_S_BASE)) {
+            (void)fprintf(stderr, "partition %u reaches SPM RAM\n",
+                          (unsigned int)tables[i].domain_id);
+            return 1;
+        }
+        if (!wt_secure_domain_excludes(&tables[i], WT_CONF_SP_DATA_BASE,
+                                       WT_CONF_SP_DATA_SIZE)) {
+            (void)fprintf(stderr,
+                          "partition %u reaches the conformance window\n",
+                          (unsigned int)tables[i].domain_id);
+            return 1;
+        }
+        for (j = i + 1U; j < table_count; j++) {
+            if (!wt_secure_domains_isolated(&tables[i], &tables[j], NULL,
+                                            0U)) {
+                (void)fprintf(stderr, "partitions %u and %u overlap\n",
+                              (unsigned int)tables[i].domain_id,
+                              (unsigned int)tables[j].domain_id);
+                return 1;
+            }
+        }
+    }
+    /* The three bands belong to exactly their partitions. */
+    if (wt_ffm_resolve_secure_domain(wt_spm_manifest(&spm),
+            PARTITION_VAULT_ID, &crypto_domain) != WT_SECURE_DOMAIN_OK ||
+            !wt_secure_domain_contains(&crypto_domain, WT_SP_VAULT_DATA_BASE,
+                                       WT_SP_VAULT_DATA_SIZE, 1) ||
+            !wt_secure_domain_excludes(&crypto_domain, WT_SP_ATTEST_DATA_BASE,
+                                       WT_SP_ATTEST_DATA_SIZE) ||
+            !wt_secure_domain_excludes(&crypto_domain, WT_SP_HSM_DATA_BASE,
+                                       WT_SP_HSM_DATA_SIZE)) {
+        (void)fprintf(stderr, "vault does not own exactly its band\n");
+        return 1;
+    }
+    if (wt_ffm_resolve_secure_domain(wt_spm_manifest(&spm),
+            PARTITION_ATTEST_ID, &crypto_domain) != WT_SECURE_DOMAIN_OK ||
+            !wt_secure_domain_contains(&crypto_domain,
+                                       WT_SP_ATTEST_DATA_BASE,
+                                       WT_SP_ATTEST_DATA_SIZE, 1) ||
+            !wt_secure_domain_excludes(&crypto_domain, WT_SP_VAULT_DATA_BASE,
+                                       WT_SP_VAULT_DATA_SIZE) ||
+            !wt_secure_domain_excludes(&crypto_domain, WT_SP_HSM_DATA_BASE,
+                                       WT_SP_HSM_DATA_SIZE)) {
+        (void)fprintf(stderr, "attestation does not own exactly its band\n");
+        return 1;
+    }
+    if (wt_ffm_resolve_secure_domain(wt_spm_manifest(&spm),
+            PARTITION_HSM_ID, &crypto_domain) != WT_SECURE_DOMAIN_OK ||
+            !wt_secure_domain_contains(&crypto_domain, WT_SP_HSM_DATA_BASE,
+                                       WT_SP_HSM_DATA_SIZE, 1) ||
+            !wt_secure_domain_excludes(&crypto_domain, WT_SP_VAULT_DATA_BASE,
+                                       WT_SP_VAULT_DATA_SIZE) ||
+            !wt_secure_domain_excludes(&crypto_domain,
+                                       WT_SP_ATTEST_DATA_BASE,
+                                       WT_SP_ATTEST_DATA_SIZE)) {
+        (void)fprintf(stderr, "crypto SP does not own exactly its band\n");
         return 1;
     }
 

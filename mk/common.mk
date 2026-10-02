@@ -78,6 +78,8 @@ WT_ATTEST_COSE ?= 1
 WT_FFM_NEGATIVE_PROBE ?= 0
 WT_KEYSTORE_NEG_PROBE ?= 0
 WT_PERIPH_SP_NEG_PROBE ?= 0
+WT_BAND_NEG_PROBE ?= 0
+WT_RESTART_NEG_PROBE ?= 0
 WT_DEPUTY_NEG_PROBE ?= 0
 WT_HSM_PIN_NEG_PROBE ?= 0
 WT_LAUNCH_DEBUG ?= 0
@@ -113,7 +115,7 @@ HSM_DEFS_SECURE := -DWOLFSSL_USER_SETTINGS -DWOLFHSM_CFG \
     -DWC_RESEED_INTERVAL=1000000 \
     $(ARCH_HSM_DEFS)
 ifeq ($(WT_ENGINE),hsm)
-HSM_DEFS_SECURE += -DWOLF_CRYPTO_CB -DWT_ENGINE_HSM=1
+HSM_DEFS_SECURE += -DWOLF_CRYPTO_CB -DWC_NO_DEFAULT_DEVID -DWT_ENGINE_HSM=1
 else
 # Native links only the wolfHSM NVM object store; NO_CRYPTO drops the server's
 # wolfCrypt dependency (and its WOLF_CRYPTO_CB requirement).
@@ -173,6 +175,12 @@ endif
 ifeq ($(WT_PERIPH_SP_NEG_PROBE),1)
 SECURE_CFLAGS += -DWT_PERIPH_SP_NEG_PROBE=1
 endif
+ifneq ($(filter 1 2 3 4 5 6,$(WT_BAND_NEG_PROBE)),)
+SECURE_CFLAGS += -DWT_BAND_NEG_PROBE=$(WT_BAND_NEG_PROBE)
+endif
+ifneq ($(filter 1 2 3,$(WT_RESTART_NEG_PROBE)),)
+SECURE_CFLAGS += -DWT_RESTART_NEG_PROBE=$(WT_RESTART_NEG_PROBE)
+endif
 ifeq ($(WT_DEPUTY_NEG_PROBE),1)
 SECURE_CFLAGS += -DWT_DEPUTY_NEG_PROBE=1
 endif
@@ -205,7 +213,7 @@ endif
 ifeq ($(WT_VNET_NEG_PROBE),1)
 SECURE_CFLAGS += -DWT_VNET_NEG_PROBE=1
 endif
-ifneq ($(filter 1 2,$(WT_MANIFEST_NEG_PROBE)),)
+ifneq ($(filter 1 2 3,$(WT_MANIFEST_NEG_PROBE)),)
 SECURE_CFLAGS += -DWT_MANIFEST_NEG_PROBE=$(WT_MANIFEST_NEG_PROBE)
 endif
 ifeq ($(WT_REMEASURE_PROBE),1)
@@ -324,8 +332,10 @@ WT_SECURE_EXTRA_SRCS := \
     $(wildcard $(WOLFHSM_RUNNER_DIR)/libc_stubs.c) \
     $(wildcard $(ROOT)/src/services/wolfhsm/*.c) \
     $(ROOT)/src/services/nvm_store.c \
+    $(ROOT)/src/services/nvm_boot.c \
     $(ROOT)/src/services/boot_handoff.c \
     $(ROOT)/src/services/hsm_relay_service.c \
+    $(ROOT)/src/services/nvm_client.c \
     $(ROOT)/src/services/storage_service.c \
     $(ROOT)/src/services/fwu_service.c \
     $(ROOT)/src/services/vault_service.c
@@ -395,10 +405,11 @@ ALL_SECURE_OBJS := $(strip \
     $(MANIFEST_OBJ))
 
 # LTO cannot safely rewrite objects whose symbols are consumed by inline
-# assembly or synthesized by the CMSE linker. Native engine and VNET objects
-# that own filename-selected isolation bands retain their object identity.
+# assembly or synthesized by the CMSE linker. Objects that own a
+# filename-selected isolation band retain their object identity.
 ifeq ($(WT_LTO),1)
 WT_LTO_WOLFCRYPT_EXCLUDED_OBJS := \
+    $(BUILD_DIR)/wc_sec_cryptocb.o \
     $(BUILD_DIR)/wc_sec_sp_cortexm.o \
     $(BUILD_DIR)/wc_sec_thumb2-aes-asm_c.o \
     $(BUILD_DIR)/wc_sec_thumb2-sha256-asm_c.o
@@ -411,16 +422,19 @@ WT_LTO_SECURE_EXCLUDED_OBJS := \
     $(BUILD_DIR)/wt_sec_guest_context_armv8m.o \
     $(BUILD_DIR)/wt_sec_sp_fault_armv8m.o \
     $(BUILD_DIR)/wt_sec_spm_svc.o
-WT_LTO_NATIVE_BAND_OBJS := $(filter \
-    $(BUILD_DIR)/wt_sec_crypto_native.o \
-    $(BUILD_DIR)/wt_sec_keyvault.o \
-    $(BUILD_DIR)/wt_sec_native_wire.o \
-    $(BUILD_DIR)/wt_sec_nvm_store.o,$(ALL_SECURE_OBJS))
-WT_LTO_VNET_BAND_OBJS := $(filter \
-    $(BUILD_DIR)/wt_sec_vnet_%.o,$(ALL_SECURE_OBJS))
+# Every object the owner map gives to a partition or marks shared keeps its
+# identity, so tools/check_secure_layout.py can check where its state lands.
+WT_HASH := \#
+WT_LTO_OWNED_NAMES := $(shell awk '{sub(/$(WT_HASH).*/, "")} \
+    NF == 2 && $$2 != "spm" {sub(/\*$$/, "%", $$1); print $$1}' \
+    $(ROOT)/tools/secure_owners.txt)
+WT_LTO_OWNED_OBJS := $(filter \
+    $(addprefix $(BUILD_DIR)/,$(WT_LTO_OWNED_NAMES)),$(ALL_SECURE_OBJS))
 $(WT_LTO_WOLFCRYPT_EXCLUDED_OBJS): HSM_LIB_CFLAGS += -fno-lto
-$(WT_LTO_SECURE_EXCLUDED_OBJS) $(WT_LTO_NATIVE_BAND_OBJS) \
-        $(WT_LTO_VNET_BAND_OBJS): SECURE_CFLAGS += -fno-lto
+$(WT_LTO_SECURE_EXCLUDED_OBJS): SECURE_CFLAGS += -fno-lto
+$(WT_LTO_OWNED_OBJS): SECURE_CFLAGS += -fno-lto
+$(WT_LTO_OWNED_OBJS): HSM_LIB_CFLAGS += -fno-lto
+$(WT_LTO_OWNED_OBJS): HSM_WOLFHSM_CFLAGS += -fno-lto
 endif
 
 # Arm PSA-FF conformance partitions (P3a): the unmodified upstream server and
@@ -1426,6 +1440,8 @@ $(BUILD_MODE_STAMP): FORCE | $(BUILD_DIR)
 		'WT_FFM_NEGATIVE_PROBE=$(WT_FFM_NEGATIVE_PROBE)' \
 		'WT_KEYSTORE_NEG_PROBE=$(WT_KEYSTORE_NEG_PROBE)' \
 		'WT_PERIPH_SP_NEG_PROBE=$(WT_PERIPH_SP_NEG_PROBE)' \
+		'WT_BAND_NEG_PROBE=$(WT_BAND_NEG_PROBE)' \
+		'WT_RESTART_NEG_PROBE=$(WT_RESTART_NEG_PROBE)' \
 		'WT_DEPUTY_NEG_PROBE=$(WT_DEPUTY_NEG_PROBE)' \
 		'WT_HSM_PIN_NEG_PROBE=$(WT_HSM_PIN_NEG_PROBE)' \
 		'WT_LAUNCH_DEBUG=$(WT_LAUNCH_DEBUG)' \
@@ -1517,7 +1533,8 @@ $(BUILD_DIR)/wt_sec_%.o: $(WOLFCOSE_DIR)/src/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_S
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
 
 define wt_arch_tree_rule
-$(BUILD_DIR)/wt_sec_$(notdir $(basename $(1))).o: $(1) $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
+$(BUILD_DIR)/wt_sec_$(notdir $(basename $(1))).o: $(1) $(MANIFEST_GEN_H) \
+		$(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$$(CC) $$(SECURE_CFLAGS) -c -o $$@ $$<
 endef
 $(foreach s,$(ARCH_TREE_SRCS) $(ARCH_ASM_SRCS),$(eval $(call wt_arch_tree_rule,$(s))))
@@ -1541,11 +1558,13 @@ $(BUILD_DIR)/sec_%.o: $(WOLFHSM_RUNNER_DIR)/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_ST
 $(BUILD_DIR)/sec_%.o: $(PORT_DIR)/%.c $(PORT_HEADERS) $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR)/sec_%.o: $(ROOT)/src/%.c $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) | $(BUILD_DIR)
+$(BUILD_DIR)/sec_%.o: $(ROOT)/src/%.c $(MANIFEST_GEN_H) $(WOLFHSM_CFG_H) \
+		$(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(CC) $(SECURE_CFLAGS) -c -o $@ $<
 
 $(SECURE_ELF) $(SECURE_MAP) $(ARCH_LINK_OUTPUTS) &: $(ALL_SECURE_OBJS) $(SECURE_LD) \
-		$(ROOT)/tools/check_secure_layout.py $(BUILD_MODE_STAMP) | $(BUILD_DIR)
+		$(ROOT)/tools/check_secure_layout.py \
+		$(ROOT)/tools/secure_owners.txt $(BUILD_MODE_STAMP) | $(BUILD_DIR)
 	$(RM) $(SECURE_BIN)
 	$(CC) $(SECURE_CFLAGS) \
 		$(TARGET_LDFLAGS) \

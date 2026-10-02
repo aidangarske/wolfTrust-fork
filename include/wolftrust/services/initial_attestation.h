@@ -25,6 +25,7 @@
 #include <stdint.h>
 
 #include "wolftrust/boot_handoff.h"
+#include "wolftrust/spm_gate.h"
 #include "wolftrust/types.h"
 
 #define WT_ATTEST_SUCCESS                 0
@@ -50,5 +51,20 @@ int wt_initial_attest_get_token(wt_guest_id_t guestId,
 
 int wt_initial_attest_get_iak_public_key(uint8_t* publicKey,
     size_t publicKeyCapacity, size_t* publicKeySize);
+
+/* Bind the token signer to SERVICE_HSM over FF-M IPC (isolation level 3):
+ * the attestation partition holds no key material, so every signature and
+ * the IAK public key come from the crypto partition's attestation door
+ * (WT_HSM_OP_ATTEST_*). Until bound, the engine's local signer is used
+ * (host suites, privileged bootstrap). The connection opens lazily. */
+int wt_initial_attest_bind_hsm(wt_spm_transport_fn transport,
+                               wt_ffm_runtime_t* runtime,
+                               int32_t partition_id, uint32_t hsm_sid);
+
+/* The SPM's recovery path reports a SERVICE_HSM restart here: the cached
+ * connection is in the error state (WT-FFM-0017), so the next signature or
+ * public-key request closes it and reconnects instead of calling a dead
+ * handle, a PROGRAMMER ERROR the SPM would panic this partition for. */
+void wt_initial_attest_hsm_restarted(void);
 
 #endif /* WOLFTRUST_SERVICES_INITIAL_ATTESTATION_H */

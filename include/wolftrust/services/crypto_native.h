@@ -28,9 +28,9 @@
 
 /* Native crypto engine (WT_ENGINE=native): wolfCrypt dispatch behind the
  * unchanged SERVICE_HSM door. The relay hands one opaque packet to
- * wt_native_submit; keys are vault NVM objects served by the wolfCrypt key
- * backend inside the privileged vault domain — the wolfHSM server, comm,
- * and message layers are not linked. */
+ * wt_native_submit; key ops and the keyvault DRBG run in SERVICE_HSM, and key
+ * objects persist in the vault through its keystore IPC door — the wolfHSM
+ * server, comm, and message layers are not linked. */
 
 /* Native wire ops carried in wt_crypto_wire_req_t.op. Key ops address vault
  * key objects namespaced (owner = SERVICE_HSM partition, sub = SPM-stamped
@@ -62,14 +62,9 @@ typedef struct wt_crypto_wire_req {
 } wt_crypto_wire_req_t;
 
 /* Boot bring-up for the native engine: wolfCrypt, the port flash, the shared
- * NVM store, and the vault storage/seal/key/RNG bindings. The native peer of
- * wt_hsm_init; failure is fatal — the caller should panic. */
+ * NVM store, the vault storage/seal bindings and its own RANDOM-face DRBG, and
+ * the keyvault. The native peer of wt_hsm_init; failure is fatal. */
 int wt_native_init(void);
-
-/* Fault-recovery entry for the native engine: invalidate operation-scoped
- * crypto state (the shared vault DRBG) so a restarted relay partition serves
- * from clean state instead of a generator torn mid-draw. */
-void wt_native_reinit(void);
 
 /* SERVICE_HSM submit hook (matches wt_hsm_relay_submit_fn): service one
  * native wire packet. submit_ctx carries the owning partition id. */
@@ -78,20 +73,23 @@ int wt_native_submit(void* submit_ctx, int32_t client_id, const uint8_t* req,
                      size_t* resp_len);
 
 /* wolfCrypt key-op backend over vault NVM objects (WT-FFM-0046): private
- * material is stored SENSITIVE + NONEXPORTABLE and never leaves the
- * privileged vault domain. */
+ * material is stored SENSITIVE + NONEXPORTABLE in the vault and is copied
+ * through the keystore door only into the crypto partition, which computes
+ * on it and never exports it. */
 struct whNvmContext_t;
 int wt_hsm_keyvault_init(struct whNvmContext_t* nvm);
+
+/* Rebind the keyvault to nvm (the crypto partition's IPC-backed store view)
+ * after boot provisioning on the direct store. Privileged bootstrap only. */
+int wt_native_bind_nvm(struct whNvmContext_t* nvm);
 extern const wt_vault_key_backend_t wt_hsm_key_backend;
 
 /* Destroy one key object in the caller's namespace. Refuses anything that
  * is not a key, so the key wire can never delete a storage object. */
 psa_status_t wt_hsm_keyvault_destroy(int32_t owner, int32_t sub, uint64_t uid);
 
-/* Vault-domain DRBG for the RANDOM face and key generation. */
+/* The crypto partition's keyvault DRBG for key generation and signing; the
+ * vault's RANDOM face draws from its own DRBG. */
 psa_status_t wt_hsm_keyvault_random(uint8_t* out, size_t len);
-
-/* Invalidate the vault DRBG so it re-seeds on next use (fault recovery). */
-void wt_hsm_keyvault_reset(void);
 
 #endif /* WOLFTRUST_SERVICES_CRYPTO_NATIVE_H */

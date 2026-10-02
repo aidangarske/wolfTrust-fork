@@ -50,9 +50,9 @@ typedef enum wt_spm_op {
     WT_SPM_OP_LIFECYCLE
     /* Production platform services, NOT FF-M IPC ops: the arch SVC layer
      * intercepts them before this gate. FWU_BACKEND is pinned to the FWU
-     * partition; the KEYSTORE_* ops are pinned to the keystore partitions
-     * (attest, relay, vault) and carry their privileged flash, entropy, and
-     * NVM-lock needs. call_type selects the sub-operation. */
+     * partition; KEYSTORE_FLASH and KEYSTORE_LOCK are pinned to the vault
+     * (the store owner) and KEYSTORE_ENTROPY to the vault and crypto
+     * partitions (the DRBG owners). call_type selects the sub-operation. */
     , WT_SPM_OP_FWU_BACKEND = 0x40
     , WT_SPM_OP_KEYSTORE_FLASH = 0x41
     , WT_SPM_OP_KEYSTORE_ENTROPY = 0x42
@@ -157,6 +157,22 @@ typedef struct wt_spm_call {
      * panic means: reset in the conformance image, fail-closed in production. */
     uint8_t      must_panic;   /* out: caller committed a must-panic error */
 } wt_spm_call_t;
+
+/* Keystore platform services are pinned to the partition that owns each
+ * need: flash and the NVM lock to the vault (the store owner), entropy to the
+ * vault and the crypto partition (the DRBG owners). Non-zero when caller may
+ * issue op. */
+static inline int wt_spm_keystore_op_pinned(wt_spm_op_t op, int32_t caller,
+                                            int32_t vault, int32_t crypto)
+{
+    if (caller <= 0) {
+        return 0;
+    }
+    if (caller == vault) {
+        return 1;
+    }
+    return (op == WT_SPM_OP_KEYSTORE_ENTROPY) && (caller == crypto);
+}
 
 /* Run one SPM service request against the runtime. When caller_domain is not
  * NULL, every SP-supplied pointer the op dereferences is bounds-checked against

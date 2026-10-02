@@ -115,7 +115,9 @@ const char _ctype_[257] = {
     /* 0x80..0xFF */ 0
 };
 
-const char *__ctype_ptr__ = _ctype_;
+/* Never reassigned, so it links read-only like the table it points at. */
+const char *__ctype_ptr__ __attribute__((section(".rodata.__ctype_ptr__"))) =
+    _ctype_;
 
 /* Out-of-line ctype function forms — wolfSSL may take the address of
  * tolower/toupper, in which case the macro form does not apply. */
