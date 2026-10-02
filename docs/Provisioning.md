@@ -30,8 +30,8 @@ Every port follows the same four stages, one manual command at a time:
 | Stage | Command | What it does |
 | --- | --- | --- |
 | 1. Prepare | `restore`, `status`, `discover` | flash the production images, read the part, run the preflight |
-| 2. Rehearse | `advance <state>`, then `regress` | enter the state as a reversible mock, record the rehearsal, return |
-| 3. Validate | `status` while in the mock state | check the part behaves like the product you will ship |
+| 2. Rehearse | `advance <state>` | enter the state as a reversible mock and record what the part showed |
+| 3. Validate, then return | `status` in the mock state, then `regress` | check the part behaves like the product you will ship, then return it and complete the rehearsal |
 | 4. Lock | `lock <state>` | make that one state permanent, after a preview and a typed acceptance |
 
 A state is given by its code or its name: `lock 0x72` or `lock closed` on the
@@ -53,21 +53,27 @@ board needs `WT_LOCK_CONFIRM=1`.
 
 ```sh
 WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance <state>
-WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
 ```
 
 `advance` puts the part in `<state>` in a way that can be undone. It records a
-rehearsal only if the part shows the evidence the port asks for: the firmware
-booted in that state, the images read back match the build, and the part's
-identity. `regress` takes the part back and completes the rehearsal. A
-rehearsal is bound to the part, the images, any credentials it used, and the
-hour it was made in; `lock` refuses without one.
+pending rehearsal only if the part shows the evidence the port asks for: the
+firmware booted in that state, the images read back match the build, and the
+part's identity. Leave the part in the mock state for stage 3.
 
-### 3. Validate
+### 3. Validate, then return
+
+```sh
+tests/target/provisioning/provisioning_ctrl.sh status
+WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
+```
 
 While the part is in the mock state, check it is the product you intend to
 ship: `status`, the guests running, and the attestation token's life cycle.
-What the part does here is what it will do once the state is permanent.
+What the part does here is what it will do once the state is permanent. Then
+`regress` takes the part back and completes the rehearsal. A rehearsal is
+bound to the part, the images, any credentials it used, and the hour it was
+made in; `lock` refuses without one. Repeat stages 2 and 3 for each state you
+will lock.
 
 ### 4. Lock
 
@@ -118,9 +124,13 @@ Every port runs the same gates, in this order, from one place in
    at the prompt is written.
 9. **Read-back.** After the write, the new state must read back, or `lock`
    fails and says what state the part is in.
-10. **Single use.** A successful lock deletes the rehearsal it used. A
-    permanent step deletes it even when it stood in for another state, such
-    as the Closed rehearsal behind the STM32H5 Locked step.
+10. **Single use.** A successful lock deletes the rehearsal of its own state,
+    and a permanent step deletes whatever rehearsal it used. One exception is
+    deliberate: the STM32H5 Provisioning step runs on the Closed rehearsal and
+    keeps it, because the closing step that follows needs it and a part in
+    Provisioning cannot be rehearsed again (its images are no longer
+    readable). That closing step then consumes it, within the same age limit
+    and on a fixture that holds the part (`WT_FIXTURE_BOUND=1`).
 
 These follow the vendors' own provisioning tools:
 - NXP's Secure Provisioning tool offers a "Test life cycle" mode and lists
