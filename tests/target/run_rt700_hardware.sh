@@ -66,7 +66,7 @@ esac
 
 log() { printf '%s\n' "$*"; }
 stage() { printf '  ... %s\n' "$*"; }
-fail() { log "FAIL: $*"; exit 1; }
+fail() { log "FAIL: $*" >&2; exit 1; }
 check() {
     if [ "$1" -eq 0 ]; then log "  [check] PASS  $2"; else log "  [check] FAIL  $2"; fail "$2"; fi
 }
@@ -209,11 +209,18 @@ erase_range() {
 # masks would otherwise read back as this run's result.
 clear_mailboxes() {
     local verified refused restarts quarantines fault_addr
+    local -a clear_counters=()
     verified="$(elf_sym g_wt_launch_verified_mask)"
     refused="$(elf_sym g_wt_launch_refused_mask)"
-    restarts="$(elf_sym g_wt_restart_events)"
-    quarantines="$(elf_sym g_wt_quarantine_events)"
-    fault_addr="$(elf_sym g_last_fault_address)"
+    # Resolve only counters this case asserts. LTO legitimately removes the
+    # guest restart counter in the conformance image, which has no such path.
+    if [ "$scenario" = ahbscneg ]; then
+        restarts="$(elf_sym g_wt_restart_events)"
+        quarantines="$(elf_sym g_wt_quarantine_events)"
+        fault_addr="$(elf_sym g_last_fault_address)"
+        clear_counters=(-c "write32 $restarts 0" -c "write32 $quarantines 0"
+                        -c "write32 $fault_addr 0")
+    fi
     [ -n "$verified" ] && [ -n "$refused" ] || fail "launch masks not found in wolftrust.elf"
     park_core
     timeout 60 pyocd cmd -t "$target" -O resume_on_disconnect=false \
@@ -222,8 +229,7 @@ clear_mailboxes() {
         -c "write32 0x20170000 0" \
         -c "write32 0x20180080 0 0 0 0 0 0 0 0 0 0 0 0" \
         -c "write32 $verified 0" -c "write32 $refused 0" \
-        -c "write32 $restarts 0" -c "write32 $quarantines 0" \
-        -c "write32 $fault_addr 0" >/dev/null 2>&1 || \
+        "${clear_counters[@]}" >/dev/null 2>&1 || \
         fail "could not clear the guest mailboxes"
 }
 
