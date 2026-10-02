@@ -340,6 +340,19 @@ the suite skips. The device life cycle flow is driven separately and manually
 through `TARGET=mimxrt700 tests/target/provisioning/provisioning_ctrl.sh`; see the MIMXRT700 Guide.
 Hardware test commands write flash and reset the board.
 
+The suite holds an exclusive probe lock for the batch. Logs, signed images,
+guest and Secure ELFs, symbol addresses and image SHA-256 hashes survive the
+per-case build cleanup under `test-results/rt700-hardware/<run>/`. Set
+`RT700_EVIDENCE_DIR` to retain a suite elsewhere outside `build/`; direct runs
+can set `RT700_WORK`. Use `WT_ENGINE=native` or `WT_ENGINE=hsm` explicitly and
+retain both runs. The basic guests check framework/service entry only; these
+cases do not qualify the full PSA or OS integration suites.
+
+`ahbscneg` requires three guest0 restarts followed by one quarantine, the
+Secure fault address of its denied store, unchanged peer memory, and a moving
+guest1 heartbeat. Quarantine clears guest0 RAM, so its former mailbox cannot
+serve as completion evidence.
+
 ## STM32H563 hardware
 
 The published hardware run requires:

@@ -30,3 +30,4 @@ tests/fuzz/timeout-*
 .codex
 /logs/
 /SESSION_WRAPUP.md
+/test-results/

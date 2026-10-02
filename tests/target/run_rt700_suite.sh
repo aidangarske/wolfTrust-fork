@@ -20,12 +20,21 @@ if ! "$repo/tests/target/detect_rt700.sh" >/dev/null 2>&1; then
   exit 0
 fi
 
-logs="$repo/build/rt700-suite"
+# A case recreates build/. Evidence must survive that cleanup and subsequent
+# cases. Keep separate runs so a rerun also preserves its failure evidence.
+logs="${RT700_EVIDENCE_DIR:-$repo/test-results/rt700-hardware/$(date -u +%Y%m%dT%H%M%SZ)-${WT_ENGINE:-native}-$$}"
+case "$logs/" in
+  "$repo/build/"*) echo "FAIL: evidence directory must be outside build/"; exit 1 ;;
+esac
 mkdir -p "$logs"
+# Hold the probe for the whole batch, including the intervals between cases.
+exec 9>"${RT700_LOCK_FILE:-/tmp/wolftrust-rt700-hardware.lock}"
+flock -n 9 || { echo "FAIL: RT700 hardware is already in use"; exit 1; }
+export WT_RT700_LOCK_HELD=1
 rc=0
 for s in $scenarios; do
   echo "RUN: hardware/$s"
-  if "$runner" "$s" >"$logs/$s.log" 2>&1; then
+  if RT700_WORK="$logs/$s" "$runner" "$s" >"$logs/$s.log" 2>&1; then
     grep -F '  [check] ' "$logs/$s.log" || true
     echo "PASS: hardware/$s"
   else

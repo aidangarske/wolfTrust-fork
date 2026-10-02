@@ -36,7 +36,7 @@ set -euo pipefail
 scenario="${1:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-work="${RT700_WORK:-$repo/build/rt700}"
+work="${RT700_WORK:-$repo/test-results/rt700-hardware/$(date -u +%Y%m%dT%H%M%SZ)-${WT_ENGINE:-native}-$scenario-$$}"
 target="${RT700_TARGET:-mimxrt798sgfob}"
 fcb="${RT700_FCB:-$HOME/rt700-boot/fcb.bin}"
 wolfboot_dir="${RT700_WOLFBOOT_DIR:-}"
@@ -66,6 +66,13 @@ fail() { log "FAIL: $*"; exit 1; }
 check() {
     if [ "$1" -eq 0 ]; then log "  [check] PASS  $2"; else log "  [check] FAIL  $2"; fail "$2"; fi
 }
+
+# Serialize direct invocations as well as suites. The suite holds this lock
+# across all cases and passes its already-held descriptor to the runner.
+if [ "${WT_RT700_LOCK_HELD:-0}" != 1 ]; then
+    exec 9>"${RT700_LOCK_FILE:-/tmp/wolftrust-rt700-hardware.lock}"
+    flock -n 9 || fail "RT700 hardware is already in use"
+fi
 
 # SPSDK (nxpimage) and pyOCD live in a virtualenv; put it on PATH when the bare
 # tools are not already resolvable.
@@ -158,9 +165,12 @@ erase_range() {
 # SRAM survives a warm reset, so the last run's mailboxes, sentinel, and launch
 # masks would otherwise read back as this run's result.
 clear_mailboxes() {
-    local verified refused
+    local verified refused restarts quarantines fault_addr
     verified="$(elf_sym g_wt_launch_verified_mask)"
     refused="$(elf_sym g_wt_launch_refused_mask)"
+    restarts="$(elf_sym g_wt_restart_events)"
+    quarantines="$(elf_sym g_wt_quarantine_events)"
+    fault_addr="$(elf_sym g_last_fault_address)"
     [ -n "$verified" ] && [ -n "$refused" ] || fail "launch masks not found in wolftrust.elf"
     park_core
     timeout 60 pyocd cmd -t "$target" -O resume_on_disconnect=false \
@@ -168,7 +178,9 @@ clear_mailboxes() {
         -c "write32 0x20140000 0 0 0 0 0 0 0 0 0 0" \
         -c "write32 0x20170000 0" \
         -c "write32 0x20180080 0 0 0 0 0 0 0 0 0 0 0 0" \
-        -c "write32 $verified 0" -c "write32 $refused 0" >/dev/null 2>&1 || \
+        -c "write32 $verified 0" -c "write32 $refused 0" \
+        -c "write32 $restarts 0" -c "write32 $quarantines 0" \
+        -c "write32 $fault_addr 0" >/dev/null 2>&1 || \
         fail "could not clear the guest mailboxes"
 }
 
@@ -239,6 +251,13 @@ run_chain() {
     # shellcheck disable=SC2086
     make -s -C "$repo/tests/firmware/mimxrt700-baremetal" TARGET=mimxrt700 $guest_flags
 
+    # Keep the ELFs that define this run's result addresses, even when the next
+    # case rebuilds the image. The suite log records the actual readbacks.
+    mkdir -p "$work/images"
+    cp "$repo/build/wolftrust.elf" "$work/images/"
+    cp "$guest_build/guest0.elf" "$guest_build/guest1.elf" "$work/images/"
+    arm-none-eabi-nm "$repo/build/wolftrust.elf" > "$work/secure-symbols.txt"
+
     stage "pin both guest measurements, then wolfBoot-sign wolfTrust"
     python3 "$repo/tools/measure/patch_guest_digests.py" "$repo/build/wolftrust.bin" \
         "0:1:$guest_build/guest0.bin" "1:1:$guest_build/guest1.bin"
@@ -246,6 +265,10 @@ run_chain() {
         "$wolfboot_dir/tools/keytools/sign" --ecc256 \
         "$repo/build/wolftrust.bin" \
         "$wolfboot_dir/wolfboot_signing_private_key.der" 1
+
+    cp "$repo/build/wolftrust_v1_signed.bin" "$guest_build/guest0.bin" \
+        "$guest_build/guest1.bin" "$work/images/"
+    (cd "$work/images" && sha256sum *.bin *.elf) > "$work/image-sha256.txt"
 
     stage "wrap wolfBoot (FCB + MBI) and flash the chain"
     wrap_xip "$wolfboot_dir/wolfboot.bin" "$work/flash_wolfboot.bin" \
@@ -289,8 +312,12 @@ check_guest() {
 
 # A wolfTrust global's address, from the image this run built and flashed.
 elf_sym() {
-    arm-none-eabi-nm "$repo/build/wolftrust.elf" |
+    local addr
+    addr="$(arm-none-eabi-nm "$repo/build/wolftrust.elf" |
         awk -v s="$1" '$3 == s && !f { print "0x" $1; f = 1 }'
+    )"
+    [ -n "$addr" ] || fail "required symbol $1 missing from wolftrust.elf"
+    printf '%s\n' "$addr"
 }
 
 # All eight XSPI0 FRADs as "start end acp word3" lines, in one debugger
@@ -367,27 +394,41 @@ positive|ahbscneg)
     [ "$scenario" = "ahbscneg" ] && guest_flags="WT_AHBSC_PROBE=1"
     run_chain "$guest_flags"
 
-    for g in 0:0x20100000 1:0x20140000; do
-        check_guest "${g%%:*}" "${g##*:}"
-    done
+    check_launch_masks 00000003 00000000
+    check_guest 1 0x20140000
+    if [ "$scenario" = "positive" ]; then
+        check_guest 0 0x20100000
+    fi
 
     if [ "$scenario" = "ahbscneg" ]; then
         # guest0 stores a sentinel into guest1's RAM, which the per-dispatch SAU
         # window keeps Secure while guest0 runs.
-        probe="$(mailbox_word 0x20100000 28)"
-        seen="$(mailbox_word 0x20100000 32)"
-        check "$(case "$probe" in 00000001|00000002) echo 0;; *) echo 1;; esac)" \
-            "guest0 store into guest1 RAM blocked (latch $probe, read 0x$seen)"
+        # Restart/quarantine scrubs guest0's RAM, including its probe latch.
+        # Use Secure records to distinguish the intended fault from an image
+        # that never ran or an unrelated fault. Completion remains bounded.
+        deadline=$((SECONDS + 30))
+        while :; do
+            restarts="$(mailbox_word "$(elf_sym g_wt_restart_events)" 0)"
+            quarantines="$(mailbox_word "$(elf_sym g_wt_quarantine_events)" 0)"
+            [ "$quarantines" != 00000000 ] && break
+            [ "$SECONDS" -lt "$deadline" ] || fail "guest0 quarantine timed out"
+            sleep 1
+        done
+        check "$([ "$restarts" = 00000003 ] && [ "$quarantines" = 00000001 ]; echo $?)" \
+            "guest0 spent three restarts, then quarantined (0x$restarts/0x$quarantines)"
+        fault_addr="$(mailbox_word "$(elf_sym g_last_fault_address)" 0)"
+        check "$([ "$fault_addr" = 20170000 ]; echo $?)" \
+            "fault identifies guest0's denied peer-RAM store (0x$fault_addr)"
         peer="$(mailbox_word 0x20170000 0)"
-        check "$([ "$peer" != "deadbeef" ]; echo $?)" \
-            "guest1 RAM never received guest0's sentinel (0x$peer)"
+        check "$([ "$peer" = "00000000" ]; echo $?)" \
+            "guest1 target RAM remains unchanged (0x$peer)"
         # Containment means the peer keeps running, not only that the mailboxes
         # were written before the probes: an all-guests-faulted monitor also
         # idles in thread mode.
         beat1="$(mailbox_word 0x20140000 36)"
         sleep 1
         beat2="$(mailbox_word 0x20140000 36)"
-        check "$([ -n "$beat1" ] && [ "$beat1" != "$beat2" ]; echo $?)" \
+        check "$([ -n "$beat1" ] && [ -n "$beat2" ] && [ "$beat1" != "$beat2" ]; echo $?)" \
             "guest1 still running after guest0's faults (beat 0x$beat1 -> 0x$beat2)"
         g0beat="$(mailbox_word 0x20100000 36)"
         check "$([ "$g0beat" = "00000000" ]; echo $?)" \
