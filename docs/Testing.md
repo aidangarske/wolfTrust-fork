@@ -368,7 +368,9 @@ their results do not qualify the Zephyr/FreeRTOS pair required by issue #60.
 
 The hardware adapter also accepts `confboot`, `devstorage`, `devcrypto`,
 `devattest`, `devattestqcbor`, and `vaultrecover`. It uses the pinned Arm suite
-with diagnostic breakpoints disabled, clears the distinct conformance state
+with diagnostic breakpoints disabled, flushes the parked XSPI read path and
+invalidates XCACHE0/1 and CACHE64 before comparing the programmed images,
+clears the distinct conformance state
 sector before each new suite, and preserves that state across deliberate
 resets. Completion requires the ELF-resolved guest record, the Arm return
 status, a complete ACS report with all scheduled tests accounted for, and

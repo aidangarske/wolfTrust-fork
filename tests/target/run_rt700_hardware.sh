@@ -161,18 +161,21 @@ YAML
     nxpimage bootable-image export -c "$work/bootimg.yaml" >/dev/null
 }
 
-# Read an image back through XIP once the chain has booted and compare it.
+# Read an image back through XIP and compare it. Conformance resets make
+# post-boot reads unsafe; flush the parked read path before its first boot.
 verify_at() {
     local addr="$1" image="$2" size readback
-    local -a connection=()
-    if [ "${3:-running}" = parked ]; then
-        connection=(-O connect_mode=attach -O resume_on_disconnect=false)
-    fi
     size="$(wc -c < "$image" | tr -d ' ')"
     readback="$work/readback-$(printf '%08x' "$((addr))").bin"
-    timeout 120 pyocd cmd -t cortex_m "${connection[@]}" \
-        -c "savemem $addr $size $readback" > "$readback.log" 2>&1 || \
-        fail "readback of $addr failed (see $readback.log)"
+    if [ "${3:-running}" = parked ]; then
+        timeout 120 python3 "$here/lib/rt700_readback.py" "$addr" "$image" \
+            "$readback" > "$readback.log" 2>&1 || \
+            fail "parked readback of $addr failed (see $readback.log)"
+    else
+        timeout 120 pyocd cmd -t cortex_m \
+            -c "savemem $addr $size $readback" > "$readback.log" 2>&1 || \
+            fail "readback of $addr failed (see $readback.log)"
+    fi
     [ -f "$readback" ] && [ "$(wc -c < "$readback" | tr -d ' ')" = "$size" ] || \
         fail "readback of $addr missing or incomplete (see $readback.log)"
     cmp -s "$readback" "$image" || \
