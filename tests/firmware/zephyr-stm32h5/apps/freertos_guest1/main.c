@@ -25,6 +25,7 @@
 
 #include "wolfssl/wolfcrypt/settings.h"
 #include "wolfssl/wolfcrypt/random.h"
+#include "psa_crypto_checks.h"
 
 #if defined(WT_ENGINE_HSM)
 #include "wolfssl/wolfcrypt/cryptocb.h"
@@ -259,6 +260,9 @@ static void run_ffm_rng(void)
 /* PSA Crypto API parity with guest0 (wolfPSA front-end): the DRBG behind
  * psa_generate_random seeds through the FF-M RNG hook below, so the
  * entropy crossing is SPM-mediated too. */
+volatile uint32_t g_guest1_crypto_checks;
+volatile uint32_t g_guest1_crypto_failed;
+
 static void run_psa_smoke(void)
 {
     psa_status_t st;
@@ -275,10 +279,12 @@ static void run_psa_smoke(void)
     }
 
     memset(buf, 0, sizeof(buf));
-    st = psa_generate_random(buf, sizeof(buf));
+    st = wt_guest_psa_rng_check(buf, sizeof(buf));
     if (st == PSA_SUCCESS && buf_is_zero(buf, sizeof(buf)) == 0) {
+        g_guest1_crypto_checks |= 1u;
         uart_puts("freertos_guest1: psa rng ok\r\n");
     } else {
+        g_guest1_crypto_failed |= 1u;
         uart_puts("freertos_guest1: psa rng FAILED st=");
         uart_put_i32((int32_t)st);
         uart_puts("\r\n");
@@ -290,12 +296,26 @@ static void run_psa_smoke(void)
                           &digest_len);
     if (st == PSA_SUCCESS && digest_len == sizeof(digest) &&
         memcmp(digest, k_hash_expected, sizeof(digest)) == 0) {
+        g_guest1_crypto_checks |= 2u;
         uart_puts("freertos_guest1: psa hash ok\r\n");
     } else {
+        g_guest1_crypto_failed |= 2u;
         uart_puts("freertos_guest1: psa hash FAILED st=");
         uart_put_i32((int32_t)st);
         uart_puts("\r\n");
     }
+    st = wt_guest_psa_ctr_check();
+    if (st == PSA_SUCCESS) {
+        g_guest1_crypto_checks |= 4u;
+        uart_puts("freertos_guest1: psa cipher KAT and decrypt ok\r\n");
+    }
+    else {
+        g_guest1_crypto_failed |= 4u;
+        uart_puts("freertos_guest1: psa cipher FAILED st=");
+        uart_put_i32((int32_t)st);
+        uart_puts("\r\n");
+    }
+
 }
 
 /* FF-M isolation negatives from the FreeRTOS client: the SPM must reject a

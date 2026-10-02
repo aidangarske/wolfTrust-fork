@@ -76,22 +76,14 @@ fi
 
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-case "$scenario" in
-  bothpsa|bothiso|attestneg|hsmattackneg|fwustage)
-    guest_dir="tests/firmware/psa-guest"
-    guest1_dir="$guest_dir"
-    timeout_s="${RT700_M33MU_TIMEOUT:-180}" ;;
-  confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec)
-    guest_dir="tests/firmware/psa-guest"
-    guest1_dir="tests/firmware/mimxrt700-baremetal"
-    timeout_s="${RT700_M33MU_TIMEOUT:-900}" ;;
-  *)
-    guest_dir="tests/firmware/mimxrt700-baremetal"
-    guest1_dir="$guest_dir"
-    timeout_s="${RT700_M33MU_TIMEOUT:-60}" ;;
+# shellcheck source=lib/rt700_guests.sh disable=SC1091
+. "$here/lib/rt700_guests.sh"
+rt700_set_guest_paths
+case "$(rt700_guest_kind "$scenario")" in
+  psa) timeout_s="${RT700_M33MU_TIMEOUT:-180}" ;;
+  conformance) timeout_s="${RT700_M33MU_TIMEOUT:-900}" ;;
+  *) timeout_s="${RT700_M33MU_TIMEOUT:-60}" ;;
 esac
-guest_build="$repo/$guest_dir/build"
-guest1_build="$repo/$guest1_dir/build"
 
 # shellcheck source=lib/rt700_fence.sh disable=SC1091
 . "$here/lib/rt700_fence.sh"
@@ -194,33 +186,13 @@ fi
 stage "build wolfTrust secure image + CMSE import library ${secure_flags:-(production)}"
 make -s TARGET=mimxrt700 secure-image TOOLPREFIX=arm-none-eabi-
 
-guest_flags=""
-case "$scenario" in
-  ahbscneg)     guest_flags="WT_AHBSC_PROBE=1" ;;
-  restart)      guest_flags="WT_GUEST_FAULT_PROBE=1" ;;
-  attestneg)    guest_flags="WT_ATTEST_NEG_PROBE=1" ;;
-  hsmattackneg) guest_flags="WT_HSM_ATTACK_PROBE=1" ;;
-  # 0x21000 bytes of body reach sector 33 of the 64-sector update partition.
-  fwustage)     guest_flags="WT_FWU_PROBE=1 WT_FWU_PROBE_STREAM_BYTES=0x21000u WT_FWU_PROBE_SEQUENTIAL=1" ;;
-  confboot)     guest_flags="WT_RUN_CONFORMANCE=1 WT_M33MU_EXPECT_BKPT=1" ;;
-  devstorage)   guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=storage WT_M33MU_EXPECT_BKPT=1" ;;
-  devcrypto|vaultrecover|vaultrecoversec)
-                guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=crypto WT_M33MU_EXPECT_BKPT=1" ;;
-  devattest)    guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=attestation WT_M33MU_EXPECT_BKPT=1" ;;
-  devattestqcbor)
-                tests/upstream/fetch_qcbor.sh >/dev/null
-                guest_flags="WT_RUN_CONFORMANCE=1 WT_CONF_SUITE=attestation WT_ATTEST_CBOR=qcbor WT_M33MU_EXPECT_BKPT=1" ;;
-esac
-stage "build the Non-secure guests from $guest_dir ${guest_flags:-(no probes)}"
-make -s -C "$guest_dir" clean
-# The emulator boots with the development lifecycle the attestation token
-# reports; the guest's verify pins it.
-# shellcheck disable=SC2086
-make -s -C "$guest_dir" TARGET=mimxrt700 WT_EXPECTED_LIFECYCLE=0x1000u $guest_flags
-if [ "$guest1_dir" != "$guest_dir" ]; then
-  make -s -C "$guest1_dir" clean
-  make -s -C "$guest1_dir" TARGET=mimxrt700
+guest_flags="$(rt700_guest_flags "$scenario" 1)"
+if [ "$scenario" = devattestqcbor ]; then
+  tests/upstream/fetch_qcbor.sh >/dev/null
 fi
+# Both execution adapters build these exact fixtures. The emulator seeds the
+# development lifecycle; the hardware adapter separately verifies the handoff.
+rt700_build_guests "$guest_flags" 0x1000u
 
 stage "pin both guest measurements, then wolfBoot-sign wolfTrust"
 python3 tools/measure/patch_guest_digests.py build/wolftrust.bin \
@@ -441,6 +413,8 @@ case "$scenario" in
                 "$guest: psa_hash_compute(SHA-256) KAT verified"
             expect "$guest: PSA AES-CTR through a volatile key" \
                 "$guest: psa_cipher_encrypt(AES-CTR) st=0"
+            expect "$guest: AES-CTR encryption and decryption known answers" \
+                "$guest: psa_cipher_encrypt(AES-CTR) KAT and decrypt verified"
             expect "$guest: ITS set/get through SERVICE_ITS" \
                 "$guest: wolfTrust ITS set/get verified"
             expect "$guest: PS sealed set/get through SERVICE_PS" \

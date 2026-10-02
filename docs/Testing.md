@@ -353,6 +353,21 @@ Secure fault address of its denied store, unchanged peer memory, and a moving
 guest1 heartbeat. Quarantine clears guest0 RAM, so its former mailbox cannot
 serve as completion evidence.
 
+For the portable PSA clients, select `bothpsa`, `bothiso`, `attestneg`,
+`hsmattackneg` (HSM only), or `fwustage` through `WT_RT700_SCENARIOS`.
+These cases enable real COSE attestation and resolve each result record from
+the guest ELF. They require complete framework, crypto, storage, key,
+attestation and rejection verdicts from both clients, plus matching signed
+image measurements and peer progress. The portable clients remain bare-metal;
+their results do not qualify the Zephyr/FreeRTOS pair required by issue #60.
+
+RNG, SHA-256 and AES-128 CTR assertions are shared with the H5 OS fixtures
+under `tests/firmware/common/`. The cipher check uses NIST SP 800-38A F.5.1
+and F.5.2 known answers and validates decryption and cleanup. Their host gate,
+`tests/host/guest_crypto`, runs against the pinned wolfPSA/wolfCrypt libraries
+and participates in aggregate tests and host CI. Guest results retain success
+and failure masks so interleaved UART output cannot hide a failed check.
+
 ## STM32H563 hardware
 
 The published hardware run requires:

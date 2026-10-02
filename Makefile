@@ -21,7 +21,7 @@ include mk/common.mk
 
 .DEFAULT_GOAL := all
 
-.PHONY: all secure-image size-report test test-provisioning c99-check test-conformance test-target test-hardware fetch-psa-ff-tests \
+.PHONY: all secure-image size-report test test-provisioning test-rt700-runner c99-check test-conformance test-target test-hardware fetch-psa-ff-tests \
 		clean firmware-stm32h563 run-stm32h563 run-stm32h563-tui run-stm32h563-uarts \
 		test-domain-host test-domain-compilers test-domain-sanitize \
 		test-domain-valgrind test-manifest-host test-manifest-compilers \
@@ -42,6 +42,11 @@ all: $(ARCH_DEFAULT_GOALS)
 test:
 	@$(MAKE) --no-print-directory -C tests/host test
 	@$(MAKE) --no-print-directory test-provisioning
+	@$(MAKE) --no-print-directory test-rt700-runner
+
+# Runner orchestration can be exercised in host CI without touching a board.
+test-rt700-runner:
+	@python3 tests/scripts/test_rt700_suite.py
 
 # Production lock gates of both provisioning backends, against stub tools.
 test-provisioning:

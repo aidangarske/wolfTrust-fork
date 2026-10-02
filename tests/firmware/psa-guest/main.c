@@ -42,7 +42,9 @@
 
 #include "psa/client.h"
 #include "wolftrust/attestation.h"
+#include "wolftrust/static_assert.h"
 #include "attestation_verify.h"
+#include "psa_crypto_checks.h"
 
 #if defined(WT_ENGINE_HSM)
 #include "wolfssl/wolfcrypt/cryptocb.h"
@@ -102,7 +104,29 @@ typedef struct guest_mailbox {
     uint32_t ffm_neg;
     uint32_t probe;
     uint32_t beat;
+    uint32_t crypto_checks;
+    uint32_t crypto_failed;
+    uint32_t key_neg;
+    uint32_t attest_neg;
+    uint32_t fwu;
+    uint32_t measured_lifecycle;
+    uint8_t measurement[32];
 } guest_mailbox_t;
+
+/* Result ABI consumed by the SWD adapter; the first five words are unchanged
+ * for existing observers. Any layout change must update the adapter too. */
+WT_STATIC_ASSERT(offsetof(guest_mailbox_t, crypto_checks) == 20u,
+                 "crypto result offset changed");
+WT_STATIC_ASSERT(offsetof(guest_mailbox_t, key_neg) == 28u,
+                 "key result offset changed");
+WT_STATIC_ASSERT(offsetof(guest_mailbox_t, attest_neg) == 32u,
+                 "attestation result offset changed");
+WT_STATIC_ASSERT(offsetof(guest_mailbox_t, fwu) == 36u,
+                 "FWU result offset changed");
+WT_STATIC_ASSERT(offsetof(guest_mailbox_t, measured_lifecycle) == 40u,
+                 "lifecycle result offset changed");
+WT_STATIC_ASSERT(offsetof(guest_mailbox_t, measurement) == 44u,
+                 "measurement result offset changed");
 
 __attribute__((section(".shared"), used))
 volatile guest_mailbox_t g_guest_mailbox;
@@ -447,6 +471,7 @@ static void exercise_key_negatives(void)
         }
     }
     if (ok) {
+        g_guest_mailbox.key_neg = 1u;
         guest_line("wolfTrust key negatives verified");
     }
     (void)psa_destroy_key(key_a);
@@ -537,33 +562,32 @@ static void exercise_ffm_negatives(void)
 
 /* ---- PSA Crypto API ----------------------------------------------------- */
 
+static void record_crypto_check(uint32_t bit, psa_status_t status)
+{
+    if (status == PSA_SUCCESS) {
+        g_guest_mailbox.crypto_checks |= bit;
+    }
+    else {
+        g_guest_mailbox.crypto_failed |= bit;
+    }
+}
+
 static void exercise_psa_rng(void)
 {
     uint8_t out[16];
-    psa_status_t st;
+    psa_status_t status = wt_guest_psa_rng_check(out, sizeof(out));
 
-    st = psa_generate_random(out, sizeof(out));
-    guest_line_i32("psa_generate_random st=", (int32_t)st);
+    record_crypto_check(1u, status);
+    guest_line_i32("psa_generate_random st=", (int32_t)status);
 }
 
 static void exercise_psa_hash(void)
 {
-    static const uint8_t input[] = "wolfTrust/wolfPSA/wolfHSM/CMSE chain test";
-    static const uint8_t expected[32] = {
-        0x02, 0x7b, 0x1a, 0xec, 0xb3, 0x27, 0x3a, 0x54,
-        0x38, 0x6a, 0xea, 0x85, 0x66, 0x45, 0xa2, 0x6a,
-        0xe1, 0xce, 0xc4, 0xdf, 0x1e, 0x00, 0x72, 0x71,
-        0xab, 0x5f, 0x10, 0x21, 0x40, 0x57, 0xed, 0x67
-    };
-    uint8_t digest[sizeof(expected)];
-    size_t digest_len = 0u;
-    psa_status_t st;
+    psa_status_t status = wt_guest_psa_sha256_check();
 
-    st = psa_hash_compute(PSA_ALG_SHA_256, input, sizeof(input) - 1u,
-                          digest, sizeof(digest), &digest_len);
-    if (st != PSA_SUCCESS || digest_len != sizeof(expected) ||
-            memcmp(digest, expected, sizeof(expected)) != 0) {
-        guest_line_i32("psa_hash_compute(SHA-256) KAT failed st=", (int32_t)st);
+    record_crypto_check(2u, status);
+    if (status != PSA_SUCCESS) {
+        guest_line_i32("psa_hash_compute(SHA-256) KAT failed st=", (int32_t)status);
         return;
     }
     guest_line("psa_hash_compute(SHA-256) KAT verified");
@@ -572,32 +596,15 @@ static void exercise_psa_hash(void)
 
 static void exercise_psa_cipher(void)
 {
-    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
-    psa_key_id_t key = PSA_KEY_ID_NULL;
-    uint8_t plaintext[16];
-    uint8_t ciphertext[PSA_CIPHER_ENCRYPT_OUTPUT_SIZE(PSA_KEY_TYPE_AES,
-                                                      PSA_ALG_CTR,
-                                                      sizeof(plaintext))];
-    size_t ct_len = 0u;
-    psa_status_t st;
+    psa_status_t status = wt_guest_psa_ctr_check();
 
-    memset(plaintext, 0xA5, sizeof(plaintext));
-    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT |
-                                   PSA_KEY_USAGE_DECRYPT);
-    psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_VOLATILE);
-    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
-    psa_set_key_algorithm(&attr, PSA_ALG_CTR);
-    psa_set_key_bits(&attr, 128);
-
-    st = psa_generate_key(&attr, &key);
-    if (st != PSA_SUCCESS) {
-        guest_line_i32("psa_generate_key(AES) st=", (int32_t)st);
+    record_crypto_check(4u, status);
+    guest_line_i32("psa_cipher_encrypt(AES-CTR) st=", (int32_t)status);
+    if (status != PSA_SUCCESS) {
+        guest_line_i32("psa_cipher_encrypt(AES-CTR) KAT failed st=", (int32_t)status);
         return;
     }
-    st = psa_cipher_encrypt(key, PSA_ALG_CTR, plaintext, sizeof(plaintext),
-                            ciphertext, sizeof(ciphertext), &ct_len);
-    guest_line_i32("psa_cipher_encrypt(AES-CTR) st=", (int32_t)st);
-    (void)psa_destroy_key(key);
+    guest_line("psa_cipher_encrypt(AES-CTR) KAT and decrypt verified");
 }
 
 /* ---- initial attestation ------------------------------------------------ */
@@ -664,6 +671,10 @@ static void exercise_attestation(void)
     }
     guest_line("wolfTrust attestation: COSE_Sign1 verified");
     g_guest_mailbox.lifecycle |= GUEST_LC_COSE;
+    g_guest_mailbox.measured_lifecycle = verified_lifecycle;
+    for (i = 0u; i < sizeof(measurement); i++) {
+        g_guest_mailbox.measurement[i] = measurement[i];
+    }
     guest_puts(GUEST_NAME ": wolfTrust attestation: token measurement=");
     guest_put_hex(measurement, sizeof(measurement));
     guest_puts("\r\n");
@@ -698,6 +709,7 @@ static void exercise_attestation_negatives(void)
                        (int32_t)st);
         return;
     }
+    g_guest_mailbox.attest_neg |= 1u;
     guest_line_i32("attestneg oversized challenge rejected st=", (int32_t)st);
 
     st = psa_initial_attest_get_token(challenge,
@@ -708,6 +720,7 @@ static void exercise_attestation_negatives(void)
                        (int32_t)st);
         return;
     }
+    g_guest_mailbox.attest_neg |= 2u;
     guest_line_i32("attestneg zero token buffer rejected st=", (int32_t)st);
 
     st = psa_initial_attest_get_token(challenge,
@@ -736,6 +749,7 @@ static void exercise_attestation_negatives(void)
         return;
     }
     token[token_size - 1u] ^= 0x01u;
+    g_guest_mailbox.attest_neg |= 4u;
     guest_line("attestneg tampered token rejected");
 
     verify = wt_attestation_verify(token, token_size, public_key,
@@ -747,6 +761,7 @@ static void exercise_attestation_negatives(void)
         guest_line("attestneg lifecycle mismatch accepted");
         return;
     }
+    g_guest_mailbox.attest_neg |= 8u;
     guest_line("attestneg lifecycle mismatch rejected");
     guest_line("wolfTrust attestation negatives verified");
 }
@@ -903,17 +918,30 @@ static void exercise_fwu(void)
     }
 
     memset(&req, 0, sizeof(req));
+    memset(info, 0, sizeof(info));
+    st = guest_fwu_call(handle, GUEST_FWU_OP_QUERY, &req, sizeof(req),
+                        info, sizeof(info));
+    if (st == PSA_SUCCESS && (info[0] & 0xFFu) == GUEST_FWU_READY) {
+        g_guest_mailbox.fwu |= 1u;
+    }
+    else {
+        guest_line_i32("wolfTrust FWU initial query failed st=", st);
+        ok = 0;
+    }
+
+    memset(&req, 0, sizeof(req));
     req.size = 32u;
     memset(writebuf, 0, sizeof(writebuf));
     memcpy(writebuf, &req, sizeof(req));
     /* The payload length matches req.size so only the READY state refuses. */
     st = guest_fwu_call(handle, GUEST_FWU_OP_WRITE, writebuf,
                         sizeof(req) + req.size, NULL, 0u);
-    if (st == 0) {
-        guest_line("wolfTrust FWU write-before-start was not refused");
+    if (st != PSA_ERROR_BAD_STATE) {
+        guest_line_i32("wolfTrust FWU write-before-start wrong status=", st);
         ok = 0;
     }
     else {
+        g_guest_mailbox.fwu |= 2u;
         guest_line("wolfTrust FWU write-before-start refused");
     }
 
@@ -1022,6 +1050,7 @@ static void exercise_fwu(void)
         ok = 0;
     }
     if (ok) {
+        g_guest_mailbox.fwu |= 4u;
         guest_line("wolfTrust FWU staged signed-header candidate to update "
                    "partition, armed, verified");
     }
@@ -1058,6 +1087,7 @@ static void exercise_fwu(void)
         ok = 0;
     }
     if (ok) {
+        g_guest_mailbox.fwu |= 8u;
         guest_line("wolfTrust FWU reject disarmed and clean restored READY");
     }
 
@@ -1088,8 +1118,8 @@ static void exercise_fwu(void)
     memcpy(writebuf, &req, sizeof(req));
     st = guest_fwu_call(handle, GUEST_FWU_OP_WRITE, writebuf,
                         sizeof(writebuf), NULL, 0u);
-    if (st == 0) {
-        guest_line("wolfTrust FWU out-of-order write was not refused");
+    if (st != PSA_ERROR_STORAGE_FAILURE) {
+        guest_line_i32("wolfTrust FWU out-of-order write wrong status=", st);
         ok = 0;
     }
     memset(&req, 0, sizeof(req));
@@ -1117,6 +1147,7 @@ static void exercise_fwu(void)
         ok = 0;
     }
     if (ok) {
+        g_guest_mailbox.fwu |= 16u;
         guest_line("wolfTrust FWU out-of-order write refused and cleaned");
     }
 #endif
@@ -1130,6 +1161,7 @@ void Reset_Handler(void)
 {
     uint32_t* src;
     uint32_t* dst;
+    size_t i;
 
     src = &_sidata;
     for (dst = &_sdata; dst < &_edata; ) {
@@ -1147,6 +1179,15 @@ void Reset_Handler(void)
     g_guest_mailbox.ffm_neg = 0u;
     g_guest_mailbox.probe = 0u;
     g_guest_mailbox.beat = 0u;
+    g_guest_mailbox.crypto_checks = 0u;
+    g_guest_mailbox.crypto_failed = 0u;
+    g_guest_mailbox.key_neg = 0u;
+    g_guest_mailbox.attest_neg = 0u;
+    g_guest_mailbox.fwu = 0u;
+    g_guest_mailbox.measured_lifecycle = 0u;
+    for (i = 0u; i < sizeof(g_guest_mailbox.measurement); i++) {
+        g_guest_mailbox.measurement[i] = 0u;
+    }
 
     guest_board_uart_init();
     guest_line("alive");

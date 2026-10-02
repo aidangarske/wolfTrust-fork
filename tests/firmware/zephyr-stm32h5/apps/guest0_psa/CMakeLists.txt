@@ -16,6 +16,7 @@ set(WT_WOLFCOSE_DIR ${WT_REPO_ROOT}/lib/wolfCOSE)
 
 target_sources(app PRIVATE
   src/main.c
+  ${WT_REPO_ROOT}/tests/firmware/common/psa_crypto_checks.c
   src/attestation_verify.c
   ${WOLFTRUST_CMSE_IMPLIB}
   ${WT_WOLFCOSE_DIR}/src/wolfcose_cbor.c
@@ -36,6 +37,7 @@ target_sources(app PRIVATE
   ${WT_WOLFCOSE_DIR}/src/wolfcose_eat_psa.c
 )
 target_include_directories(app PRIVATE
+  ${WT_REPO_ROOT}/tests/firmware/common
   ${WT_WOLFCOSE_DIR}/include
   ${WT_REPO_ROOT}/include
 )

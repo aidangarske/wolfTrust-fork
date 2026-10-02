@@ -470,6 +470,10 @@ case "$scenario" in
       "freertos_guest1: psa rng ok"
     expect "guest1 psa_hash_compute KAT (PSA API parity)" \
       "freertos_guest1: psa hash ok"
+    expect_flat "Zephyr AES-CTR encryption and decryption known answers" \
+      "psa_cipher_encrypt(AES-CTR) KAT and decrypt verified"
+    expect "FreeRTOS AES-CTR encryption and decryption known answers" \
+      "freertos_guest1: psa cipher KAT and decrypt ok"
     expect "[EXPECT BKPT] Success clean exit" "[EXPECT BKPT] Success"
     echo "PASS: target/$scenario"
     ;;
@@ -495,6 +499,10 @@ case "$scenario" in
       "psa_hash_compute(SHA-256) KAT verified"
     expect "FreeRTOS: PSA psa_hash_compute(SHA-256) KAT" \
       "freertos_guest1: psa hash ok"
+    expect_flat "Zephyr: PSA AES-CTR encryption and decryption known answers" \
+      "psa_cipher_encrypt(AES-CTR) KAT and decrypt verified"
+    expect "FreeRTOS: PSA AES-CTR encryption and decryption known answers" \
+      "freertos_guest1: psa cipher KAT and decrypt ok"
     expect "[EXPECT BKPT] Success clean exit" "[EXPECT BKPT] Success"
     echo "PASS: target/bothpsa"
     ;;

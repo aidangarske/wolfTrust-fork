@@ -20,6 +20,10 @@ jobs:
       matrix: ${{ steps.s.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check RT700 hardware runner orchestration without a board
+        run: |
+          command -v flock
+          python3 tests/scripts/test_rt700_suite.py
       - id: s
         # Single source of truth: the Makefile's UNIT_SUITES. Adding a suite
         # there makes it a new CI check automatically — no workflow edit.

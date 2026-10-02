@@ -54,6 +54,8 @@ guest_build="$repo/tests/firmware/mimxrt700-baremetal/build"
 . "$here/lib/rt700_fence.sh"
 # shellcheck source=lib/rt700_wolfboot.sh disable=SC1091
 . "$here/lib/rt700_wolfboot.sh"
+# shellcheck source=lib/rt700_guests.sh disable=SC1091
+. "$here/lib/rt700_guests.sh"
 case "$scenario" in
     wrpfence|wrpneg) guest_fence=1; export WT_GUEST_FLASH_WRP=1 ;;
     wrpoff)   guest_fence=0; export WT_GUEST_FLASH_WRP=1 ;;
@@ -239,35 +241,35 @@ run_chain() {
     # boot base + 0x400 and is signed with a matching header. Exported so the
     # secure image and the guest CMSE import library agree (mirrors the H5 runner).
     export WT_SECURE_IMAGE_HEADER_SIZE=0x400
-    export WT_ATTEST_COSE=0
+    export WT_ATTEST_COSE=1
+    export WT_CONF_DIAG_TRAP=0
     rm -rf "$repo/build"
     mkdir -p "$work"
 
     stage "build wolfTrust secure image + CMSE import library"
     make -s -C "$repo" TARGET=mimxrt700 secure-image TOOLPREFIX=arm-none-eabi-
 
-    stage "build the Non-secure guests ${guest_flags:-(no probes)}"
-    make -s -C "$repo/tests/firmware/mimxrt700-baremetal" clean
-    # shellcheck disable=SC2086
-    make -s -C "$repo/tests/firmware/mimxrt700-baremetal" TARGET=mimxrt700 $guest_flags
+    rt700_build_guests "$guest_flags" 0x1000u
 
     # Keep the ELFs that define this run's result addresses, even when the next
     # case rebuilds the image. The suite log records the actual readbacks.
     mkdir -p "$work/images"
     cp "$repo/build/wolftrust.elf" "$work/images/"
-    cp "$guest_build/guest0.elf" "$guest_build/guest1.elf" "$work/images/"
+    cp "$guest_build/guest0.elf" "$guest1_build/guest1.elf" "$work/images/"
     arm-none-eabi-nm "$repo/build/wolftrust.elf" > "$work/secure-symbols.txt"
 
     stage "pin both guest measurements, then wolfBoot-sign wolfTrust"
     python3 "$repo/tools/measure/patch_guest_digests.py" "$repo/build/wolftrust.bin" \
-        "0:1:$guest_build/guest0.bin" "1:1:$guest_build/guest1.bin"
+        "0:1:$guest_build/guest0.bin" "1:1:$guest1_build/guest1.bin"
     IMAGE_HEADER_SIZE=1024 WOLFBOOT_PARTITION_SIZE=0x40000 WOLFBOOT_SECTOR_SIZE=0x1000 \
         "$wolfboot_dir/tools/keytools/sign" --ecc256 \
         "$repo/build/wolftrust.bin" \
         "$wolfboot_dir/wolfboot_signing_private_key.der" 1
 
+    expected_measurement="$(python3 "$repo/tests/scripts/read_wolfboot_measurement.py" \
+        "$repo/build/wolftrust_v1_signed.bin")"
     cp "$repo/build/wolftrust_v1_signed.bin" "$guest_build/guest0.bin" \
-        "$guest_build/guest1.bin" "$work/images/"
+        "$guest1_build/guest1.bin" "$work/images/"
     (cd "$work/images" && sha256sum *.bin *.elf) > "$work/image-sha256.txt"
 
     stage "wrap wolfBoot (FCB + MBI) and flash the chain"
@@ -276,7 +278,7 @@ run_chain() {
     flash_at "$xspi0_base" "$work/flash_wolfboot.bin"
     flash_at "$secure_flash_addr" "$repo/build/wolftrust_v1_signed.bin"
     flash_at "$guest0_flash_addr" "$guest_build/guest0.bin"
-    flash_at "$guest1_flash_addr" "$guest_build/guest1.bin"
+    flash_at "$guest1_flash_addr" "$guest1_build/guest1.bin"
     stage "erase the wolfHSM NVM store so the run starts from a fresh vault"
     erase_range "$(printf '0x%08x-0x%08x' "$hsm_nvm_addr" $((hsm_nvm_addr + hsm_nvm_size)))"
     clear_mailboxes
@@ -286,7 +288,7 @@ run_chain() {
     verify_at "$xspi0_base" "$work/flash_wolfboot.bin"
     verify_at "$secure_flash_addr" "$repo/build/wolftrust_v1_signed.bin"
     verify_at "$guest0_flash_addr" "$guest_build/guest0.bin"
-    verify_at "$guest1_flash_addr" "$guest_build/guest1.bin"
+    verify_at "$guest1_flash_addr" "$guest1_build/guest1.bin"
 }
 
 # One 32-bit word at base+offset over SWD, as eight lowercase hex digits.
@@ -308,6 +310,66 @@ check_guest() {
         "guest$id done: FF-M connect verified, status 0x600D600D ($st)"
     check "$([ -n "$uart" ] && [ "$uart" != "00000000" ]; echo $?)" \
         "guest$id reaches its Non-secure console (LPUART0 VERID 0x$uart)"
+}
+
+# Result addresses come from this run's guest ELF, not assumed RAM offsets.
+guest_result_addr() {
+    local addr
+    addr="$(arm-none-eabi-nm "$work/images/guest$1.elf" |
+        awk '$3 == "g_guest_mailbox" { print "0x" $1 }')"
+    [ -n "$addr" ] || fail "guest$1 result record missing from its ELF"
+    printf '%s\n' "$addr"
+}
+
+check_psa_guest() {
+    local id="$1" base deadline signature lifecycle bits failed keyneg neg
+    local measurement handoff_lifecycle measured_lifecycle
+    base="$(guest_result_addr "$id")"
+    deadline=$((SECONDS + 30))
+    while :; do
+        lifecycle="$(mailbox_word "$base" 4)"
+        [ "$lifecycle" = 000000ff ] && break
+        [ "$SECONDS" -lt "$deadline" ] || fail "guest$id PSA lifecycle timed out (0x$lifecycle)"
+        sleep 1
+    done
+    signature="$(mailbox_word "$base" 0)"
+    check "$([ "$signature" = 50534147 ]; echo $?)" "guest$id PSA result signature (0x$signature)"
+    check "$([ "$lifecycle" = 000000ff ]; echo $?)" "guest$id complete PSA lifecycle (0x$lifecycle)"
+    bits="$(mailbox_word "$base" 20)"
+    failed="$(mailbox_word "$base" 24)"
+    check "$([ "$bits" = 00000007 ] && [ "$failed" = 00000000 ]; echo $?)" \
+        "guest$id RNG, SHA-256 and AES-CTR encrypt/decrypt KATs (0x$bits, failed 0x$failed)"
+    keyneg="$(mailbox_word "$base" 28)"
+    check "$([ "$keyneg" = 00000001 ]; echo $?)" "guest$id key ownership/signature negatives (0x$keyneg)"
+    neg="$(mailbox_word "$base" 8)"
+    check "$([ "$neg" = 0000000f ]; echo $?)" "guest$id all four FF-M rejection checks (0x$neg)"
+    # The Secure attestation service retains the consumed, authenticated boot
+    # handoff. Match its lifecycle as well as the measurement in both tokens.
+    handoff_lifecycle="$(mailbox_word "$(elf_sym g_boot_handoff)" 12)"
+    measured_lifecycle="$(mailbox_word "$base" 40)"
+    check "$([ "$measured_lifecycle" = "$handoff_lifecycle" ] && \
+        [ "$measured_lifecycle" = 00001000 ]; echo $?)" \
+        "guest$id token matches development boot lifecycle (0x$measured_lifecycle)"
+    timeout 60 pyocd cmd -t cortex_m \
+        -c "savemem $(printf '0x%x' $((base + 44))) 32 $work/guest$id-measurement.bin" \
+        >/dev/null 2>&1 || fail "guest$id token measurement read failed"
+    measurement="$(python3 - "$work/guest$id-measurement.bin" <<'PYEOF'
+from pathlib import Path
+import sys
+print(Path(sys.argv[1]).read_bytes().hex())
+PYEOF
+    )"
+    check "$([ "$measurement" = "$expected_measurement" ]; echo $?)" \
+        "guest$id token measurement matches the signed Secure image ($measurement)"
+}
+
+check_peer_progress() {
+    local base="$1" offset="$2" before after
+    before="$(mailbox_word "$base" "$offset")"
+    sleep 1
+    after="$(mailbox_word "$base" "$offset")"
+    check "$([ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ]; echo $?)" \
+        "peer remains live (0x$before -> 0x$after)"
 }
 
 # A wolfTrust global's address, from the image this run built and flashed.
@@ -368,6 +430,31 @@ check_launch_masks() {
 }
 
 case "$scenario" in
+bothpsa|bothiso|attestneg|hsmattackneg|fwustage)
+    if [ "$scenario" = hsmattackneg ] && [ "${WT_ENGINE:-native}" != hsm ]; then
+        fail "hsmattackneg requires WT_ENGINE=hsm"
+    fi
+    run_chain "$(rt700_guest_flags "$scenario" 0)"
+    check_launch_masks 00000003 00000000
+    for id in 0 1; do
+        check_psa_guest "$id"
+    done
+    check_peer_progress "$(guest_result_addr 1)" 16
+    case "$scenario" in
+        attestneg)
+            mask="$(mailbox_word "$(guest_result_addr 0)" 32)"
+            check "$([ "$mask" = 0000000f ]; echo $?)" "all attestation negatives passed (0x$mask)" ;;
+        hsmattackneg)
+            mask="$(mailbox_word "$(guest_result_addr 0)" 12)"
+            check "$([ "$mask" = 00000007 ]; echo $?)" "all HSM identity/namespace checks passed (0x$mask)" ;;
+        fwustage)
+            mask="$(mailbox_word "$(guest_result_addr 0)" 36)"
+            check "$([ "$mask" = 0000001f ]; echo $?)" "all FWU staging and error checks passed (0x$mask)"
+            trailer="$(mailbox_word 0x281bfffc 0)"
+            check "$([ "$trailer" = ffffffff ]; echo $?)" "update trigger disarmed after cleanup (0x$trailer)" ;;
+    esac
+    log "PASS: hardware/$scenario"
+    ;;
 romsmoke)
     mkdir -p "$work"
     ensure_spsdk
@@ -495,7 +582,7 @@ wrpneg)
     log "PASS: hardware/$scenario"
     ;;
 *)
-    log "usage: $0 romsmoke|positive|ahbscneg|wrpfence|wrpoff|wrpneg"
+    log "usage: $0 romsmoke|positive|ahbscneg|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage"
     exit 2
     ;;
 esac

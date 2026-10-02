@@ -51,6 +51,7 @@
 #include <wolftrust/zephyr/client.h>
 
 #include "attestation_verify.h"
+#include "psa_crypto_checks.h"
 
 /* The hsmattackneg probe drives the raw wolfHSM client; only that probe
  * build (hsm engine) links the client, so the headers gate with it. */
@@ -73,6 +74,8 @@ LOG_MODULE_REGISTER(guest0_psa, LOG_LEVEL_INF);
  * Each milestone ORs its bit here; the hardware runner reads the word over
  * SWD instead of the console. WT_LC_ALL means the full lifecycle ran. */
 volatile uint32_t g_guest0_lifecycle __attribute__((used));
+volatile uint32_t g_guest0_crypto_checks __attribute__((used));
+volatile uint32_t g_guest0_crypto_failed __attribute__((used));
 #define WT_LC_TEE     0x001u
 #define WT_LC_CRYPTO  0x002u
 #define WT_LC_ITS     0x004u
@@ -824,79 +827,53 @@ static void exercise_ffm_negatives(void)
 	(void)wt_tee_invoke(&arg, 1, param);
 }
 
+static void record_crypto_check(uint32_t bit, psa_status_t status)
+{
+    if (status == PSA_SUCCESS) {
+        g_guest0_crypto_checks |= bit;
+    }
+    else {
+        g_guest0_crypto_failed |= bit;
+    }
+}
+
 static void exercise_psa_rng(void)
 {
-	uint8_t out[16];
-	psa_status_t st;
+    uint8_t out[16];
+    psa_status_t status = wt_guest_psa_rng_check(out, sizeof(out));
 
-	st = psa_generate_random(out, sizeof(out));
-	LOG_INF("psa_generate_random st=%d first=0x%02x",
-		(int)st, (unsigned)out[0]);
+    record_crypto_check(1u, status);
+    LOG_INF("psa_generate_random st=%d first=0x%02x",
+        (int)status, (unsigned)out[0]);
+    if (status != PSA_SUCCESS) {
+        LOG_ERR("psa_generate_random failed st=%d", (int)status);
+    }
 }
 
 static void exercise_psa_hash(void)
 {
-    static const uint8_t input[] =
-        "wolfTrust/wolfPSA/wolfHSM/CMSE chain test";
-    static const uint8_t expected[32] = {
-        0x02, 0x7b, 0x1a, 0xec, 0xb3, 0x27, 0x3a, 0x54,
-        0x38, 0x6a, 0xea, 0x85, 0x66, 0x45, 0xa2, 0x6a,
-        0xe1, 0xce, 0xc4, 0xdf, 0x1e, 0x00, 0x72, 0x71,
-        0xab, 0x5f, 0x10, 0x21, 0x40, 0x57, 0xed, 0x67
-    };
-    uint8_t digest[sizeof(expected)];
-    size_t digestLen = 0u;
-    psa_status_t status;
+    psa_status_t status = wt_guest_psa_sha256_check();
 
-    status = psa_hash_compute(PSA_ALG_SHA_256, input, sizeof(input) - 1u,
-        digest, sizeof(digest), &digestLen);
-    if ((status != PSA_SUCCESS) || (digestLen != sizeof(expected)) ||
-            (memcmp(digest, expected, sizeof(expected)) != 0)) {
-        LOG_ERR("psa_hash_compute(SHA-256) KAT failed st=%d len=%u",
-            (int)status, (unsigned)digestLen);
-        if ((status == PSA_SUCCESS) && (digestLen <= sizeof(digest))) {
-            LOG_HEXDUMP_ERR(digest, digestLen, "SHA-256 received");
-        }
+    record_crypto_check(2u, status);
+    if (status != PSA_SUCCESS) {
+        LOG_ERR("psa_hash_compute(SHA-256) KAT failed st=%d", (int)status);
         return;
     }
-
     LOG_INF("psa_hash_compute(SHA-256) KAT verified");
     g_guest0_lifecycle |= WT_LC_SHAKAT;
 }
 
 static void exercise_psa_cipher(void)
 {
-	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
-	psa_key_id_t key = PSA_KEY_ID_NULL;
-	uint8_t plaintext[16];
-	uint8_t ciphertext[PSA_CIPHER_ENCRYPT_OUTPUT_SIZE(PSA_KEY_TYPE_AES,
-							   PSA_ALG_CTR,
-							   sizeof(plaintext))];
-	size_t ct_len = 0;
-	psa_status_t st;
+    psa_status_t status = wt_guest_psa_ctr_check();
 
-	memset(plaintext, 0xA5, sizeof(plaintext));
-
-	psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT |
-					  PSA_KEY_USAGE_DECRYPT);
-	psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_VOLATILE);
-	psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
-	psa_set_key_algorithm(&attr, PSA_ALG_CTR);
-	psa_set_key_bits(&attr, 128);
-
-	st = psa_generate_key(&attr, &key);
-	if (st != PSA_SUCCESS) {
-		LOG_WRN("psa_generate_key st=%d", (int)st);
-		return;
-	}
-
-	st = psa_cipher_encrypt(key, PSA_ALG_CTR,
-				 plaintext, sizeof(plaintext),
-				 ciphertext, sizeof(ciphertext), &ct_len);
-	LOG_INF("psa_cipher_encrypt(AES-CTR) st=%d ct_len=%u",
-		(int)st, (unsigned)ct_len);
-
-	(void)psa_destroy_key(key);
+    record_crypto_check(4u, status);
+    LOG_INF("psa_cipher_encrypt(AES-CTR) st=%d ct_len=16", (int)status);
+    if (status != PSA_SUCCESS) {
+        LOG_ERR("psa_cipher_encrypt(AES-CTR) KAT failed st=%d", (int)status);
+        return;
+    }
+    LOG_INF("psa_cipher_encrypt(AES-CTR) KAT and decrypt verified");
 }
 
 static void exercise_psa_initial_attestation(void)

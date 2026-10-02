@@ -79,13 +79,16 @@ ${WOLFSSL_DIR}/wolfcrypt/src/wc_port.c \
 ${WOLFSSL_DIR}/wolfcrypt/src/port/arm/thumb2-aes-asm_c.c \
 ${WOLFSSL_DIR}/wolfcrypt/src/port/arm/thumb2-sha256-asm_c.c"
 
-# wolfPSA subset for the PSA Crypto front-end (psa_crypto_init /
-# psa_generate_random / psa_hash_compute); the rest of the API rides the
-# neutral FF-M client directly.
+# wolfPSA front-end for RNG, hash and the shared volatile-key cipher KAT.
+# Persistent storage continues to ride the neutral FF-M client directly.
 WOLFPSA_SRCS="\
 ${WOLFPSA_DIR}/src/psa_engine.c \
 ${WOLFPSA_DIR}/src/psa_crypto.c \
 ${WOLFPSA_DIR}/src/psa_random.c \
+${WOLFPSA_DIR}/src/psa_cipher.c \
+${WOLFPSA_DIR}/src/psa_key_storage.c \
+${WOLFPSA_DIR}/src/psa_api_stub.c \
+${WOLFPSA_DIR}/src/psa_store_zephyr.c \
 ${WOLFPSA_DIR}/src/psa_hash_engine.c"
 
 # wolfHSM client subset: the same single mediated crypto path guest0 uses —
@@ -138,7 +141,7 @@ printf '#include "%s"\n' "${BAREMETAL_NS_DIR}/wh_settings_guest.h" \
 printf '#include "%s"\n' "${BAREMETAL_NS_DIR}/wh_settings_guest.h" \
     > "${WH_CFG_DIR}/wolfhsm_guest_cfg.h"
 
-APP_SRCS="${APP_DIR}/main.c"
+APP_SRCS="${APP_DIR}/main.c ${ROOT}/tests/firmware/common/psa_crypto_checks.c"
 
 if [ "${WT_ENGINE}" = "native" ]; then
 WT_ENGINE_DEFS="-DWT_ENGINE_NATIVE=1"
@@ -153,6 +156,7 @@ CFLAGS="\
 -Wno-unused-parameter -Wno-type-limits \
 -ffunction-sections -fdata-sections \
 -I${APP_DIR} \
+-I${ROOT}/tests/firmware/common \
 -I${FREERTOS_KERNEL}/include \
 -I${FREERTOS_PORT} \
 -I${ROOT}/include \
@@ -167,6 +171,7 @@ CFLAGS="\
 -DWOLFSSL_USER_SETTINGS \
 -DWOLFSSL_PSA_ENGINE \
 -DWOLFPSA_NO_TRACE \
+-DWOLFPSA_CUSTOM_STORE \
 ${WT_ENGINE_DEFS} \
 -DWC_RESEED_INTERVAL=1000000 \
 -include ${SUBTREE_DIR}/module/wolfpsa/wolfpsa_no_trace.h \

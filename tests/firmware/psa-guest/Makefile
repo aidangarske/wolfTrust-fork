@@ -208,7 +208,7 @@ CONF_INCS := $(CONF_SUITE_INCS) -I$(CONF_GEN) \
     -I$(ROOT)/port/$(TARGET)/conformance
 endif
 
-SHARED_SRCS := guest_libc.c $(WOLFCRYPT_SRCS) $(WOLFPSA_SRCS) $(WOLFCOSE_SRCS) \
+SHARED_SRCS := $(ROOT)/tests/firmware/common/psa_crypto_checks.c guest_libc.c $(WOLFCRYPT_SRCS) $(WOLFPSA_SRCS) $(WOLFCOSE_SRCS) \
     $(CLIENT_SRCS) $(ENGINE_SRCS)
 # Per-guest objects: the verifier pins the guest's own PSA client id, the
 # wolfHSM glue its client id. The suite runs in guest0 only; guest1 stays the
@@ -224,6 +224,7 @@ CFLAGS := -mcpu=cortex-m33 -mthumb -mgeneral-regs-only \
     -Wno-unused-parameter -Wno-type-limits \
     -ffunction-sections -fdata-sections -mno-unaligned-access \
     $(CONF_INCS) \
+    -I$(ROOT)/tests/firmware/common \
     -I. -Imanifest -Iboards/$(TARGET) \
     -I$(ROOT)/include \
     -I$(WOLFSSL_DIR) \
