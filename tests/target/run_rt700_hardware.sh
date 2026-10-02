@@ -164,10 +164,17 @@ YAML
 # Read an image back through XIP once the chain has booted and compare it.
 verify_at() {
     local addr="$1" image="$2" size readback
+    local -a connection=()
+    if [ "${3:-running}" = parked ]; then
+        connection=(-O connect_mode=attach -O resume_on_disconnect=false)
+    fi
     size="$(wc -c < "$image" | tr -d ' ')"
     readback="$work/readback-$(printf '%08x' "$((addr))").bin"
-    timeout 120 pyocd cmd -t cortex_m -c "savemem $addr $size $readback" \
-        >/dev/null 2>&1 || fail "readback of $addr failed"
+    timeout 120 pyocd cmd -t cortex_m "${connection[@]}" \
+        -c "savemem $addr $size $readback" > "$readback.log" 2>&1 || \
+        fail "readback of $addr failed (see $readback.log)"
+    [ -f "$readback" ] && [ "$(wc -c < "$readback" | tr -d ' ')" = "$size" ] || \
+        fail "readback of $addr missing or incomplete (see $readback.log)"
     cmp -s "$readback" "$image" || \
         fail "flash verify mismatch at $addr ($(basename "$image"))"
     log "  [flash] verified $(basename "$image") @ $addr"
@@ -351,13 +358,23 @@ run_chain() {
     fi
     clear_mailboxes
 
+    if [ "$(rt700_guest_kind "$scenario")" = conformance ]; then
+        # The suite writes NOR and intentionally resets the whole platform.
+        # Verify while the core stays parked, before those operations begin.
+        verify_at "$xspi0_base" "$work/flash_wolfboot.bin" parked
+        verify_at "$secure_flash_addr" "$repo/build/wolftrust_v1_signed.bin" parked
+        verify_at "$guest0_flash_addr" "$guest_build/guest0.bin" parked
+        verify_at "$guest1_flash_addr" "$guest1_build/guest1.bin" parked
+    fi
     start_uart
     reset_board
     sleep 2
-    verify_at "$xspi0_base" "$work/flash_wolfboot.bin"
-    verify_at "$secure_flash_addr" "$repo/build/wolftrust_v1_signed.bin"
-    verify_at "$guest0_flash_addr" "$guest_build/guest0.bin"
-    verify_at "$guest1_flash_addr" "$guest1_build/guest1.bin"
+    if [ "$(rt700_guest_kind "$scenario")" != conformance ]; then
+        verify_at "$xspi0_base" "$work/flash_wolfboot.bin"
+        verify_at "$secure_flash_addr" "$repo/build/wolftrust_v1_signed.bin"
+        verify_at "$guest0_flash_addr" "$guest_build/guest0.bin"
+        verify_at "$guest1_flash_addr" "$guest1_build/guest1.bin"
+    fi
 }
 
 # One 32-bit word at base+offset over SWD, as eight lowercase hex digits.
