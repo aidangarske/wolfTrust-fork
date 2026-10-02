@@ -265,6 +265,17 @@ volatile void* wt_platform_boot_handoff_region(size_t* size)
     return (volatile void*)WT_BOOT_HANDOFF_ADDRESS;
 }
 
+#if defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)
+/* The 32 KiB past the end of physical SRAM3 (0x300A0000) is unmapped on the
+ * H563, so an MPU-permitted read there is a precise BusFault on silicon. */
+void wt_platform_busfault_probe_region(wt_memory_region_t* region)
+{
+    region->base = 0x300A0000u;
+    region->size = 0x00008000u;
+    region->attributes = WT_MEM_ATTR_READ;
+}
+#endif
+
 static void wt_clock_init(void)
 {
     uint32_t reg;
@@ -678,6 +689,10 @@ void wt_platform_system_reset(void)
             spins < 0x00200000u) {
         spins++;
     }
+    /* Drop the Secure stack limits first: the next boot starts wolfBoot on
+     * its own stack below MSPLIM_S, and a core that carried the limit over
+     * the reset would fault its first push. */
+    __asm volatile("movs r0, #0\n msr msplim, r0\n msr psplim, r0" ::: "r0");
     wt_dsb();
     WT_SCB_AIRCR_S = WT_SCB_AIRCR_SYSRESETREQ;
     wt_dsb();

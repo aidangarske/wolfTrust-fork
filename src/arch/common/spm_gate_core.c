@@ -256,7 +256,9 @@ static int wt_spm_fault_restart(void* ctx)
     void* arg = slot->arg;
 
 #if (defined(WT_SP_FAULT_PROBE) && (WT_SP_FAULT_PROBE == 1)) || \
-    (defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1))
+    (defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1)) || \
+    (defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)) || \
+    (defined(WT_SVC_NEG_PROBE) && (WT_SVC_NEG_PROBE == 1))
     arg = (void*)((intptr_t)slot->arg | WT_SP_FAULT_PROBE_RESTARTED);
 #endif
 #if defined(WT_VNET_NEG_PROBE) && (WT_VNET_NEG_PROBE == 1)
@@ -1011,6 +1013,14 @@ static int wt_spm_sched_add_common(wt_ffm_runtime_t* runtime,
                                               slot->table.regions,
                                               region_count,
                                               WT_MAX_MEMORY_REGIONS);
+#endif
+#if defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)
+    /* busfaultneg: grant the port's bus-error window so the probe read
+     * passes the MPU and faults on the bus. Never built into production. */
+    if (region_count < WT_MAX_MEMORY_REGIONS) {
+        wt_platform_busfault_probe_region(&slot->table.regions[region_count]);
+        region_count++;
+    }
 #endif
     slot->table.region_count = region_count;
 

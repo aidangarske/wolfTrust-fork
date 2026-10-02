@@ -91,6 +91,9 @@ PORTS = {
             ("sealhaltneg", "Stack seal damage at dispatch halts"),
             ("sealbootneg", "Damaged main-stack seal refuses to boot"),
             ("sealpivotneg", "Blocking wait stacked on the seal stays contained"),
+            ("mspovfneg", "SPM main-stack overflow halts fail-closed"),
+            ("xnneg", "Privileged execution from SPM RAM denied"),
+            ("svcneg", "Partition guest-return SVC panics only that partition"),
         ),
     },
     "mimxrt700": {

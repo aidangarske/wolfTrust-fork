@@ -87,6 +87,10 @@ uintptr_t wt_arch_sp_stack_pointer(void);
 void wt_arch_sp_redirect_to_panic_trap(wt_trap_frame_t* frame);
 void wt_arch_assert_privileged_thread(void);
 void wt_arch_sp_fault_probe(unsigned int code);
+#if defined(WT_SVC_NEG_PROBE) && (WT_SVC_NEG_PROBE == 1)
+/* svcneg: issue the scheduler's internal guest-return trap from a partition. */
+void wt_arch_sp_guest_return_probe(void);
+#endif
 void wt_arch_diag_trap(uint32_t a, uint32_t b, uint32_t c);
 void wt_arch_sp_panic(uint32_t op, uint32_t code, uint32_t extra)
     __attribute__((noreturn));

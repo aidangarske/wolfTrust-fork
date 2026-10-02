@@ -48,6 +48,10 @@ scenario_secure_flags() {
         sealhaltneg)      echo "WT_SEAL_NEG_PROBE=2" ;;
         sealbootneg)      echo "WT_SEAL_NEG_PROBE=3" ;;
         sealpivotneg)     echo "WT_SEAL_NEG_PROBE=4" ;;
+        mspovfneg)        echo "WT_MSP_OVF_PROBE=1" ;;
+        busfaultneg)      echo "WT_BUSFAULT_NEG_PROBE=1" ;;
+        xnneg)            echo "WT_XN_NEG_PROBE=1" ;;
+        svcneg)           echo "WT_SVC_NEG_PROBE=1" ;;
         *)                echo "" ;;
     esac
 }
@@ -100,6 +104,27 @@ scenario_assert_verdict() {
                 "[BKPT] imm=0x7d"
             refute_re "the mandatory service never completed a guest lifecycle" \
                 "$GUEST_DONE_RE"
+            ;;
+        xnneg)
+            # M33MU pends a synchronous fault that cannot preempt the active
+            # SVC instead of escalating it, so the production halt is
+            # asserted on silicon; the emulator proves the fetch was denied.
+            expect_re "privileged execution from SPM RAM faulted (IACCVIOL)" \
+                '\[MEMFAULT\] pc=0x30[0-9a-f]{6} addr=0x30[0-9a-f]{6}'
+            refute_re "the thunk never returned into the gate" '\[USGFLT\]'
+            refute_re "no clean lifecycle after the SPM fault" \
+                '\[BKPT\] imm=0x7f'
+            ;;
+        mspovfneg)
+            # M33MU escalates the entry-time STKOF to HardFault and ends the
+            # run there without executing the handler; the production halt
+            # is asserted on silicon through the SPM fault latch.
+            expect_re "main-stack overflow raised STKOF against MSPLIM_S" \
+                '\[(USGFLT|HARDFLT)\].*CFSR=0x00[1-9a-f][0-9a-f]0000'
+            expect "the emulator ended the run at the SPM fault" \
+                "Execution stopped"
+            refute_re "no guest scheduled after the refused boot" \
+                "$GUEST_STARTED_RE"
             ;;
         *)
             fail "scenario_assert_verdict: no verdict table for '$1'"

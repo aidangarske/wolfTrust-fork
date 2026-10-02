@@ -74,13 +74,21 @@ static void wt_spm_hsm_entry(void* arg)
      * recovery (WT-FFM-0017/0051). Never built into production images. */
     wt_arch_sp_fault_probe(0u);
 #endif
-#if defined(WT_SP_FAULT_PROBE) && (WT_SP_FAULT_PROBE == 1)
-    /* One-shot graceful-recovery probe (target/spfaultneg): an undefined
-     * instruction raises a recoverable Secure-Thread UsageFault. The
-     * recovery re-arms this partition with the restarted marker set, so the
-     * re-run skips the probe and serves. */
+#if (defined(WT_SP_FAULT_PROBE) && (WT_SP_FAULT_PROBE == 1)) || \
+    (defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1))
+    /* One-shot graceful-recovery probes (target/spfaultneg, busfaultneg): an
+     * undefined instruction, or a read of the port's bus-error window, raises
+     * a recoverable Secure-Thread fault. The recovery re-arms this partition
+     * with the restarted marker set, so the re-run skips the probe. */
     if (((intptr_t)arg & WT_SP_FAULT_PROBE_RESTARTED) == 0) {
+#if defined(WT_BUSFAULT_NEG_PROBE) && (WT_BUSFAULT_NEG_PROBE == 1)
+        wt_memory_region_t probe;
+
+        wt_platform_busfault_probe_region(&probe);
+        (void)*(const volatile uint32_t*)(uintptr_t)probe.base;
+#else
         wt_arch_sp_fault_probe(0u);
+#endif
     }
     partition_id = (int32_t)((intptr_t)arg &
                              ~(intptr_t)WT_SP_FAULT_PROBE_RESTARTED);
@@ -177,22 +185,27 @@ static void wt_spm_its_entry(void* arg)
     volatile uint32_t periph_probe;
 #endif
 
-#if defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1)
-    /* Secure-caller-misuse proof (target/panicneg): closing an error-status
-     * handle is an FF-M PROGRAMMER ERROR the production SPM must panic this
-     * partition for; the graceful recovery restarts it with the marker set
-     * and the re-run serves storage normally. Reaching the udf below means
-     * the SPM failed to panic the caller, which fails the scenario with a
-     * distinct fault. Never built into production images. */
+#if (defined(WT_PANIC_NEG_PROBE) && (WT_PANIC_NEG_PROBE == 1)) || \
+    (defined(WT_SVC_NEG_PROBE) && (WT_SVC_NEG_PROBE == 1))
+    /* Secure-caller-misuse proofs (target/panicneg, svcneg): closing an
+     * error-status handle, or issuing the scheduler's internal SVC, is an
+     * FF-M PROGRAMMER ERROR the production SPM must panic this partition
+     * for; the graceful recovery restarts it with the marker set and the
+     * re-run serves storage normally. Reaching the udf below means the SPM
+     * failed to panic the caller. Never built into production images. */
     partition_id = (int32_t)((intptr_t)arg &
                              ~(intptr_t)WT_SP_FAULT_PROBE_RESTARTED);
     if (((intptr_t)arg & WT_SP_FAULT_PROBE_RESTARTED) == 0) {
+#if defined(WT_SVC_NEG_PROBE) && (WT_SVC_NEG_PROBE == 1)
+        wt_arch_sp_guest_return_probe();
+#else
         wt_spm_call_t bad;
 
         (void)memset(&bad, 0, sizeof(bad));
         bad.op = WT_SPM_OP_CLOSE;
         bad.msg_handle = (psa_handle_t)-135;
         (void)wt_arch_sp_trap(&bad);
+#endif
         wt_arch_sp_fault_probe(3u);
     }
 #endif

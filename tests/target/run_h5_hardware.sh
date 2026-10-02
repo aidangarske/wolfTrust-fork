@@ -42,7 +42,7 @@ set -o pipefail
 mode="${1:-all}"
 scenario="${2:-positive}"
 case "$mode" in build|flash|all) ;; *) echo "usage: $0 build|flash|all [scenario]" >&2; exit 2 ;; esac
-case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg" >&2; exit 2 ;; esac
+case "$scenario" in positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|nsbusfaultneg|xnneg|svcneg) ;; *) echo "usage: $0 $mode positive|restart|crossdomain|keystoreneg|panicneg|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec|authneg|writeonce|hsmattackneg|bootupdate|vnet|vnetneg|gtzcneg|fpneg|sealneg|sealpivotneg|periphneg|mspovfneg|busfaultneg|nsbusfaultneg|xnneg|svcneg" >&2; exit 2 ;; esac
 
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
@@ -60,7 +60,7 @@ SERIAL="${H5_SERIAL:-/dev/ttyACM0}"
 # confboot reboots the whole chain once per panic test (real SYSRESETREQ, each
 # re-running wolfBoot), so it needs a long ceiling; the capture stops early on
 # the suite report.
-case "$scenario" in restart) cap_default=32 ;; confboot) cap_default=900 ;; devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec) cap_default=600 ;; bootupdate) cap_default=45 ;; authneg) cap_default=30 ;; writeonce) cap_default=40 ;; *) cap_default=25 ;; esac
+case "$scenario" in restart|nsbusfaultneg) cap_default=32 ;; confboot) cap_default=900 ;; devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec) cap_default=600 ;; bootupdate) cap_default=45 ;; authneg) cap_default=30 ;; writeonce) cap_default=40 ;; *) cap_default=25 ;; esac
 CAP_S="${H5_CAPTURE_SECONDS:-$cap_default}"
 LOGFILE="${WT_SCENARIO_LOG:-ci-h5-hardware-$scenario.log}"
 case "$LOGFILE" in /*) ;; *) LOGFILE="$repo/$LOGFILE" ;; esac
@@ -162,6 +162,7 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "keystoreneg" ] && secure_flags="WT_KEYSTORE_NEG_PROBE=1"
   [ "$scenario" = "panicneg" ] && secure_flags="WT_PANIC_NEG_PROBE=1"
   [ "$scenario" = "restart" ] && guest_flags="WT_GUEST_FAULT_PROBE=1"
+  [ "$scenario" = "nsbusfaultneg" ] && guest_flags="WT_NS_BUSFAULT_PROBE=1"
   [ "$scenario" = "writeonce" ] && guest_flags="WT_WRITE_ONCE_RESET_PROBE=1"
   [ "$scenario" = "hsmattackneg" ] && guest_flags="WT_HSM_ATTACK_PROBE=1"
   [ "$scenario" = "gtzcneg" ] && guest_flags="WT_MPU_BYPASS_PROBE=1"
@@ -171,6 +172,10 @@ if [ "$mode" != "flash" ]; then
   [ "$scenario" = "fpneg" ] && secure_flags="WT_SP_FAULT_PROBE=1 WT_FP_NEG_PROBE=1"
   [ "$scenario" = "sealneg" ] && secure_flags="WT_SEAL_NEG_PROBE=1"
   [ "$scenario" = "sealpivotneg" ] && secure_flags="WT_SEAL_NEG_PROBE=4"
+  [ "$scenario" = "mspovfneg" ] && secure_flags="WT_MSP_OVF_PROBE=1"
+  [ "$scenario" = "busfaultneg" ] && secure_flags="WT_BUSFAULT_NEG_PROBE=1"
+  [ "$scenario" = "xnneg" ] && secure_flags="WT_XN_NEG_PROBE=1"
+  [ "$scenario" = "svcneg" ] && secure_flags="WT_SVC_NEG_PROBE=1"
   [ "$scenario" = "vnet" ] && secure_flags="CONFIG_VNET=y"
   [ "$scenario" = "vnetneg" ] && secure_flags="CONFIG_VNET=y WT_VNET_NEG_PROBE=1"
   # WT_CONF_DIAG_TRAP=0: the emulator-only hang-probe fault would become a
@@ -378,7 +383,7 @@ if [ "$mode" != "build" ]; then
     erase_verified 0x0C1FE000
     erase_verified 0x0C1FA000
     pyocd cmd -t "$PYOCD_TARGET" -c reset >/dev/null 2>&1 || true
-  elif [ "$scenario" = "positive" ] || [ "$scenario" = "bothpsa" ] || [ "$scenario" = "crossdomain" ] || [ "$scenario" = "keystoreneg" ] || [ "$scenario" = "panicneg" ] || [ "$scenario" = "fpneg" ] || [ "$scenario" = "sealneg" ] || [ "$scenario" = "sealpivotneg" ]; then
+  elif [ "$scenario" = "positive" ] || [ "$scenario" = "bothpsa" ] || [ "$scenario" = "crossdomain" ] || [ "$scenario" = "keystoreneg" ] || [ "$scenario" = "panicneg" ] || [ "$scenario" = "fpneg" ] || [ "$scenario" = "sealneg" ] || [ "$scenario" = "sealpivotneg" ] || [ "$scenario" = "busfaultneg" ] || [ "$scenario" = "svcneg" ]; then
     # Guest0's ITS+PS lifecycle persists vault objects across runs on silicon
     # (the emulator starts on fresh flash); blank the vault like the dev
     # scenarios do so the pool stays emulator-equivalent.
@@ -515,6 +520,14 @@ if [ "$mode" != "build" ]; then
       else
         check_fail "cross-guest isolation" "guest1 negative mask 0x${neg:-none}, want bit 0x4"
       fi
+      # Every production partition dispatch carried the privileged
+      # execute-never cover of SPM RAM (12 MPU regions on the H563).
+      xn=$(read_secure_u32 g_wt_xn_denied)
+      if [ -n "$xn" ] && [ $((0x$xn)) -eq 0 ]; then
+        check_pass "SPM RAM execute-never cover present on every dispatch"
+      else
+        check_fail "XN cover" "g_wt_xn_denied=0x${xn:-none}, want 0"
+      fi
       ;;
     authneg)
       # Authenticated launch fails closed (WT-SYS-0002): guest0's flashed image
@@ -596,6 +609,31 @@ if [ "$mode" != "build" ]; then
       fi
       expect "guest1 alive after guest0 FAULTED" "freertos_guest1: heartbeat"
       ;;
+    nsbusfaultneg)
+      # guest0 reads an unmapped Non-secure peripheral hole each boot: a precise
+      # BusFault the Secure monitor attributes to guest0 (BFAR), restarting it
+      # RESTART_LIMIT times then quarantining it while guest1 keeps running.
+      refute_re "no HardFault escalation" '^(\[HARDFLT\]|HardFault|SecureFault)'
+      fault_addr=$(read_secure_u32 g_last_fault_address)
+      if [ -n "$fault_addr" ] && [ $((0x$fault_addr)) -eq $((0x4C000000)) ]; then
+        check_pass "BusFault BFAR names the Non-secure hole (0x$fault_addr)"
+      else
+        check_fail "Non-secure BusFault" "fault addr 0x${fault_addr:-none}, want 0x4C000000"
+      fi
+      restarts=$(read_secure_u32 g_wt_restart_events)
+      quarantines=$(read_secure_u32 g_wt_quarantine_events)
+      if [ -n "$restarts" ] && [ $((0x$restarts)) -eq "$RESTART_LIMIT" ]; then
+        check_pass "monitor restarted guest0 exactly $RESTART_LIMIT times"
+      else
+        check_fail "guest restart count" "restart events 0x${restarts:-none}, expected $RESTART_LIMIT"
+      fi
+      if [ -n "$quarantines" ] && [ $((0x$quarantines)) -eq 1 ]; then
+        check_pass "guest0 quarantined after the limit (events=1)"
+      else
+        check_fail "quarantine" "quarantine events 0x${quarantines:-none}, expected 1"
+      fi
+      expect "guest1 alive through guest0's BusFaults" "freertos_guest1: heartbeat"
+      ;;
     crossdomain)
       # The unprivileged crypto SP reads SPM-private RAM (WT_RAM_S_BASE) on
       # entry; its MPU domain denies it. With graceful quarantine the fault
@@ -642,8 +680,9 @@ if [ "$mode" != "build" ]; then
       fi
       expect "guest1 alive after SP quarantined" "freertos_guest1: heartbeat"
       ;;
-    panicneg)
-      # Secure-caller misuse: the ITS SP closes an error-status handle on its
+    panicneg|svcneg)
+      # Secure-caller misuse: the ITS SP closes an error-status handle
+      # (panicneg) or issues the scheduler's internal SVC (svcneg) on its
       # first entry, so the production SPM panics it (resume PC landed on an
       # undefined instruction -> UsageFault UNDEFINSTR in the CFSR latch), the
       # graceful recovery restarts it, and the RESTARTED partition must then
@@ -880,6 +919,74 @@ if [ "$mode" != "build" ]; then
         check_fail "recovery" "lifecycle 0x${lc:-none} after the FP fault, expected 0xFF"
       fi
       expect "guest1 alive through the FP fault" "freertos_guest1: heartbeat"
+      ;;
+    busfaultneg)
+      # The SERVICE_HSM relay SP reads the port's bus-error window (past the
+      # end of physical SRAM, MPU-permitted) on its first entry: a precise
+      # BusFault with BFAR, attributed to the partition, which restarts and
+      # then serves the full guest lifecycle; the platform never halts.
+      refute_re "BusFault did not escalate to HardFault" \
+        '^(\[HARDFLT\]|HardFault|SecureFault)'
+      fault_cnt=$(read_secure_u32 g_tasklet_fault_count)
+      fault_cfsr=$(read_secure_u32 g_tasklet_fault_cfsr)
+      fault_addr=$(read_secure_u32 g_last_fault_address)
+      if [ -n "$fault_cnt" ] && [ $((0x$fault_cnt)) -ge 1 ]; then
+        check_pass "relay SP took the contained fault (count=0x$fault_cnt)"
+      else
+        check_fail "partition fault" "SP fault count not captured (count=${fault_cnt:-none})"
+      fi
+      if [ -n "$fault_cfsr" ] && \
+         [ $(( (0x$fault_cfsr >> 8) & 0x82 )) -eq $((0x82)) ]; then
+        check_pass "fault was a precise BusFault with BFAR (CFSR=0x$fault_cfsr)"
+      else
+        check_fail "BusFault" "CFSR 0x${fault_cfsr:-none} lacks PRECISERR|BFARVALID"
+      fi
+      if [ -n "$fault_addr" ] && [ $((0x$fault_addr)) -eq $((0x300A0000)) ]; then
+        check_pass "BFAR names the probe's bus-error window (0x$fault_addr)"
+      else
+        check_fail "BFAR" "fault addr 0x${fault_addr:-none}, want 0x300A0000"
+      fi
+      lc=$(read_guest0_u32 g_guest0_lifecycle)
+      if [ -n "$lc" ] && [ $((0x$lc & 0xFF)) -eq 255 ]; then
+        check_pass "lifecycle completed after the partition restarted (0x$lc)"
+      else
+        check_fail "recovery" "lifecycle 0x${lc:-none} after the BusFault, expected 0xFF"
+      fi
+      expect "guest1 alive after the partition fault" "freertos_guest1: heartbeat"
+      ;;
+    xnneg)
+      # The privileged SVC gate calls a thunk in SPM .bss under a partition
+      # thread domain; the execute-never cover faults the fetch (IACCVIOL,
+      # escalated from the gate's priority to HardFault) and the SPM latch
+      # names the thunk address before the production panic. No guest runs.
+      cfsr=$(read_secure_u32 g_wt_spm_fault_cfsr)
+      pc=$(read_secure_u32 g_wt_spm_fault_pc)
+      if [ -n "$cfsr" ] && [ $((0x$cfsr & 0x1)) -eq 1 ]; then
+        check_pass "privileged execution from SPM RAM faulted (IACCVIOL, CFSR=0x$cfsr)"
+      else
+        check_fail "XN" "CFSR 0x${cfsr:-none} lacks IACCVIOL"
+      fi
+      if [ -n "$pc" ] && [ $((0x$pc)) -ge $((0x30028000)) ] && \
+         [ $((0x$pc)) -lt $((0x30075000)) ]; then
+        check_pass "faulting fetch was inside SPM RAM (pc=0x$pc)"
+      else
+        check_fail "XN" "fault pc 0x${pc:-none} not in SPM RAM"
+      fi
+      refute_re "no guest ran after the halt" \
+        '(guest0_psa alive|freertos_guest1: heartbeat)'
+      ;;
+    mspovfneg)
+      # The reset path pushes on the main stack until MSPLIM_S raises STKOF;
+      # the stackless halt latches the CFSR (bit 20) before the production
+      # panic, and no partition or guest ever runs.
+      cfsr=$(read_secure_u32 g_wt_spm_fault_cfsr)
+      if [ -n "$cfsr" ] && [ $(( (0x$cfsr >> 20) & 0x1 )) -eq 1 ]; then
+        check_pass "main-stack overflow raised STKOF against MSPLIM_S (CFSR=0x$cfsr)"
+      else
+        check_fail "STKOF" "CFSR 0x${cfsr:-none} lacks STKOF"
+      fi
+      refute_re "no guest ran after the halt" \
+        '(guest0_psa alive|freertos_guest1: heartbeat)'
       ;;
     sealneg|sealpivotneg)
       # Software check only: the partition overwrites its own stack-top seal

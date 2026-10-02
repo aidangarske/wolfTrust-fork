@@ -29,8 +29,12 @@
 #include "wolftrust/spm_transport.h"
 #include "wolftrust/ffm.h"
 #include "wolftrust/sched/coroutine.h"
+#include "wolftrust/sched/coroutine_internal.h"
 
 #include <stdint.h>
+
+#define WT_EXC_RETURN_MODE_THREAD  0x08u
+#define WT_EXC_RETURN_SPSEL_PSP    0x04u
 
 #include "wolftrust/sched/tasklet.h"
 #ifdef WT_ENGINE_HSM
@@ -47,6 +51,91 @@ static volatile uint32_t g_tasklet_fault_psp;
 static volatile uint32_t g_tasklet_fault_icsr;
 static volatile uint32_t g_tasklet_fault_co;
 static volatile uint32_t g_tasklet_fault_co_sp;
+
+/* SPM-origin fault latch, read over SWD after the halt: a HardFault, a main
+ * stack overflow, or a Secure fault with no partition to blame. */
+volatile uint32_t g_wt_spm_fault_cfsr __attribute__((used));
+volatile uint32_t g_wt_spm_fault_hfsr __attribute__((used));
+volatile uint32_t g_wt_spm_fault_mmfar __attribute__((used));
+volatile uint32_t g_wt_spm_fault_bfar __attribute__((used));
+volatile uint32_t g_wt_spm_fault_pc __attribute__((used));
+volatile uint32_t g_wt_spm_fault_exc_return __attribute__((used));
+
+/* Stackless: a main-stack overflow or HardFault may arrive with MSP at or
+ * under its limit, so the latch is written in asm and the halt tail-called.
+ * First fault wins: the panic BKPT escalating without a debugger keeps it. */
+__attribute__((naked, noreturn, used))
+void wt_armv8m_spm_fault_halt(void)
+{
+    __asm volatile(
+        "ldr   r2, =g_wt_spm_fault_exc_return  \n"
+        "ldr   r1, [r2]                        \n"
+        "cmp   r1, #0                          \n"
+        "bne   2f                              \n"
+        "ldr   r0, =0xE000ED28                 \n"
+        "ldr   r1, [r0, #0]                    \n"
+        "ldr   r2, =g_wt_spm_fault_cfsr        \n"
+        "str   r1, [r2]                        \n"
+        "ldr   r1, [r0, #4]                    \n"
+        "ldr   r2, =g_wt_spm_fault_hfsr        \n"
+        "str   r1, [r2]                        \n"
+        "ldr   r1, [r0, #12]                   \n"
+        "ldr   r2, =g_wt_spm_fault_mmfar       \n"
+        "str   r1, [r2]                        \n"
+        "ldr   r1, [r0, #16]                   \n"
+        "ldr   r2, =g_wt_spm_fault_bfar        \n"
+        "str   r1, [r2]                        \n"
+        "ldr   r2, =g_wt_spm_fault_exc_return  \n"
+        "str   lr, [r2]                        \n"
+        /* The stacked PC is read only from a Secure frame that exists: a
+         * stack overflow or (un)stacking error means there is no frame. */
+        "ldr   r1, [r0, #0]                    \n"
+        "ldr   r2, =0x00101818                 \n"
+        "tst   r1, r2                          \n"
+        "mov   r1, #0                          \n"
+        "bne   1f                              \n"
+        "tst   lr, #0x40                       \n"
+        "beq   1f                              \n"
+        "tst   lr, #4                          \n"
+        "ite   eq                              \n"
+        "mrseq r0, msp                         \n"
+        "mrsne r0, psp                         \n"
+        "ldr   r1, [r0, #24]                   \n"
+        "1:                                    \n"
+        "ldr   r2, =g_wt_spm_fault_pc          \n"
+        "str   r1, [r2]                        \n"
+        "2:                                    \n"
+        "b     wt_platform_panic               \n"
+    );
+}
+
+/* A Secure-frame escalation halts; a Non-secure one (BFHFNMINS is 0) is a guest
+ * escalating its own fault, so only that guest restarts. */
+__attribute__((naked)) void HardFault_Handler(void)
+{
+    __asm volatile(
+        "tst   lr, #0x40                       \n"
+        "beq   wt_armv8m_guest_hardfault_entry \n"
+        "b     wt_armv8m_spm_fault_halt        \n"
+    );
+}
+
+/* C-side twin of the asm latch for a fault the dispatcher attributes to the
+ * SPM itself (bootstrap thread or a privileged handler frame). */
+static void wt_spm_fault_latch(uint32_t cfsr, const uint32_t *frame,
+                               uint32_t exc_return)
+{
+    if (g_wt_spm_fault_exc_return == 0u) {
+        g_wt_spm_fault_cfsr = cfsr;
+        g_wt_spm_fault_hfsr = WT_SCB_HFSR_S;
+        g_wt_spm_fault_mmfar = WT_SCB_MMFAR_S;
+        g_wt_spm_fault_bfar = WT_SCB_BFAR_S;
+        g_wt_spm_fault_pc = ((cfsr & WT_SCB_CFSR_NO_FRAME) == 0u) ?
+                            frame[6] : 0u;
+        g_wt_spm_fault_exc_return = exc_return;
+    }
+    wt_platform_panic();
+}
 
 /* -----------------------------------------------------------------------
  * Secure-side tasklet fault path.
@@ -93,12 +182,14 @@ static void wt_secure_tasklet_fault_dispatch(uint32_t *frame,
         uint32_t psp_now;
 
         g_tasklet_fault_cfsr = cfsr;
-        g_tasklet_fault_pc = frame[6];
         g_tasklet_fault_exc_return = exc_return;
         /* Frame position vs the coroutine stack identifies which pusher
          * built it (SVC/tick 8-word vs NS-preempt callee+signature). */
         g_tasklet_fault_frame = (uint32_t)(uintptr_t)frame;
-        g_tasklet_fault_xpsr = frame[7];
+        if ((cfsr & WT_SCB_CFSR_NO_FRAME) == 0u) {
+            g_tasklet_fault_pc = frame[6];
+            g_tasklet_fault_xpsr = frame[7];
+        }
         __asm volatile("mrs %0, psp" : "=r"(psp_now));
         g_tasklet_fault_psp = psp_now;
         g_tasklet_fault_icsr = WT_SCB_ICSR_S;
@@ -111,13 +202,24 @@ static void wt_secure_tasklet_fault_dispatch(uint32_t *frame,
     if ((cfsr & WT_SCB_CFSR_MMFSR_MMARVALID) != 0u) {
         wt_armv8m_note_fault_address(WT_SCB_MMFAR_S);
     }
+    else if ((cfsr & WT_SCB_CFSR_BFSR_BFARVALID) != 0u) {
+        wt_armv8m_note_fault_address(WT_SCB_BFAR_S);
+    }
     /* Write-1-to-clear so the next fault is observable. */
     WT_SCB_CFSR_S = cfsr;
 
+    /* Only a Secure Thread frame on PSP belongs to a partition: a fault
+     * raised in a privileged handler (the SVC gate acting for it) or on
+     * the bootstrap thread is the SPM's own and halts the platform. */
+    if ((exc_return & (WT_EXC_RETURN_MODE_THREAD | WT_EXC_RETURN_SPSEL_PSP)) !=
+            (WT_EXC_RETURN_MODE_THREAD | WT_EXC_RETURN_SPSEL_PSP)) {
+        wt_spm_fault_latch(cfsr, frame, exc_return);
+    }
+
     wt_tasklet_t *tasklet = wt_tasklet_current();
-    if (tasklet == NULL) {
+    if (tasklet == NULL || tasklet == &g_wt_co_bootstrap) {
         /* Bootstrap took the fault — no tasklet to abandon. */
-        wt_platform_panic();
+        wt_spm_fault_latch(cfsr, frame, exc_return);
     }
 
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
@@ -149,8 +251,8 @@ static void wt_secure_tasklet_fault_dispatch(uint32_t *frame,
     wt_tasklet_mark_faulted(tasklet);
 }
 
-/* Shared tail for MemManage_Handler and UsageFault_Handler. Naked so
- * we control the stack layout the EXC_RETURN unwinds through. */
+/* Shared tail for MemManage, BusFault and UsageFault. Naked so we control
+ * the stack layout the EXC_RETURN unwinds through. */
 __attribute__((naked, used))
 void wt_armv8m_tasklet_fault_entry(void)
 {
@@ -199,7 +301,30 @@ __attribute__((naked)) void MemManage_Handler(void)
     __asm volatile("b wt_armv8m_tasklet_fault_entry \n");
 }
 
+/* A Secure-frame BusFault is attributed like MemManage; a Non-secure frame
+ * (BFHFNMINS is 0, so guest bus errors land here too) is a guest fault. */
+__attribute__((naked)) void BusFault_Handler(void)
+{
+    __asm volatile(
+        "tst   lr, #0x40                       \n"
+        "beq   wt_armv8m_guest_busfault_entry  \n"
+        "b     wt_armv8m_tasklet_fault_entry   \n"
+    );
+}
+
+/* STKOF on the main stack is the SPM overflowing its own stack: halt before
+ * anything is pushed, since MSP is already at MSPLIM_S. */
 __attribute__((naked)) void UsageFault_Handler(void)
 {
-    __asm volatile("b wt_armv8m_tasklet_fault_entry \n");
+    __asm volatile(
+        "ldr   r0, =0xE000ED28                 \n"
+        "ldr   r1, [r0]                        \n"
+        "tst   r1, #0x00100000                 \n"
+        "beq   1f                              \n"
+        "tst   lr, #4                          \n"
+        "bne   1f                              \n"
+        "b     wt_armv8m_spm_fault_halt        \n"
+        "1:                                    \n"
+        "b     wt_armv8m_tasklet_fault_entry   \n"
+    );
 }
