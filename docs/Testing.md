@@ -366,6 +366,16 @@ attestation and rejection verdicts from both clients, plus matching signed
 image measurements and peer progress. The portable clients remain bare-metal;
 their results do not qualify the Zephyr/FreeRTOS pair required by issue #60.
 
+The hardware adapter also accepts `confboot`, `devstorage`, `devcrypto`,
+`devattest`, `devattestqcbor`, and `vaultrecover`. It uses the pinned Arm suite
+with diagnostic breakpoints disabled, clears the distinct conformance state
+sector before each new suite, and preserves that state across deliberate
+resets. Completion requires the ELF-resolved guest record, the Arm return
+status, a complete ACS report with all scheduled tests accounted for, and
+continued peer progress. `confboot` additionally requires authenticated reboot
+evidence. The default completion limit is 900 seconds (`RT700_CONF_TIMEOUT`);
+UART report and skip context remain in the case evidence directory.
+
 RNG, SHA-256 and AES-128 CTR assertions are shared with the H5 OS fixtures
 under `tests/firmware/common/`. The cipher check uses NIST SP 800-38A F.5.1
 and F.5.2 known answers and validates decryption and cleanup. Their host gate,

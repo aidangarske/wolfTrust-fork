@@ -56,6 +56,8 @@ guest_build="$repo/tests/firmware/mimxrt700-baremetal/build"
 . "$here/lib/rt700_wolfboot.sh"
 # shellcheck source=lib/rt700_guests.sh disable=SC1091
 . "$here/lib/rt700_guests.sh"
+# shellcheck source=lib/scenario.sh disable=SC1091
+. "$here/lib/scenario.sh"
 case "$scenario" in
     wrpfence|wrpneg) guest_fence=1; export WT_GUEST_FLASH_WRP=1 ;;
     wrpoff)   guest_fence=0; export WT_GUEST_FLASH_WRP=1 ;;
@@ -97,6 +99,7 @@ record_build() {
         printf 'attestation=%s\nsecure_header=%s\n' \
             "${WT_ATTEST_COSE:-0}" "${WT_SECURE_IMAGE_HEADER_SIZE:-0}"
         printf 'guest_flags=%s\n' "$1"
+        printf 'secure_flags=%s\n' "${secure_flags:-}"
         printf 'reset=hardware reset plus GPIO20, retained SRAM\n'
         printf 'vault_policy=%s\n' "${2:-unchanged}"
         git -C "$repo" status --short --untracked-files=no
@@ -270,6 +273,8 @@ ensure_wolfboot() {
 # whole chain, boot it from a fresh vault, and verify every image by readback.
 run_chain() {
     local guest_flags="$1"
+    local secure_flags
+    secure_flags="$(scenario_secure_flags "$scenario")"
 
     ensure_spsdk
     mkdir -p "$work"
@@ -285,8 +290,14 @@ run_chain() {
     mkdir -p "$work"
 
     stage "build wolfTrust secure image + CMSE import library"
-    make -s -C "$repo" TARGET=mimxrt700 secure-image TOOLPREFIX=arm-none-eabi-
+    # The vocabulary helper supplies trusted make assignments, not shell code.
+    # shellcheck disable=SC2086
+    make -s -C "$repo" TARGET=mimxrt700 secure-image TOOLPREFIX=arm-none-eabi- \
+        $secure_flags
 
+    if [ "$scenario" = devattestqcbor ]; then
+        "$repo/tests/upstream/fetch_qcbor.sh" >/dev/null
+    fi
     rt700_build_guests "$guest_flags" 0x1000u
     record_build "$guest_flags" fresh
 
@@ -320,6 +331,12 @@ run_chain() {
     flash_at "$guest1_flash_addr" "$guest1_build/guest1.bin"
     stage "erase the wolfHSM NVM store so the run starts from a fresh vault"
     erase_range "$(printf '0x%08x-0x%08x' "$hsm_nvm_addr" $((hsm_nvm_addr + hsm_nvm_size)))"
+    if [ "$(rt700_guest_kind "$scenario")" = conformance ]; then
+        # Clear only before a new suite. Its deliberate platform resets must
+        # preserve this distinct boot/status sector and the vault.
+        erase_range "0x281E8000-0x281E9000"
+        export RT700_UART_TIMEOUT="${RT700_UART_TIMEOUT:-900}"
+    fi
     clear_mailboxes
 
     start_uart
@@ -412,6 +429,50 @@ check_peer_progress() {
         "peer remains live (0x$before -> 0x$after)"
 }
 
+check_conformance_guest() {
+    local base deadline lifecycle signature status
+    base="$(guest_result_addr 0)"
+    deadline=$((SECONDS + ${RT700_CONF_TIMEOUT:-900}))
+    while :; do
+        lifecycle="$(mailbox_word "$base" 4)"
+        [ -n "$lifecycle" ] && [ $((0x$lifecycle & 0x80)) -ne 0 ] && break
+        [ "$SECONDS" -lt "$deadline" ] || fail "Arm conformance did not complete (0x$lifecycle)"
+        sleep 1
+    done
+    signature="$(mailbox_word "$base" 0)"
+    status="$(mailbox_word "$base" 76)"
+    check "$([ "$signature" = 50534147 ] && [ "$lifecycle" = 0000009f ]; echo $?)" \
+        "guest0 completed service setup and the Arm suite (0x$signature/0x$lifecycle)"
+    check "$([ "$status" = 00000000 ]; echo $?)" "Arm val_entry returned success (0x$status)"
+    stop_uart
+    log="$work/uart.log"
+    expect "complete Arm ACS report retained" "END OF ACS"
+    conf_totals
+    case "$scenario" in
+        confboot)
+            check "$([ "$conf_passed" -eq 85 ] && [ "$conf_skipped" -eq 4 ] && \
+                [ "$conf_failed" -eq 0 ]; echo $?)" \
+                "Arm IPC: $conf_passed passed, $conf_skipped skipped, $conf_failed failed (85/4/0 required)"
+            check "$([ "$(count 'wolfBoot HAL init: MIMXRT798S')" -ge 2 ]; echo $?)" \
+                "panic tests rebooted the authenticated chain and resumed the suite" ;;
+        devstorage)
+            check "$([ "$conf_failed" -eq 0 ] && \
+                [ "$((conf_passed + conf_skipped))" -eq 17 ]; echo $?)" \
+                "Arm storage: $conf_passed passed, $conf_skipped skipped, $conf_failed failed (17 scheduled)" ;;
+        devcrypto|vaultrecover)
+            check "$([ "$conf_failed" -eq 0 ] && \
+                [ "$((conf_passed + conf_skipped))" -eq 77 ]; echo $?)" \
+                "Arm crypto: $conf_passed passed, $conf_skipped skipped, $conf_failed failed (77 scheduled)" ;;
+        devattest|devattestqcbor)
+            check "$([ "$conf_passed" -eq 1 ] && [ "$conf_skipped" -eq 0 ] && \
+                [ "$conf_failed" -eq 0 ]; echo $?)" \
+                "Arm initial attestation: 1 passed, 0 skipped, 0 failed" ;;
+    esac
+    grep -n -B4 -A2 'SKIPPED' "$log" > "$work/conformance-skips.log" || true
+    check_guest 1 0x20140000
+    check_peer_progress 0x20140000 36
+}
+
 # A wolfTrust global's address, from the image this run built and flashed.
 elf_sym() {
     local addr
@@ -471,6 +532,12 @@ check_launch_masks() {
 }
 
 case "$scenario" in
+confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover)
+    run_chain "$(rt700_guest_flags "$scenario" 0)"
+    check_launch_masks 00000003 00000000
+    check_conformance_guest
+    log "PASS: hardware/$scenario"
+    ;;
 bothpsa|bothiso|attestneg|hsmattackneg|fwustage)
     if [ "$scenario" = hsmattackneg ] && [ "${WT_ENGINE:-native}" != hsm ]; then
         fail "hsmattackneg requires WT_ENGINE=hsm"
@@ -625,7 +692,7 @@ wrpneg)
     log "PASS: hardware/$scenario"
     ;;
 *)
-    log "usage: $0 romsmoke|positive|ahbscneg|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage"
+    log "usage: $0 romsmoke|positive|ahbscneg|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover"
     exit 2
     ;;
 esac

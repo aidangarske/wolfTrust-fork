@@ -275,17 +275,6 @@ else
   scenario_assert_verdict "$scenario"
 fi
 
-# The Arm suite prints its report once at the end; guest1's lines can splice
-# it, so the totals are read from the log with guest1 stripped and unwrapped.
-conf_totals() {
-    local flat
-    flat="$(sed 's/guest1:.*$//' "$log" | tr -d '\r\n')"
-    conf_passed=$(printf '%s' "$flat" | grep -oE 'TOTAL PASSED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
-    conf_skipped=$(printf '%s' "$flat" | grep -oE 'TOTAL SKIPPED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
-    conf_failed=$(printf '%s' "$flat" | grep -oE 'TOTAL FAILED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
-    : "${conf_passed:=-1}"; : "${conf_skipped:=-1}"; : "${conf_failed:=-1}"
-}
-
 # A guest fault relaunches that guest, so exact launch counts also prove that
 # nothing faulted where nothing should have.
 case "$scenario" in

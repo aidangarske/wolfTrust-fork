@@ -47,6 +47,7 @@ test:
 # Runner orchestration can be exercised in host CI without touching a board.
 test-rt700-runner:
 	@python3 tests/scripts/test_rt700_suite.py
+	@python3 tests/scripts/test_conformance_reports.py
 
 # Production lock gates of both provisioning backends, against stub tools.
 test-provisioning:

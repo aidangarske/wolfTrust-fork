@@ -111,6 +111,7 @@ typedef struct guest_mailbox {
     uint32_t fwu;
     uint32_t measured_lifecycle;
     uint8_t measurement[32];
+    uint32_t conformance_status;
 } guest_mailbox_t;
 
 /* Result ABI consumed by the SWD adapter; the first five words are unchanged
@@ -127,6 +128,8 @@ WT_STATIC_ASSERT(offsetof(guest_mailbox_t, measured_lifecycle) == 40u,
                  "lifecycle result offset changed");
 WT_STATIC_ASSERT(offsetof(guest_mailbox_t, measurement) == 44u,
                  "measurement result offset changed");
+WT_STATIC_ASSERT(offsetof(guest_mailbox_t, conformance_status) == 76u,
+                 "conformance result offset changed");
 
 __attribute__((section(".shared"), used))
 volatile guest_mailbox_t g_guest_mailbox;
@@ -1185,6 +1188,7 @@ void Reset_Handler(void)
     g_guest_mailbox.attest_neg = 0u;
     g_guest_mailbox.fwu = 0u;
     g_guest_mailbox.measured_lifecycle = 0u;
+    g_guest_mailbox.conformance_status = 0x80000000u;
     for (i = 0u; i < sizeof(g_guest_mailbox.measurement); i++) {
         g_guest_mailbox.measurement[i] = 0u;
     }
@@ -1224,7 +1228,7 @@ void Reset_Handler(void)
     exercise_psa_cipher();
 #else
     guest_line("wolfTrust FF-M conformance: val_entry start");
-    (void)val_entry();
+    g_guest_mailbox.conformance_status = (uint32_t)val_entry();
 #endif
 
     guest_line("done");
