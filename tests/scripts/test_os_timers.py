@@ -41,6 +41,14 @@ class OSTimerReports(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate(report().replace("FreeRTOS kernel running", "baremetal running"))
 
+    def test_critical_section_without_peer(self):
+        with self.assertRaises(ValueError):
+            validate(report().replace("guest0: peer progress", "guest1: self progress"))
+
+    def test_total_sleep_duration_outside_bound(self):
+        with self.assertRaises(ValueError):
+            validate(report().replace("elapsed_ms=100", "elapsed_ms=4000"))
+
     def test_timer_error(self):
         with self.assertRaises(ValueError):
             validate(report().replace("errors=0", "errors=1"))
