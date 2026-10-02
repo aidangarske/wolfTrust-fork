@@ -4,11 +4,17 @@ CI has a fast per-PR host lane, the tiered M33MU emulator matrix, and static
 analysis. M33MU runs a per-port smoke set on every pull request and the full
 matrix on labels, main pushes, and nightly.
 
-`codeql.yml` runs C security queries on pull requests, pushes to `main` and
-release branches, and weekly. `coverity.yml` scans on pushes to `main`, daily,
-or on manual dispatch from `wolfSSL/wolfTrust` only. Both trace host suite
-builds and secure-image builds for STM32H563 and MIMXRT700 with both crypto
-engines via `tools/ci-static-analysis-build.sh`.
+`codeql.yml` runs C security queries. `coverity.yml` runs on Sundays at
+00:00 UTC or by manual dispatch. Both build the host suites and secure images
+for STM32H563 and MIMXRT700 with both crypto engines.
+
+Coverity scans wolfTrust runtime, ports, tests, and generated policy code.
+`tools/ci-coverity-filter.py` removes dependency source units before upload
+and rejects an invalid capture. Keep submodules under `lib/` and enable
+**Ignore component in analysis** for the `Third party dependencies` component
+(`.*/lib/.*`) in Coverity Scan to exclude dependency headers too.
+
+An accepted upload queues analysis; results appear after Coverity processes it.
 
 ## At a glance
 
