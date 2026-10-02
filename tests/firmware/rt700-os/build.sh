@@ -42,15 +42,15 @@ arm-none-eabi-size "$base/build/guest0.elf" "$base/build/guest1.elf"
 
 for id in 0 1; do
     symbols="$(arm-none-eabi-nm "$base/build/guest$id.elf")"
-    if printf '%s\n' "$symbols" | grep -Eq 'WolfTrust_HSM_(Submit|Poll|Cancel)|WolfTrust_Attest_'; then
+    if printf '%s\n' "$symbols" | grep -E 'WolfTrust_HSM_(Submit|Poll|Cancel)|WolfTrust_Attest_' >/dev/null; then
         echo "FAIL: retired direct veneer in OS guest$id" >&2
         exit 1
     fi
     if [ "${WT_ENGINE:-native}" = native ]; then
-        printf '%s\n' "$symbols" | grep -q wt_crypto_native_call
-        ! printf '%s\n' "$symbols" | grep -q wh_Client
+        printf '%s\n' "$symbols" | grep wt_crypto_native_call >/dev/null
+        ! printf '%s\n' "$symbols" | grep wh_Client >/dev/null
     else
-        printf '%s\n' "$symbols" | grep -q wt_hsm_psa_transport_cb
+        printf '%s\n' "$symbols" | grep wt_hsm_psa_transport_cb >/dev/null
     fi
-    printf '%s\n' "$symbols" | grep -q g_os_progress
+    printf '%s\n' "$symbols" | grep g_os_progress >/dev/null
 done
