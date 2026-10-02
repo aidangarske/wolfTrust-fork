@@ -218,6 +218,11 @@ case "$cmd" in
       why="$(port_consequence "$state")"
     fi
     lock_confirm "I ACCEPT $state" "Moving this $PORT_NAME to $(label "$state")" "$why"
+    # The prompt can wait a long time: check the part again right before the write.
+    [ "$(port_lock_current)" = "$cur" ] || refuse "the part changed while waiting for the acceptance; nothing was changed."
+    [ -z "$id" ] || [ "$(port_lock_identity)" = "$id" ] ||
+      refuse "a different part is attached than the one checked; nothing was changed."
+    port_ready "$state"
     port_lock_write "$state"
     port_lock_verify "$state"
     # Single use: a permanent step consumes even a rehearsal of another state.

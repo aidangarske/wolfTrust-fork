@@ -118,7 +118,7 @@ field_of() { sed -n "s/.* $1=\([^ ]*\).*/\1/p" "$2"; }
 nowrite() { if [ -s "$T/writes" ]; then failn=$((failn+1)); echo "FAIL a refusal wrote: $(cat "$T/writes")"; : > "$T/writes"; fi; }
 
 P="$R/tests/target/provisioning/provisioning_ctrl.sh"
-H5=(env HOME="$T/home" PATH="$T/bin:$PATH" STM32_CLI="$T/bin/stcli" H5_SERIAL="$T/uart" WT_PROVISION_STATE="$T/st" "$P")
+H5=(env TARGET=stm32h563 HOME="$T/home" PATH="$T/bin:$PATH" STM32_CLI="$T/bin/stcli" H5_SERIAL="$T/uart" WT_PROVISION_STATE="$T/st" "$P")
 HS="$T/st/stm32h563"
 dafp() { for f in "$@"; do sha < "$f"; done | sha | cut -c1-64; }
 SFP="$(dafp "$SD/Keys/key_3_leaf.pem" "$SD/Certificates/cert_leaf_chain.b64" "$SD/Binary/DA_Config.obk" "$SD/Binary/password.bin")"
@@ -226,7 +226,7 @@ check "rebuilt images"       2 "no rehearsal for" -- env "${PROD[@]}" "${H5[@]}"
 echo wt > "$R/build/wolftrust_v1_signed.bin"
 nowrite
 if [ "$have_expect" = 1 ]; then
-H5X="env HOME=$T/home WT_DA_OBK=$T/prodda/obk WT_DA_KEY=$T/prodda/key WT_DA_CERT=$T/prodda/cert WT_DA_PWD=$T/prodda/pwd PATH=$T/bin:$PATH STM32_CLI=$T/bin/stcli H5_SERIAL=$T/uart WT_PROVISION_STATE=$T/st WT_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 $P"
+H5X="env TARGET=stm32h563 HOME=$T/home WT_DA_OBK=$T/prodda/obk WT_DA_KEY=$T/prodda/key WT_DA_CERT=$T/prodda/cert WT_DA_PWD=$T/prodda/pwd PATH=$T/bin:$PATH STM32_CLI=$T/bin/stcli H5_SERIAL=$T/uart WT_PROVISION_STATE=$T/st WT_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 $P"
 for phrase in "yes" "LOCK 0x72" "I ACCEPT 0x5C" "i accept 0x72"; do
   expect -c "set timeout 5; spawn $H5X lock 0x72; expect \"to continue: \"; send \"$phrase\r\"; expect eof; catch wait r; exit [lindex \$r 3]" >/dev/null
   rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && { pass=$((pass+1)); echo "ok   wrong phrase '$phrase' refused"; } || { failn=$((failn+1)); echo "FAIL phrase '$phrase' rc=$rc"; }
@@ -235,6 +235,10 @@ rm -f "$T/boots"
 out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 1 ] && grep -q "wolfTrust did not boot" <<<"$out" && [ -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   stale UART markers without a post-write boot fail the lock and keep the rehearsal"; } || { failn=$((failn+1)); echo "FAIL no-boot lock rc=$rc"; echo "$out" | tail -4; }
 touch "$T/boots"; : > "$T/writes"; echo 0x17 > "$T/ps"; cp "$HS/rehearsal-0x72" "$T/keep72"
+echo 0xED > "$T/ps"
+out="$(expect -c "set timeout 60; spawn $H5X lock 0x17; expect \"to continue: \"; exec sh -c {echo 11111111 22222222 33333333 > $T/uid}; send \"I ACCEPT 0x17\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && grep -q "different part is attached" <<<"$out" && { pass=$((pass+1)); echo "ok   a part swapped during the prompt is not written"; } || { failn=$((failn+1)); echo "FAIL swap during prompt rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -4; }
+echo "00210045 33325112 38363236" > "$T/uid"; echo 0x17 > "$T/ps"; : > "$T/writes"
 out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 0 ] && [ "$(cat "$T/writes")" = "PRODUCT_STATE=0x72" ] && grep -q "STM32H563 is closed (0x72)" <<<"$out" && [ ! -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   exact phrase writes Closed (stub) and consumes the rehearsal"; } || { failn=$((failn+1)); echo "FAIL exact phrase rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -5; }
 : > "$T/writes"; echo 0x17 > "$T/ps"; cp "$T/keep72" "$HS/rehearsal-0x72"
