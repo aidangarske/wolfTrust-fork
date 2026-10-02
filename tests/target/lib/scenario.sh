@@ -24,7 +24,7 @@ expect_n_re() { local n; n="$(count_re "$3")"; \
 # console lines before joining wraps; missing numeric fields stay invalid.
 conf_totals() {
     local flat
-    flat="$(sed 's/guest1:.*$//' "$log" | tr -d '\r\n')"
+    flat="$(sed 's/guest1:.*$//' "$log" | tr -d '\000\r\n')"
     conf_passed=$(printf '%s' "$flat" | grep -oE 'TOTAL PASSED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
     conf_skipped=$(printf '%s' "$flat" | grep -oE 'TOTAL SKIPPED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
     conf_failed=$(printf '%s' "$flat" | grep -oE 'TOTAL FAILED[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)

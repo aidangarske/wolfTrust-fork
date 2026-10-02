@@ -25,6 +25,13 @@ class ConformanceReports(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "85 4 0")
 
+    def test_reset_nul_bytes_do_not_pollute_the_report(self):
+        result = self.parse("\x00TOTAL PASSED : 85\r\nTOTAL SKIPPED : 4\n"
+                            "TOTAL FAILED : 0\x00\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "85 4 0")
+        self.assertNotIn("ignored null byte", result.stderr)
+
     def test_missing_pass_count_cannot_be_offset_by_skip_count(self):
         # The former -1 default plus 18 skips summed to 17 scheduled tests.
         result = self.parse("TOTAL SKIPPED : 18\nTOTAL FAILED : 0\nEND OF ACS\n")
