@@ -56,6 +56,8 @@ guest_build="$repo/tests/firmware/mimxrt700-baremetal/build"
 . "$here/lib/rt700_wolfboot.sh"
 # shellcheck source=lib/rt700_guests.sh disable=SC1091
 . "$here/lib/rt700_guests.sh"
+# shellcheck source=lib/rt700_swd.sh disable=SC1091
+. "$here/lib/rt700_swd.sh"
 # shellcheck source=lib/scenario.sh disable=SC1091
 . "$here/lib/scenario.sh"
 case "$scenario" in
@@ -382,8 +384,10 @@ run_chain() {
 
 # One 32-bit word at base+offset over SWD, as eight lowercase hex digits.
 mailbox_word() {
-    dap -c "read32 $(printf '0x%x' $(($1 + $2)))" | grep -oiE '[0-9a-f]{8}' | tail -1 |
-        tr 'A-F' 'a-f'
+    local address output
+    address="$(printf '0x%x' $(($1 + $2)))"
+    output="$(dap -c "read32 $address")" || return 1
+    printf '%s\n' "$output" | rt700_parse_word "$address"
 }
 
 # Each guest records its progress at the base of its own RAM window.
@@ -466,8 +470,14 @@ check_conformance_guest() {
     base="$(guest_result_addr 0)"
     deadline=$((SECONDS + ${RT700_CONF_TIMEOUT:-900}))
     while :; do
-        lifecycle="$(mailbox_word "$base" 4)"
-        [ -n "$lifecycle" ] && [ $((0x$lifecycle & 0x80)) -ne 0 ] && break
+        # Intentional whole-platform resets briefly disable the debug AP.
+        # Retry unavailable observations, but never extend the suite deadline.
+        if lifecycle="$(mailbox_word "$base" 4)"; then
+            [ $((0x$lifecycle & 0x80)) -ne 0 ] && break
+        else
+            lifecycle=unavailable
+            log "  [observe] SWD unavailable during suite execution; retrying"
+        fi
         [ "$SECONDS" -lt "$deadline" ] || fail "Arm conformance did not complete (0x$lifecycle)"
         sleep 1
     done

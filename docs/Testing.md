@@ -381,7 +381,9 @@ resets. Completion requires the ELF-resolved guest record, the Arm return
 status, a complete ACS report with all scheduled tests accounted for, and
 continued peer progress. `confboot` additionally requires authenticated reboot
 evidence. The default completion limit is 900 seconds (`RT700_CONF_TIMEOUT`);
-UART report and skip context remain in the case evidence directory.
+UART report and skip context remain in the case evidence directory. Missing
+SWD observations during intentional resets are retried within that same limit;
+only an exact memory result row can supply a mailbox value.
 
 RNG, SHA-256 and AES-128 CTR assertions are shared with the H5 OS fixtures
 under `tests/firmware/common/`. The cipher check uses NIST SP 800-38A F.5.1
