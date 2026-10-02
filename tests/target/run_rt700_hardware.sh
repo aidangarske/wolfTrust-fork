@@ -510,7 +510,7 @@ check_conformance_guest() {
                 [ "$conf_failed" -eq 0 ]; echo $?)" \
                 "Arm initial attestation: 1 passed, 0 skipped, 0 failed" ;;
     esac
-    grep -n -B4 -A2 'SKIPPED' "$log" > "$work/conformance-skips.log" || true
+    grep -a -i -n -B5 -A2 'skip' "$log" > "$work/conformance-skips.log" || true
     check_guest 1 0x20140000
     check_peer_progress 0x20140000 36
 }
