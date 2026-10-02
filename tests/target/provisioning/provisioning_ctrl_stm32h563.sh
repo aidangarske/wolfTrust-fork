@@ -335,7 +335,7 @@ port_advance() {
       put readback "image=$(port_image_digest) id=$uid ob=$ob time=$(date +%s)"
       pass "the images on device $uid match the host build ($(port_image_digest | cut -c1-16))"
     else
-      echo "could not read back the images, device UID, and option bytes"
+      refuse "could not read back the images, device UID, and option bytes; nothing was written. Run 'restore' first."
     fi
   fi
   echo "ADVANCING product state $(product_state || echo '?') -> $1 (regress is the only way back)"

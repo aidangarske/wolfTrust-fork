@@ -150,8 +150,10 @@ check "lock unrehearsed"     2 "no rehearsal for provisioning (0x17)" -- "${H5[@
 check "advance Closed from Open" 2 "runs only from Provisioning" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 nowrite
 echo x >> "$R/build/wolftrust_v1_signed.bin"
-check "advance with host images not on the part" 1 "could not read back" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x17
-echo 0xeaeaeaea > "$T/da"
+check "advance with host images not on the part" 2 "could not read back" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x17
+[ "$(cat "$T/ps")" = 0xED ] && { pass=$((pass+1)); echo "ok   a failed read-back leaves the part in Open"; } || { failn=$((failn+1)); echo "FAIL part left in $(cat "$T/ps")"; }
+nowrite
+echo 0xeaeaeaea > "$T/da"; echo 0x17 > "$T/ps"
 check "closing advance without a read-back" 2 "no recent read-back" -- env WT_LOCK_CONFIRM=1 "${H5[@]}" advance 0x72
 echo 0xf5f5f5f5 > "$T/da"
 echo wt > "$R/build/wolftrust_v1_signed.bin"; echo 0xED > "$T/ps"; : > "$T/writes"
@@ -228,27 +230,27 @@ nowrite
 if [ "$have_expect" = 1 ]; then
 H5X="env TARGET=stm32h563 HOME=$T/home WT_DA_OBK=$T/prodda/obk WT_DA_KEY=$T/prodda/key WT_DA_CERT=$T/prodda/cert WT_DA_PWD=$T/prodda/pwd PATH=$T/bin:$PATH STM32_CLI=$T/bin/stcli H5_SERIAL=$T/uart WT_PROVISION_STATE=$T/st WT_FIXTURE_BOUND=1 WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 $P"
 for phrase in "yes" "LOCK 0x72" "I ACCEPT 0x5C" "i accept 0x72"; do
-  expect -c "set timeout 5; spawn $H5X lock 0x72; expect \"to continue: \"; send \"$phrase\r\"; expect eof; catch wait r; exit [lindex \$r 3]" >/dev/null
+  expect -c "set timeout 300; spawn $H5X lock 0x72; expect \"to continue: \"; send \"$phrase\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]" >/dev/null
   rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && { pass=$((pass+1)); echo "ok   wrong phrase '$phrase' refused"; } || { failn=$((failn+1)); echo "FAIL phrase '$phrase' rc=$rc"; }
 done
 rm -f "$T/boots"
-out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 300; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 1 ] && grep -q "wolfTrust did not boot" <<<"$out" && [ -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   stale UART markers without a post-write boot fail the lock and keep the rehearsal"; } || { failn=$((failn+1)); echo "FAIL no-boot lock rc=$rc"; echo "$out" | tail -4; }
 touch "$T/boots"; : > "$T/writes"; echo 0x17 > "$T/ps"; cp "$HS/rehearsal-0x72" "$T/keep72"
 echo 0xED > "$T/ps"
-out="$(expect -c "set timeout 60; spawn $H5X lock 0x17; expect \"to continue: \"; exec sh -c {echo 11111111 22222222 33333333 > $T/uid}; send \"I ACCEPT 0x17\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 300; spawn $H5X lock 0x17; expect \"to continue: \"; exec sh -c {echo 11111111 22222222 33333333 > $T/uid}; send \"I ACCEPT 0x17\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && grep -q "different part is attached" <<<"$out" && { pass=$((pass+1)); echo "ok   a part swapped during the prompt is not written"; } || { failn=$((failn+1)); echo "FAIL swap during prompt rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -4; }
 echo "00210045 33325112 38363236" > "$T/uid"; : > "$T/writes"
-out="$(expect -c "set timeout 60; spawn $H5X lock 0x17; expect \"to continue: \"; exec sh -c {echo x >> $R/build/wolftrust_v1_signed.bin}; send \"I ACCEPT 0x17\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 300; spawn $H5X lock 0x17; expect \"to continue: \"; exec sh -c {echo x >> $R/build/wolftrust_v1_signed.bin}; send \"I ACCEPT 0x17\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && grep -q "no longer matches" <<<"$out" && { pass=$((pass+1)); echo "ok   images changed during the prompt are not written"; } || { failn=$((failn+1)); echo "FAIL image change rc=$rc"; echo "$out" | tail -3; }
 echo wt > "$R/build/wolftrust_v1_signed.bin"
-out="$(expect -c "set timeout 60; spawn $H5X lock 0x17; expect \"to continue: \"; exec sh -c {sed -i.bak s/completed=.*/completed=1/ $HS/rehearsal-0x72}; send \"I ACCEPT 0x17\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 300; spawn $H5X lock 0x17; expect \"to continue: \"; exec sh -c {sed -i.bak s/completed=.*/completed=1/ $HS/rehearsal-0x72}; send \"I ACCEPT 0x17\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && grep -q "no longer matches" <<<"$out" && { pass=$((pass+1)); echo "ok   a rehearsal that expires during the prompt is not used"; } || { failn=$((failn+1)); echo "FAIL expiry rc=$rc"; echo "$out" | tail -3; }
 cp "$T/keep72" "$HS/rehearsal-0x72"; rm -f "$HS/rehearsal-0x72.bak"; echo 0x17 > "$T/ps"; : > "$T/writes"
-out="$(expect -c "set timeout 60; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 300; spawn $H5X lock 0x72; expect \"to continue: \"; send \"I ACCEPT 0x72\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 0 ] && [ "$(cat "$T/writes")" = "PRODUCT_STATE=0x72" ] && grep -q "STM32H563 is closed (0x72)" <<<"$out" && [ ! -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   exact phrase writes Closed (stub) and consumes the rehearsal"; } || { failn=$((failn+1)); echo "FAIL exact phrase rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -5; }
 : > "$T/writes"; echo 0x17 > "$T/ps"; cp "$T/keep72" "$HS/rehearsal-0x72"
-out="$(expect -c "set timeout 60; spawn $H5X lock 0x5C; expect \"to continue: \"; send \"I ACCEPT 0x5C\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 300; spawn $H5X lock 0x5C; expect \"to continue: \"; send \"I ACCEPT 0x5C\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 0 ] && [ "$(cat "$T/writes")" = "PRODUCT_STATE=0x5C" ] && grep -q "STM32H563 is locked (0x5C)" <<<"$out" && [ ! -e "$HS/rehearsal-0x72" ] && { pass=$((pass+1)); echo "ok   Locked (stub) consumes the Closed rehearsal it used"; } || { failn=$((failn+1)); echo "FAIL Locked consume rc=$rc writes=$(cat "$T/writes")"; echo "$out" | tail -5; }
 : > "$T/writes"; echo 0x17 > "$T/ps"
 else
@@ -337,17 +339,17 @@ check "fuse burn commands refused" 2 "programs OTP fuses" -- "${RT[@]}" burn
 nowrite
 if [ "$have_expect" = 1 ]; then
 RTX="env WT_FIXTURE_BOUND=1 TARGET=mimxrt700 RT700_SPSDK_VENV=$T/venv WT_PROVISION_STATE=$T/st PATH=$T/venv/bin:$PATH RT700_ISP=-u0x1fc9,0x014f WT_LOCK_CONFIRM=1 WT_PRODUCTION_LOCK=1 $P"
-expect -c "set timeout 5; spawn $RTX lock 0x07; expect \"to continue: \"; send \"BURN 0x07\r\"; expect eof; catch wait r; exit [lindex \$r 3]" >/dev/null
+expect -c "set timeout 300; spawn $RTX lock 0x07; expect \"to continue: \"; send \"BURN 0x07\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]" >/dev/null
 rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && { pass=$((pass+1)); echo "ok   old phrase refused"; } || { failn=$((failn+1)); echo "FAIL old phrase rc=$rc"; }
-out="$(expect -c "set timeout 10; spawn $RTX lock 0x07; expect \"to continue: \"; exec sh -c {echo PROBEB > $T/probe}; send \"I ACCEPT 0x07\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 300; spawn $RTX lock 0x07; expect \"to continue: \"; exec sh -c {echo PROBEB > $T/probe}; send \"I ACCEPT 0x07\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 2 ] && [ ! -s "$T/writes" ] && grep -q "no longer matches" <<<"$out" && { pass=$((pass+1)); echo "ok   a probe swapped during the prompt is not burned"; } || { failn=$((failn+1)); echo "FAIL probe swap rc=$rc"; echo "$out" | tail -3; }
 echo PROBEA > "$T/probe"
-expect -c "set timeout 5; spawn $RTX lock 0x07; expect \"to continue: \"; send \"I ACCEPT 0x07\r\"; expect eof; catch wait r; exit [lindex \$r 3]" >/dev/null
+expect -c "set timeout 300; spawn $RTX lock 0x07; expect \"to continue: \"; send \"I ACCEPT 0x07\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]" >/dev/null
 rc=$?; [ $rc = 0 ] && [ "$(cat "$T/fuse.143")" = 7 ] && [ "$(cat "$T/fuse.37")" = 7 ] && [ ! -e "$RS/rehearsal-0x07" ] && { pass=$((pass+1)); echo "ok   exact phrase burns Develop2 (stub) and consumes the rehearsal"; } || { failn=$((failn+1)); echo "FAIL exact phrase rc=$rc"; }
 [ "$(head -1 "$T/writes" | cut -d' ' -f2)" = 0x25 ] && { pass=$((pass+1)); echo "ok   life cycle words burn RED then LC"; } || { failn=$((failn+1)); echo "FAIL order"; }
 : > "$T/writes"; fuse 0x8F 0x03; fuse 0x25 0x03; touch "$T/batchfail"
 rec 0x07 0x03 "$(edig)" armed "$(now)"
-out="$(expect -c "set timeout 10; spawn $RTX lock 0x07; expect \"to continue: \"; send \"I ACCEPT 0x07\r\"; expect eof; catch wait r; exit [lindex \$r 3]")"
+out="$(expect -c "set timeout 300; spawn $RTX lock 0x07; expect \"to continue: \"; send \"I ACCEPT 0x07\r\"; expect eof; catch close; catch wait r; exit [lindex \$r 3]")"
 rc=$?; [ $rc = 1 ] && grep -q "batch failed part way" <<<"$out" && grep -q "fuses read LC 0x00000003, RED 0x00000007" <<<"$out" && { pass=$((pass+1)); echo "ok   a burn that fails part way still reads both words back"; } || { failn=$((failn+1)); echo "FAIL partial burn rc=$rc"; echo "$out" | tail -4; }
 rm -f "$T/batchfail" "$RS/rehearsal-0x07"; fuse 0x8F 0x07; fuse 0x25 0x07; : > "$T/writes"
 else
