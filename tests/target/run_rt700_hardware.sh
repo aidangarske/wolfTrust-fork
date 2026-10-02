@@ -94,15 +94,28 @@ start_uart() {
 }
 
 record_build() {
+    local dependency actual expected zephyr_revision freertos_revision
     {
         printf 'date_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         printf 'commit=%s\n' "$(git -C "$repo" rev-parse HEAD)"
         printf 'scenario=%s\nengine=%s\n' "$scenario" "${WT_ENGINE:-native}"
         printf 'guest_fixture=%s\n' "${WT_RT700_GUEST_FIXTURE:-baremetal}"
         if [ "${WT_RT700_GUEST_FIXTURE:-baremetal}" = os ]; then
-            printf 'zephyr_commit=%s\n' "$(git -C "${ZEPHYR_BASE:-$repo/tests/firmware/zephyr-stm32h5/.workspace/zephyrproject/zephyr}" rev-parse HEAD)"
-            printf 'freertos_kernel_commit=%s\n' "$(git -C "${FREERTOS_DIR:-$repo/tests/firmware/zephyr-stm32h5/.workspace/freertos}/FreeRTOS/Source" rev-parse HEAD)"
+            zephyr_revision="$(git -C "${ZEPHYR_BASE:-$repo/tests/firmware/zephyr-stm32h5/.workspace/zephyrproject/zephyr}" rev-parse HEAD)" || \
+                fail "could not identify the Zephyr source"
+            freertos_revision="$(git -C "${FREERTOS_DIR:-$repo/tests/firmware/rt700-os/.workspace/freertos}/FreeRTOS/Source" rev-parse HEAD)" || \
+                fail "could not identify the FreeRTOS kernel source"
+            printf 'zephyr_commit=%s\nfreertos_kernel_commit=%s\n' \
+                "$zephyr_revision" "$freertos_revision"
         fi
+        for dependency in wolfSSL wolfHSM wolfCOSE wolfPSA; do
+            actual="$(git -C "$repo/lib/$dependency" rev-parse HEAD)" || \
+                fail "could not identify dependency $dependency"
+            expected="$(git -C "$repo" rev-parse "HEAD:lib/$dependency")" || \
+                fail "could not identify the recorded $dependency pin"
+            [ "$actual" = "$expected" ] || fail "$dependency source does not match the recorded pin"
+            printf '%s_commit=%s\n' "$dependency" "$actual"
+        done
         printf 'attestation=%s\nsecure_header=%s\n' \
             "${WT_ATTEST_COSE:-0}" "${WT_SECURE_IMAGE_HEADER_SIZE:-0}"
         printf 'guest_flags=%s\n' "$1"
