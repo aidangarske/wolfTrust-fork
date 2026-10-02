@@ -601,7 +601,20 @@ bothpsa|bothiso|attestneg|hsmattackneg|fwustage)
             mask="$(mailbox_word "$(guest_result_addr 0)" 36)"
             check "$([ "$mask" = 0000001f ]; echo $?)" "all FWU staging and error checks passed (0x$mask)"
             trailer="$(mailbox_word 0x281bfffc 0)"
-            check "$([ "$trailer" = ffffffff ]; echo $?)" "update trigger disarmed after cleanup (0x$trailer)" ;;
+            check "$([ "$trailer" = ffffffff ]; echo $?)" "update trigger disarmed after cleanup (0x$trailer)"
+            # The later out-of-order negative rewrites only sector zero.
+            # Independently retain and compare the remaining 128 KiB body
+            # and its 32-byte tail, beyond that intentionally replaced sector.
+            python3 - "$work/fwu-body-expected.bin" <<'PYEOF'
+from pathlib import Path
+import sys
+body = b"".join(bytes([(offset // 512) & 0xff]) * 512
+                for offset in range(0x1000, 0x21000, 512))
+Path(sys.argv[1]).write_bytes(body + bytes([0x22]) * 32)
+PYEOF
+            verify_at 0x28181000 "$work/fwu-body-expected.bin"
+            sha256sum "$work/fwu-body-expected.bin" "$work/readback-28181000.bin" \
+                > "$work/fwu-body-sha256.txt" ;;
     esac
     log "PASS: hardware/$scenario"
     ;;

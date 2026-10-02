@@ -365,6 +365,10 @@ the guest ELF. They require complete framework, crypto, storage, key,
 attestation and rejection verdicts from both clients, plus matching signed
 image measurements and peer progress. The portable clients remain bare-metal;
 their results do not qualify the Zephyr/FreeRTOS pair required by issue #60.
+`fwustage` also retains and compares 128 KiB of staged NOR body plus its
+32-byte tail after cleanup. The out-of-order write negative intentionally
+replaces the first sector, which is excluded from that body comparison.
+This staging fixture does not prove authenticated v2 swap or rollback.
 
 The hardware `restart` case reads Secure RAM from guest0 on every launch.
 It requires three restarts, one quarantine, the exact denied address, a
