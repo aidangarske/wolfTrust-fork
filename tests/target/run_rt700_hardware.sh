@@ -98,6 +98,11 @@ record_build() {
         printf 'date_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         printf 'commit=%s\n' "$(git -C "$repo" rev-parse HEAD)"
         printf 'scenario=%s\nengine=%s\n' "$scenario" "${WT_ENGINE:-native}"
+        printf 'guest_fixture=%s\n' "${WT_RT700_GUEST_FIXTURE:-baremetal}"
+        if [ "${WT_RT700_GUEST_FIXTURE:-baremetal}" = os ]; then
+            printf 'zephyr_commit=%s\n' "$(git -C "${ZEPHYR_BASE:-$repo/tests/firmware/zephyr-stm32h5/.workspace/zephyrproject/zephyr}" rev-parse HEAD)"
+            printf 'freertos_kernel_commit=%s\n' "$(git -C "${FREERTOS_DIR:-$repo/tests/firmware/zephyr-stm32h5/.workspace/freertos}/FreeRTOS/Source" rev-parse HEAD)"
+        fi
         printf 'attestation=%s\nsecure_header=%s\n' \
             "${WT_ATTEST_COSE:-0}" "${WT_SECURE_IMAGE_HEADER_SIZE:-0}"
         printf 'guest_flags=%s\n' "$1"
@@ -372,6 +377,7 @@ run_chain() {
         verify_at "$guest1_flash_addr" "$guest1_build/guest1.bin" parked
     fi
     start_uart
+    os_boot_started=$SECONDS
     reset_board
     sleep 2
     if [ "$(rt700_guest_kind "$scenario")" != conformance ] && [ "$scenario" != restart ]; then
@@ -406,12 +412,47 @@ check_guest() {
 }
 
 # Result addresses come from this run's guest ELF, not assumed RAM offsets.
-guest_result_addr() {
+guest_symbol() {
     local addr
     addr="$(arm-none-eabi-nm "$work/images/guest$1.elf" |
-        awk '$3 == "g_guest_mailbox" { print "0x" $1 }')"
-    [ -n "$addr" ] || fail "guest$1 result record missing from its ELF"
+        awk -v symbol="$2" '$3 == symbol { addr = "0x" $1; n++ }
+            END { if (n != 1) exit 1; print addr }')" || \
+        fail "guest$1 symbol $2 missing or ambiguous in its ELF"
     printf '%s\n' "$addr"
+}
+
+guest_result_addr() {
+    guest_symbol "$1" g_guest_mailbox
+}
+
+check_os_guests() {
+    local id base a b elapsed_a elapsed_b errors signature crypto expected
+    local deadline=$((os_boot_started + 30))
+    for id in 0 1; do
+        base="$(guest_symbol "$id" g_os_progress)"
+        while :; do
+            a="$(mailbox_word "$base" 0)"
+            b="$(mailbox_word "$base" 4)"
+            crypto="$(mailbox_word "$base" 24)"
+            elapsed_a="$(mailbox_word "$base" 8)"
+            elapsed_b="$(mailbox_word "$base" 28)"
+            [ "$a" = 0000000a ] && [ "$b" = 0000000a ] && \
+                [ "$crypto" = 0000000a ] && [ $((0x$elapsed_a)) -ge 1000 ] && \
+                [ $((0x$elapsed_b)) -ge 1000 ] && break
+            [ "$SECONDS" -lt "$deadline" ] || fail "guest$id OS timers did not complete within 30 seconds"
+            sleep 1
+        done
+        errors="$(mailbox_word "$base" 12)"
+        signature="$(mailbox_word "$base" 20)"
+        expected=5a455048
+        [ "$id" = 1 ] && expected=46524545
+        check "$([ "$signature" = "$expected" ]; echo $?)" \
+            "guest$id real OS signature (0x$signature)"
+        check "$([ "$errors" = 00000000 ] && [ $((0x$elapsed_a)) -le 30000 ] && \
+            [ $((0x$elapsed_b)) -le 30000 ]; echo $?)" \
+            "guest$id both OS tasks slept ten times with bounded timers and peer crypto"
+        check_peer_progress "$base" 16
+    done
 }
 
 check_psa_guest() {
@@ -589,7 +630,11 @@ bothpsa|bothiso|attestneg|hsmattackneg|fwustage)
     for id in 0 1; do
         check_psa_guest "$id"
     done
-    check_peer_progress "$(guest_result_addr 1)" 16
+    if [ "${WT_RT700_GUEST_FIXTURE:-baremetal}" = os ]; then
+        check_os_guests
+    else
+        check_peer_progress "$(guest_result_addr 1)" 16
+    fi
     case "$scenario" in
         attestneg)
             mask="$(mailbox_word "$(guest_result_addr 0)" 32)"

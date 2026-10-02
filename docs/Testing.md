@@ -370,6 +370,13 @@ their results do not qualify the Zephyr/FreeRTOS pair required by issue #60.
 replaces the first sector, which is excluded from that body comparison.
 This staging fixture does not prove authenticated v2 swap or rollback.
 
+With `WT_RT700_GUEST_FIXTURE=os`, the hardware PSA cases resolve each
+OS timer record from its matching guest ELF. Both independent OS tasks must
+complete ten sleeps, each total duration must stay within 1000..30000 ms,
+ten repeated mediated crypto rounds must succeed, and the error count must
+remain zero. The sleeping heartbeat must continue afterward. Evidence records
+the OS fixture and pinned Zephyr and FreeRTOS kernel revisions.
+
 The hardware `restart` case reads Secure RAM from guest0 on every launch.
 It requires three restarts, one quarantine, the exact denied address, a
 scrubbed guest0 heartbeat, and a continuing guest1 heartbeat. Images are
