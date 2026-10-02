@@ -392,8 +392,12 @@ static void wt_secure_hardfault_dispatch(void) __attribute__((noreturn, used));
 
 static void wt_secure_hardfault_dispatch(void)
 {
+    uint32_t cfsr = WT_SCB_CFSR_S;
+    uint32_t hfsr = WT_SCB_HFSR_S;
+
     g_last_fault_address = 0u;
-    WT_SCB_HFSR_S = WT_SCB_HFSR_FORCED;
+    WT_SCB_CFSR_S = cfsr & WT_SCB_CFSR_BFSR_MASK;
+    WT_SCB_HFSR_S = hfsr;
     wt_monitor_on_guest_fault(&g_wt_guest_no_frame, WT_FAULT_SECURE_ESCALATION);
     wt_platform_panic();
     __builtin_unreachable();

@@ -62,11 +62,16 @@ volatile uint32_t g_wt_spm_fault_pc __attribute__((used));
 volatile uint32_t g_wt_spm_fault_exc_return __attribute__((used));
 
 /* Stackless: a main-stack overflow or HardFault may arrive with MSP at or
- * under its limit, so the latch is written in asm and the halt tail-called. */
+ * under its limit, so the latch is written in asm and the halt tail-called.
+ * First fault wins: the panic BKPT escalating without a debugger keeps it. */
 __attribute__((naked, noreturn, used))
 void wt_armv8m_spm_fault_halt(void)
 {
     __asm volatile(
+        "ldr   r2, =g_wt_spm_fault_exc_return  \n"
+        "ldr   r1, [r2]                        \n"
+        "cmp   r1, #0                          \n"
+        "bne   2f                              \n"
         "ldr   r0, =0xE000ED28                 \n"
         "ldr   r1, [r0, #0]                    \n"
         "ldr   r2, =g_wt_spm_fault_cfsr        \n"
@@ -87,7 +92,7 @@ void wt_armv8m_spm_fault_halt(void)
         "ldr   r1, [r0, #0]                    \n"
         "ldr   r2, =0x00101818                 \n"
         "tst   r1, r2                          \n"
-        "movs  r1, #0                          \n"
+        "mov   r1, #0                          \n"
         "bne   1f                              \n"
         "tst   lr, #0x40                       \n"
         "beq   1f                              \n"
@@ -99,6 +104,7 @@ void wt_armv8m_spm_fault_halt(void)
         "1:                                    \n"
         "ldr   r2, =g_wt_spm_fault_pc          \n"
         "str   r1, [r2]                        \n"
+        "2:                                    \n"
         "b     wt_platform_panic               \n"
     );
 }
@@ -119,12 +125,15 @@ __attribute__((naked)) void HardFault_Handler(void)
 static void wt_spm_fault_latch(uint32_t cfsr, const uint32_t *frame,
                                uint32_t exc_return)
 {
-    g_wt_spm_fault_cfsr = cfsr;
-    g_wt_spm_fault_hfsr = WT_SCB_HFSR_S;
-    g_wt_spm_fault_mmfar = WT_SCB_MMFAR_S;
-    g_wt_spm_fault_bfar = WT_SCB_BFAR_S;
-    g_wt_spm_fault_pc = ((cfsr & WT_SCB_CFSR_NO_FRAME) == 0u) ? frame[6] : 0u;
-    g_wt_spm_fault_exc_return = exc_return;
+    if (g_wt_spm_fault_exc_return == 0u) {
+        g_wt_spm_fault_cfsr = cfsr;
+        g_wt_spm_fault_hfsr = WT_SCB_HFSR_S;
+        g_wt_spm_fault_mmfar = WT_SCB_MMFAR_S;
+        g_wt_spm_fault_bfar = WT_SCB_BFAR_S;
+        g_wt_spm_fault_pc = ((cfsr & WT_SCB_CFSR_NO_FRAME) == 0u) ?
+                            frame[6] : 0u;
+        g_wt_spm_fault_exc_return = exc_return;
+    }
     wt_platform_panic();
 }
 
