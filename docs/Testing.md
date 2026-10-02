@@ -205,6 +205,13 @@ make test-vnet-target
 `test-vnet` is host-only. `test-vnet-target` launches two
 authenticated wolfIP guests under M33MU.
 
+The wolfIP guests poll once per guest millisecond and idle between ticks so
+empty copied IPC calls leave time for the guest clock to advance. The `vnet`
+and `vnetneg` M33MU scenarios allow 180 wall-clock seconds for the initial ARP
+delay in guest time and the copied IPC round trip on shared runners. Both
+require the mediated ping reply and clean breakpoint exit; `vnetneg` also
+requires both isolation faults and recovery.
+
 ### Engine matrix
 
 The full CI scenario list adds `engine: [native, hsm]` as a matrix dimension.

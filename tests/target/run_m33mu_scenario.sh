@@ -272,6 +272,11 @@ fi
 quit_flag="--quit-on-faults"
 expect_bkpt=0x7f
 timeout_s=60
+if [ "$scenario" = "vnet" ] || [ "$scenario" = "vnetneg" ]; then
+  # wolfIP's initial ARP delay uses guest time, which can take longer than
+  # 60 wall-clock seconds to advance on a shared CI runner.
+  timeout_s=180
+fi
 if [ "$scenario" = "restart" ]; then
   quit_flag=""
   timeout_s=40
