@@ -275,6 +275,12 @@ run_chain() {
     local guest_flags="$1"
     local secure_flags
     secure_flags="$(scenario_secure_flags "$scenario")"
+    # Guest Makefiles recursively build the CMSE library. Their build mode
+    # must match the Secure image or that rebuild invalidates wolftrust.bin.
+    if [ -n "$secure_flags" ]; then
+        # shellcheck disable=SC2086,SC2163
+        export $secure_flags
+    fi
 
     ensure_spsdk
     mkdir -p "$work"
