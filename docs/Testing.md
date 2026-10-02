@@ -366,6 +366,11 @@ attestation and rejection verdicts from both clients, plus matching signed
 image measurements and peer progress. The portable clients remain bare-metal;
 their results do not qualify the Zephyr/FreeRTOS pair required by issue #60.
 
+The hardware `restart` case reads Secure RAM from guest0 on every launch.
+It requires three restarts, one quarantine, the exact denied address, a
+scrubbed guest0 heartbeat, and a continuing guest1 heartbeat. Images are
+verified with the core parked before the faulting fixture starts.
+
 The hardware adapter also accepts `confboot`, `devstorage`, `devcrypto`,
 `devattest`, `devattestqcbor`, and `vaultrecover`. It uses the pinned Arm suite
 with diagnostic breakpoints disabled, flushes the parked XSPI read path and

@@ -224,7 +224,7 @@ clear_mailboxes() {
     refused="$(elf_sym g_wt_launch_refused_mask)"
     # Resolve only counters this case asserts. LTO legitimately removes the
     # guest restart counter in the conformance image, which has no such path.
-    if [ "$scenario" = ahbscneg ]; then
+    if [ "$scenario" = ahbscneg ] || [ "$scenario" = restart ]; then
         restarts="$(elf_sym g_wt_restart_events)"
         quarantines="$(elf_sym g_wt_quarantine_events)"
         fault_addr="$(elf_sym g_last_fault_address)"
@@ -361,9 +361,9 @@ run_chain() {
     fi
     clear_mailboxes
 
-    if [ "$(rt700_guest_kind "$scenario")" = conformance ]; then
-        # The suite writes NOR and intentionally resets the whole platform.
-        # Verify while the core stays parked, before those operations begin.
+    if [ "$(rt700_guest_kind "$scenario")" = conformance ] || [ "$scenario" = restart ]; then
+        # Conformance writes NOR and resets; restart deliberately faults.
+        # Verify while the core stays parked, before either operation begins.
         verify_at "$xspi0_base" "$work/flash_wolfboot.bin" parked
         verify_at "$secure_flash_addr" "$repo/build/wolftrust_v1_signed.bin" parked
         verify_at "$guest0_flash_addr" "$guest_build/guest0.bin" parked
@@ -372,7 +372,7 @@ run_chain() {
     start_uart
     reset_board
     sleep 2
-    if [ "$(rt700_guest_kind "$scenario")" != conformance ]; then
+    if [ "$(rt700_guest_kind "$scenario")" != conformance ] && [ "$scenario" != restart ]; then
         verify_at "$xspi0_base" "$work/flash_wolfboot.bin"
         verify_at "$secure_flash_addr" "$repo/build/wolftrust_v1_signed.bin"
         verify_at "$guest0_flash_addr" "$guest_build/guest0.bin"
@@ -618,9 +618,8 @@ romsmoke)
     check "$(case "$pc" in 0x2800[4-9]*|0x2800[a-f]*) echo 0;; *) echo 1;; esac)" "PC inside the XIP image ($pc)"
     log "PASS: hardware/romsmoke"
     ;;
-positive|ahbscneg)
-    guest_flags=""
-    [ "$scenario" = "ahbscneg" ] && guest_flags="WT_AHBSC_PROBE=1"
+positive|ahbscneg|restart)
+    guest_flags="$(rt700_guest_flags "$scenario" 0)"
     run_chain "$guest_flags"
 
     check_launch_masks 00000003 00000000
@@ -629,9 +628,9 @@ positive|ahbscneg)
         check_guest 0 0x20100000
     fi
 
-    if [ "$scenario" = "ahbscneg" ]; then
-        # guest0 stores a sentinel into guest1's RAM, which the per-dispatch SAU
-        # window keeps Secure while guest0 runs.
+    if [ "$scenario" = "ahbscneg" ] || [ "$scenario" = restart ]; then
+        # ahbscneg stores into peer RAM; restart reads Secure RAM on launch.
+        # The SAU denies both accesses while preserving the live peer.
         # Restart/quarantine scrubs guest0's RAM, including its probe latch.
         # Use Secure records to distinguish the intended fault from an image
         # that never ran or an unrelated fault. Completion remains bounded.
@@ -646,8 +645,10 @@ positive|ahbscneg)
         check "$([ "$restarts" = 00000003 ] && [ "$quarantines" = 00000001 ]; echo $?)" \
             "guest0 spent three restarts, then quarantined (0x$restarts/0x$quarantines)"
         fault_addr="$(mailbox_word "$(elf_sym g_last_fault_address)" 0)"
-        check "$([ "$fault_addr" = 20170000 ]; echo $?)" \
-            "fault identifies guest0's denied peer-RAM store (0x$fault_addr)"
+        want_fault=20170000
+        [ "$scenario" = restart ] && want_fault=30188000
+        check "$([ "$fault_addr" = "$want_fault" ]; echo $?)" \
+            "fault identifies guest0's denied access (0x$fault_addr, want 0x$want_fault)"
         peer="$(mailbox_word 0x20170000 0)"
         check "$([ "$peer" = "00000000" ]; echo $?)" \
             "guest1 target RAM remains unchanged (0x$peer)"
@@ -661,7 +662,7 @@ positive|ahbscneg)
             "guest1 still running after guest0's faults (beat 0x$beat1 -> 0x$beat2)"
         g0beat="$(mailbox_word 0x20100000 36)"
         check "$([ "$g0beat" = "00000000" ]; echo $?)" \
-            "guest0 never got past its probe store (beat 0x$g0beat)"
+            "guest0 never got past its denied access (beat 0x$g0beat)"
         ipsr="$(dap -c halt -c 'reg xpsr' -c go | sed -n 's/^xpsr = 0x\([0-9a-fA-F]*\).*/\1/p')"
         ipsr=$((0x${ipsr:-3} & 0x1ff))
         check "$([ "$ipsr" -lt 2 ] || [ "$ipsr" -gt 7 ]; echo $?)" \
@@ -724,7 +725,7 @@ wrpneg)
     log "PASS: hardware/$scenario"
     ;;
 *)
-    log "usage: $0 romsmoke|positive|ahbscneg|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover"
+    log "usage: $0 romsmoke|positive|ahbscneg|restart|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover"
     exit 2
     ;;
 esac
