@@ -1,0 +1,56 @@
+Loaded BIN image /work/fixture/wolfboot.bin: 383536 bytes [0x0c000000..0x0c05da30]
+Loaded BIN image /work/fixture/wolftrust_v1_signed.bin: 103624 bytes [0x0c060000..0x0c0794c8]
+Loaded BIN image /work/fixture/guest0.bin: 100192 bytes [0x0c0a0000..0x0c0b8760]
+Loaded BIN image /work/fixture/guest1.bin: 32236 bytes [0x0c0e0000..0x0c0e7dec]
+Loaded total 619588 bytes (max_end=0x0c0e7dec)
+[FLASH] SECWM not provisioned; flash TZ filter inert. Pass --secwm1/--secwm2 to model a provisioned part.
+Initial SP=0x30020000 PC=0x0c000ba9
+VTOR_S=0x0c000000 VTOR_NS=0x08000000
+[CLOCK] CPU 64000000 Hz
+[CLOCK] CPU 248000000 Hz
+[CLOCK] CPU 64000000 Hz
+[CLOCK] CPU 240000000 Hz
+[UART] 40004800 attached to stdio
+[UART] 44002400 attached to /dev/pts/0
+[00:00:00.000,000] [0m<inf> wolftrust_wolfhsm_client: wolfHSM devId=0x5748534d registered[0m
+*** Booting Zephyr OS build v4.2.0 ***
+[00:00:00.000,000] [0m<inf> wolfpsa_zephyr: wolfPSA up; default devId=0x5748534d[0m
+[00:00:00.000,000] [0m<inf> guest0_psa: guest0_psa alive[0m
+[00:00:00.000,000] [0m<inf> guest0_psa: wolfTrust TEE client initialized[0m
+[00:00:00.000,000] [0m<inf> guest0_psa: tee impl_id=0x57545254 gen_caps=0x1[0m
+[00:00:00.000,000] [0m<inf> guest0_psa: tee_invoke_func(cancel) rc=0 ret=0x0[0m
+[00:00:00.000,000] [0m<inf> guest0_psa: wolfTrust FF-M psa_framework_version=0x0100[0m
+[00:00:00.000,000] [0m<inf> guest0_psa: wolfTrust FF-M mediated crypto dispatch verified[0m
+[00:00:00.001,000] [0m<inf> guest0_psa: wolfTrust ITS set/get verified[0m
+[00:00:00.003,000] [0m<inf> guest0_psa: wolfTrust PS sealed set/get verified[0m
+[00:00:00.036,000] [0m<inf> guest0_psa: wolfTrust key-ops sign/verify verified[0m
+[00:00:00.063,000] [0m<inf> guest0_psa: wolfTrust key negatives verified[0m
+[00:00:00.063,000] [0m<inf> guest0_psa: wolfTrust FF-M forged-handle call rejected st=-129[0m
+[00:00:00.063,000] [0m<inf> guest0_psa: wolfTrust FF-M oversize[UART] 40004800 attached to stdio
+freertos_guest1: alive
+freertos_guest1: ffm sha256 ok first=0x20
+freertos_guest1: ffm rng ok
+freertos_guest1: psa_crypto_init st=0
+freertos_guest1: psa rng ok
+freertos_guest1: psa hash ok
+freertos_guest1: ffm forged-handle rejected
+freertos_guest1: ffm oversized-vector rejected
+freertos_guest1: ffm cross-guest vector rejected
+freertos_guest1: ffm wrong-sid refused
+d-vector call rejected st=-135[0m
+[00:00:00.066,000] [0m<inf> guest0_psa: psa_initial_attestation short-buffer rejected correctly[0m
+[00:00:00.071,000] [0m<inf> guest0_psa: psa_initial_attestation st=0 token_len=509[0m
+[00:00:00.071,000] [0m<inf> guest0_psa: wolfTrust attestation: wolfCOSE COSE_Sign1 signed by wolfHSM[0m
+[00:00:00.071,000] [0m<inf> guest0_psa: wolfTrust attestation: IAK public key prefix=5f7f23a0dcd958f9[0m
+[00:00:00.066,000] [0m<inf> guest0_psa: wolfTrust attestation: COSE_Sign1 verified[0m
+[00:00:00.066,000] [0m<inf> guest0_psa: wolfTrust attestation: token measurement=011f12110849fe859bba8b452e236b9e4c7845a9110f3c701a93fcaf3f31c6a0[0m
+[00:00:00.066,000] [0m<inf> guest0_psa: attestation verify=0 challenge=ok identity=ok lifecycle=0x1000 measurement=ok cose=ES256[0m
+[00:00:00.079,000] [0m<inf> guest0_psa: secured lifecycle policy rejected development token[0m
+[00:00:00.079,000] [0m<inf> guest0_psa: psa_generate_random st=0 first=0xed[0m
+[00:00:00.079,000] [0m<inf> guest0_psa: psa_hash_compute(SHA-256) KAT verified[0m
+[00:00:00.079,000] [0m<inf> guest0_psa: psa_cipher_encrypt(AES-CTR) st=0 ct_len=32[0m
+[00:00:00.080,000] [0m<inf> guest0_psa: guest0_psa done[0m
+[BKPT] imm=0x7f
+[EXPECT BKPT] Success
+Execution stopped after 41670564 virtual cycles; PC=0x080a0533 LR=0x080a38a7
+SysTick wraps=52 avg_cycles_per_wrap=801357.0

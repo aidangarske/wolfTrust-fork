@@ -1,0 +1,36 @@
+name: M33MU original failure proof for issue 34
+'on':
+  push:
+    branches:
+    - ci/m33mu-console-proof-34
+permissions:
+  contents: read
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run byte and line-boundary regressions
+      run: python3 tests/scripts/test_m33mu_console.py
+    - name: Same failing capture main fails fix passes and damaged captures fail
+      shell: bash
+      run: 'python3 tests/scripts/stress_m33mu_console.py --replay tests/scripts/m33mu_console_failed_capture.log
+        > proof.json
+
+        cat proof.json
+
+        python3 - <<''PYCODE''
+
+        import json
+
+        from pathlib import Path
+
+        r=json.loads(Path(''proof.json'').read_text())
+
+        assert r[''fixed_status''] == 0 and r[''main_status''] != 0, r
+
+        print(''PASS: same original failing capture rejects on main and passes with
+        fix'')
+
+        PYCODE'
