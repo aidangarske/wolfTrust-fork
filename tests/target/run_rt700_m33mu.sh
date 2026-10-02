@@ -80,7 +80,7 @@ repo="$(cd "$here/../.." && pwd)"
 . "$here/lib/rt700_guests.sh"
 rt700_set_guest_paths
 case "$(rt700_guest_kind "$scenario")" in
-  psa) timeout_s="${RT700_M33MU_TIMEOUT:-180}" ;;
+  psa|os) timeout_s="${RT700_M33MU_TIMEOUT:-180}" ;;
   conformance) timeout_s="${RT700_M33MU_TIMEOUT:-900}" ;;
   *) timeout_s="${RT700_M33MU_TIMEOUT:-60}" ;;
 esac
