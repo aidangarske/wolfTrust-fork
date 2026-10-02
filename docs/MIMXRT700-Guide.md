@@ -435,16 +435,13 @@ and the shadow override to be open.
 ### Stage 2: rehearse a state (mock lock)
 
 `advance` puts the part in the target state until the next reset, and
-`regress` brings it back. Together they are the rehearsal that the real `lock`
-for that state requires. Nothing here is permanent.
+`regress`, after the validation in stage 3, brings it back. Together they are
+the rehearsal that the real `lock` for that state requires. Nothing here is
+permanent. Rehearse one state at a time: `advance 0x07`, stage 3, then the
+same for `0x0F` and `0xCF`.
 
 ```sh
 WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0x07
-WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
-WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0x0F
-WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
-WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh advance 0xCF
-WT_LOCK_CONFIRM=1 tests/target/provisioning/provisioning_ctrl.sh regress
 ```
 
 Output on the EVK for Develop2:
@@ -457,9 +454,6 @@ wolfTrust saw 0x00002000 (PSA_ROT_PROVISIONING)
   [check] PASS  guests launched (verified=0x00000003 refused=0x00000000)
   [check] PASS  the images on the part match the host build (8841d566395ee97b)
 rehearsal of develop2 (0x07) recorded; 'regress' completes it
-  [check] PASS  hardware reset reloaded the fused develop life cycle
-  [check] PASS  wolfTrust booted ASSEMBLY_AND_TEST again
-  [check] PASS  rehearsal of develop2 (0x07) complete
 ```
 
 How `advance` works:
@@ -481,10 +475,11 @@ How `advance` works:
 Past Develop2, `advance` also requires a proven `regress`. That is a hardware
 reset through the board's reset line, which the debug port cannot block.
 
-### Stage 3: validate the rehearsed state
+### Stage 3: validate the rehearsed state, then regress
 
-Before regressing, check that the part behaves like the product you intend to
-ship. Output on the EVK after `advance 0xCF`, the mock locked state:
+While the part is still in the mock state, check that it behaves like the
+product you intend to ship, then `regress` to complete the rehearsal. Output
+on the EVK after `advance 0xCF`, the mock locked state:
 
 ```text
 $ tests/target/provisioning/provisioning_ctrl.sh status
