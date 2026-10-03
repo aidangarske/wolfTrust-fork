@@ -8,7 +8,7 @@ continue
 delete $bpnum
 hbreak wt_virtual_systick_save_departing if g_active_guest == 1 && (g_live_exc_return & 0x4c) == 0x0c && ($xpsr & 0x1ff) != 0
 continue
-set $ctx = g_scheduler.runtime[1].context
+set $ctx = &$contexts[1]
 set $taskframe = (wt_trap_frame_t *)$ctx->psp_ns
 printf "FRAME exc=%#x MSP=%#x PSP=%#x savedPC=%#x taskPC=%#x\n", g_live_exc_return, $ctx->msp_ns, $ctx->psp_ns, $ctx->pc, $taskframe->pc
 if $ctx->pc != $taskframe->pc
@@ -21,7 +21,7 @@ if $ctx->msp_ns == $ctx->psp_ns
 end
 set $handler_msp = $ctx->msp_ns
 continue
-set $ctx = g_scheduler.runtime[1].context
+set $ctx = &$contexts[1]
 set $taskframe = (wt_trap_frame_t *)$ctx->psp_ns
 if $ctx->pc != $taskframe->pc || $ctx->msp_ns != $handler_msp
   echo FAIL: PSP frame or independent MSP changed across guest round trip\n
@@ -53,7 +53,7 @@ end
 # dispatch unrelated NS timer work after its task bank is restored.
 set g_guest_systick[0].csr = 0
 set *(unsigned int *)0xe002ed04 = 0x10000000
-call wt_arch_guest_context_prepare(0, g_scheduler.runtime[0].context)
+call wt_arch_guest_context_prepare(0, &$contexts[0])
 if (*(unsigned int *)0xe002ed04 & 0x10000000) != 0
   echo FAIL: invalid owner departure retained hardware PendSV\n
   quit 1

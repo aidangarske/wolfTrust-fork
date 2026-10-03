@@ -17,6 +17,10 @@ for file in build/wolftrust.elf build/wolftrust_v1_signed.bin \
     [ -f "$file" ] || { echo "FAIL: missing PSP fixture artifact $file" >&2; exit 1; }
 done
 command -v "$gdb" > /dev/null
+# Read actual context storage rather than LTO-optimized scheduler fields.
+contexts="$(arm-none-eabi-nm build/wolftrust.elf |
+    awk '$3 == "g_partition_contexts" { addr = "0x" $1; n++ }
+        END { if (n != 1) exit 1; print addr }')"
 log=build/rt700_psp_frame
 "$m33mu" --cpu imxrt700 --gdb --port "$port" \
     "$boot/wolfboot.bin" build/wolftrust_v1_signed.bin:0x40000 \
@@ -38,6 +42,7 @@ if ! timeout "$budget" "$gdb" --batch \
     -ex "file build/wolftrust.elf" \
     -ex "add-symbol-file $boot/wolfboot.elf" \
     -ex "target remote localhost:$port" \
+    -ex "set \$contexts = (wt_guest_context_t *)$contexts" \
     -x tests/scripts/check_armv8m_psp_frame.gdb > "$log.gdb.log" 2>&1; then
     cat "$log.gdb.log"
     exit 1
