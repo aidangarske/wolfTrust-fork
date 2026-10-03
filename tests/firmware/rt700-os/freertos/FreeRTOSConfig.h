@@ -45,7 +45,9 @@ void wt_os_assert(void);
 
 #define configCPU_CLOCK_HZ                        237500000u
 #define configTICK_RATE_HZ                        100u
-#define configSYSTICK_CLOCK_HZ                    configCPU_CLOCK_HZ
+/* Leave configSYSTICK_CLOCK_HZ undefined: the CM33 port then selects the
+ * core clock. Defining it selects the reference clock, which is stopped
+ * on the RT700 board even when its stated frequency equals the core. */
 
 #define configTOTAL_HEAP_SIZE                     ( (size_t) ( 64 * 1024 ) )
 #define configSUPPORT_DYNAMIC_ALLOCATION          1
