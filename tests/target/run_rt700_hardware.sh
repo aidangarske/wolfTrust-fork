@@ -270,7 +270,11 @@ clear_mailboxes() {
 # Parking leaves the reset vector catch armed; a resuming reset clears it so
 # the warm reset below boots the chain instead of halting in the BootROM.
 reset_board() {
-    timeout 60 pyocd reset -t "$target" -m hw >/dev/null 2>&1 || \
+    local reset_target="$target"
+    # The device-pack connection itself resets the chip; a generic attach
+    # lets writeonce observe one boot per explicit hardware reset.
+    [ "$scenario" = writeonce ] && reset_target=cortex_m
+    timeout 60 pyocd reset -t "$reset_target" -m hw >/dev/null 2>&1 || \
         fail "could not release the core"
     # Each observed writeonce phase needs one boot, without an intervening
     # second reset changing SEEDED to VERIFIED before it can be observed.
