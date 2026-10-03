@@ -85,6 +85,11 @@ the capability accurately and reject a manifest that requires more.
 
 ### Isolation level 3
 
+A new port must implement isolation level 3 unless it specifically targets
+level 1 or 2. `WT_ISOLATION_LEVEL` (default 3) selects the level the secure
+image implements and gates the shared level 3 layer; only level 3 exists
+today, so any other value stops the build.
+
 Every port of an architecture gets level 3 from `port/common/<arch>/`
 instead of writing it again. For Armv8-M that layer provides:
 

@@ -59,6 +59,15 @@ ARCH_SRCS := \
     $(ROOT)/src/arch/armv8m/sau_armv8m.c \
     $(ROOT)/src/arch/armv8m/start_armv8m.c
 
+# Isolation level the secure image implements. Only level 3 exists, so any
+# other value stops the build; the shared level 3 layer is gated on it.
+WT_ISOLATION_LEVEL ?= 3
+ifneq ($(WT_ISOLATION_LEVEL),3)
+$(error only isolation level 3 is implemented (WT_ISOLATION_LEVEL=$(WT_ISOLATION_LEVEL)))
+endif
+ARCH_CFLAGS += -DWT_ISOLATION_LEVEL=$(WT_ISOLATION_LEVEL)
+
+ifeq ($(WT_ISOLATION_LEVEL),3)
 # Isolation level 3 layer shared by every Armv8-M port: the band layout, its
 # linker fragments and the platform hooks. A port's memory_map.h supplies
 # WT_RAM_S_BASE, from which every band is placed.
@@ -80,6 +89,7 @@ WT_L3_BAND_ARGS = $(shell python3 $(ROOT)/tools/l3_layout_args.py \
 WT_SECURE_LAYOUT_ARGS = $(or $(strip $(WT_L3_BAND_ARGS)),$(error \
     cannot read the level 3 bands from $(PORT_DIR)/memory_map.h)) \
     $(WT_SECURE_LAYOUT_EXTRA_ARGS)
+endif
 
 # CMSE import library for the Non-secure guests, produced by the secure link.
 SECURE_CMSE_IMPLIB := $(BUILD_DIR)/secure_cmse_implib.o

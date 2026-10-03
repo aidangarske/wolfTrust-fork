@@ -25,6 +25,10 @@
 #ifndef WOLFTRUST_PORT_ARMV8M_L3_LAYOUT_H
 #define WOLFTRUST_PORT_ARMV8M_L3_LAYOUT_H
 
+#if defined(WT_ISOLATION_LEVEL) && (WT_ISOLATION_LEVEL != 3)
+#error "l3_layout.h is the isolation level 3 layout; WT_ISOLATION_LEVEL is not 3"
+#endif
+
 #if !defined(WT_RAM_S_BASE) || !defined(WT_RAM_S_SIZE)
 #error "define WT_RAM_S_BASE and WT_RAM_S_SIZE before including l3_layout.h"
 #endif
