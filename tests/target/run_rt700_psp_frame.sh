@@ -45,3 +45,5 @@ fi
 cat "$log.gdb.log"
 grep -F 'PASS: NS PSP task frame metadata and independent MSP survive guest switches' \
     "$log.gdb.log" > /dev/null
+grep -F 'PASS: reset and arrival isolate pending PendSV while restoring owned pending state' \
+    "$log.gdb.log" > /dev/null

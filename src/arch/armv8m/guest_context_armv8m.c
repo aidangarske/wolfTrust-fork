@@ -472,7 +472,7 @@ static void wt_virtual_systick_save_departing(void)
 
     if (g_active_guest >= WT_MAX_GUESTS) {
         WT_SYST_NS_CSR = 0u;
-        WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR;
+        WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR | WT_SCB_ICSR_PENDSVCLR;
         return;
     }
 
@@ -682,10 +682,10 @@ static void wt_virtual_systick_reset(wt_guest_id_t guest_id)
         return;
     }
     if (g_active_guest == guest_id) {
-        /* The faulted guest's hardware timer is still live. Do not let the
-         * next dispatch save it back over the cleared virtual state. */
+        /* The faulted guest's hardware exception state is still live. Do
+         * not let the next dispatch save it over the cleared virtual state. */
         WT_SYST_NS_CSR = 0U;
-        WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR;
+        WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR | WT_SCB_ICSR_PENDSVCLR;
         g_active_guest = UINT32_MAX;
     }
     systick = &g_guest_systick[guest_id];
