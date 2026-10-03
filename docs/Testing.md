@@ -284,9 +284,10 @@ guest against the conformance Secure image (`WT_CONFORMANCE=1`, the manifest
 that adds Arm's server, driver, and client partitions) and expects the same
 85 passed, 4 heap tests skipped, 0 failed; `devstorage`, `devcrypto`,
 `devattest`, and `devattestqcbor` run the dev_apis storage, crypto, and
-initial-attestation suites; `vaultrecover` proves a foreign vault pool
-self-heals on a development device (the crypto suite passes after the
-reformat), and `vaultrecoversec` forces the SECURED lifecycle and proves the
+initial-attestation suites; `vaultrecover` injects a blocked provisioning
+result and exercises recovery on a development device (the crypto suite
+passes after the reformat). It does not create a genuinely foreign or corrupt
+stored object. `vaultrecoversec` forces the SECURED test policy and proves the
 refusal is graceful on the emulator: no fault, and the guest still starts
 (the vault-not-wiped and attestation-degraded counters are hardware-runner
 evidence, read over the debug port as on the STM32H563). The port supplies `port/mimxrt700/manifest-conformance.json`
@@ -377,6 +378,12 @@ ten repeated mediated crypto rounds must succeed, and the error count must
 remain zero. The sleeping heartbeat must continue afterward. Evidence records
 the OS fixture and pinned Zephyr and FreeRTOS kernel revisions.
 
+The hardware `authneg` case changes guest0 after its digest has been patched
+into the authenticated Secure image. Readback must match that changed image,
+guest0 must be refused before writing its result record, and guest1 must
+complete and keep running. The Secure launch masks distinguish the refusal
+from a missing guest observation.
+
 The hardware `restart` case reads Secure RAM from guest0 on every launch.
 It requires three restarts, one quarantine, the exact denied address, a
 scrubbed guest0 heartbeat, and a continuing guest1 heartbeat. Images are
@@ -395,6 +402,12 @@ evidence. The default completion limit is 900 seconds (`RT700_CONF_TIMEOUT`);
 UART report and skip context remain in the case evidence directory. Missing
 SWD observations during intentional resets are retried within that same limit;
 only an exact memory result row can supply a mailbox value.
+
+`vaultrecover` additionally requires the injected provisioning probe to fire,
+the development lifecycle to remain selected, and the production vault
+reformat flag to be set. A passing crypto report alone does not prove that
+recovery executed. Secured fail-closed behavior, preserved foreign objects,
+and storage persistence across an independent reset need separate evidence.
 
 RNG, SHA-256 and AES-128 CTR assertions are shared with the H5 OS fixtures
 under `tests/firmware/common/`. The cipher check uses NIST SP 800-38A F.5.1
