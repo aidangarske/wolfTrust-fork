@@ -2,12 +2,12 @@ name: M33MU
 
 on:
   # Pull requests run each port's smoke tier; the ci:all, ci:h5, and ci:rt700
-  # labels, pushes to main, the nightly schedule (workflow_call from
+  # labels, pushes to main or explicit ci/** branches, the nightly schedule (workflow_call from
   # nightly.yml), and manual dispatch run a port's full matrix.
   pull_request:
     types: [opened, synchronize, reopened, labeled]
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
   workflow_dispatch:
     inputs:
       port:

@@ -592,7 +592,7 @@ each port's smoke tier on both crypto engines (STM32H563: `positive`,
 `gtzcneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`; MIMXRT700:
 `positive`, `ahbscneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`).
 The full matrix runs on a
-push to `main`, on the nightly schedule, on
+push to `main` or an explicit `ci/**` branch, on the nightly schedule, on
 manual dispatch (with a `port` input), and on a pull request that carries the
 `ci:h5`, `ci:rt700`, or `ci:all` label. The scenario groups per port and tier
 are in `tests/target/lib/scenario_matrix.py`; `make test-target TARGET=<port>`
