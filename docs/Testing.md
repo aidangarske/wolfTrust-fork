@@ -340,9 +340,12 @@ write protection).
 
 The runner builds its own pinned emulator and wolfBoot first stage. The
 emulator is upstream M33MU at `M33MU_REF` plus `tests/target/m33mu-imxrt700.patch`,
-which only seeds the OTP fuses with the Develop life cycle an EVK ships in, so
-wolfBoot's life cycle read matches the board; it goes once M33MU seeds it. The
-cached emulator is keyed on that patch. Its Secure AHBSC SRAM rules apply to
+which seeds the Develop lifecycle, models eight TRNG entropy words, and resets
+all four stack-limit banks on both cores. The stack limits reset to zero as
+specified in Arm Cortex-M33 Generic User Guide Table 2-2; retaining the previous
+Secure limit would fault wolfBoot on its first push after a reset. Normal
+stack-limit checks remain enabled. The cached emulator is keyed on that patch.
+Its Secure AHBSC SRAM rules apply to
 CPU0 as documented, which is stricter than the EVK measured.
 wolfBoot is `RT700_WOLFBOOT_REF` (`tests/target/lib/rt700_wolfboot.sh`, shared
 with the hardware runner) built from `config/examples/imx-rt700-tz.config`

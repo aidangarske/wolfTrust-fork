@@ -19,3 +19,25 @@ diff --git a/cpu/imxrt700/imxrt700_secure.c b/cpu/imxrt700/imxrt700_secure.c
      fuses_init = MM_TRUE;
  }
  
+diff --git a/src/main.c b/src/main.c
+index ab61664..7c8ed26 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -6329,6 +6329,8 @@ int main(int argc, char **argv)
+                 cpu.faultmask_s = cpu.faultmask_ns = 0;
+                 cpu.msp_s = cpu.msp_ns = 0;
+                 cpu.psp_s = cpu.psp_ns = 0;
++                cpu.msplim_s = cpu.msplim_ns = 0;
++                cpu.psplim_s = cpu.psplim_ns = 0;
+                 cpu.vtor_s = boot_base_s;
+                 cpu.vtor_ns = boot_base_ns;
+                 cpu.exc_depth = 0;
+@@ -6353,6 +6355,8 @@ int main(int argc, char **argv)
+                     cpu1.faultmask_s = cpu1.faultmask_ns = 0;
+                     cpu1.msp_s = cpu1.msp_ns = 0;
+                     cpu1.psp_s = cpu1.psp_ns = 0;
++                    cpu1.msplim_s = cpu1.msplim_ns = 0;
++                    cpu1.psplim_s = cpu1.psplim_ns = 0;
+                     cpu1.vtor_s = boot_base_s;
+                     cpu1.vtor_ns = boot_base_ns;
+                     cpu1.exc_depth = 0;
