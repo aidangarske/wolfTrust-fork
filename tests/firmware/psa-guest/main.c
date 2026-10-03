@@ -45,6 +45,9 @@
 #include "wolftrust/static_assert.h"
 #include "attestation_verify.h"
 #include "psa_crypto_checks.h"
+#if defined(WT_STORAGE_RESET_PROBE)
+#include "psa_storage_reset_checks.h"
+#endif
 
 #if defined(WT_ENGINE_HSM)
 #include "wolfssl/wolfcrypt/cryptocb.h"
@@ -135,6 +138,10 @@ WT_STATIC_ASSERT(offsetof(guest_mailbox_t, conformance_status) == 76u,
 __attribute__((section(".shared"), used))
 #endif
 volatile guest_mailbox_t g_guest_mailbox;
+
+#if defined(WT_STORAGE_RESET_PROBE)
+volatile wt_storage_reset_result_t g_storage_reset __attribute__((used));
+#endif
 
 #if !defined(WT_GUEST_OS)
 extern uint32_t _estack;
@@ -361,6 +368,23 @@ static void exercise_ps(void)
     guest_line("wolfTrust PS sealed set/get verified");
     g_guest_mailbox.lifecycle |= GUEST_LC_PS;
 }
+
+#if defined(WT_STORAGE_RESET_PROBE)
+static void exercise_storage_reset(void)
+{
+    wt_storage_reset_result_t result;
+    psa_status_t status;
+
+    status = wt_guest_storage_reset_check(&result);
+    g_storage_reset = result;
+    if (status == PSA_SUCCESS) {
+        guest_line_i32("wolfTrust storage-reset phase=", (int32_t)result.phase);
+    }
+    else {
+        guest_line_i32("wolfTrust storage-reset FAILED st=", (int32_t)status);
+    }
+}
+#endif
 
 /* ---- key operations ----------------------------------------------------- */
 
@@ -1215,6 +1239,9 @@ void wt_guest_lifecycle(void)
     }
     exercise_its();
     exercise_ps();
+#if defined(WT_STORAGE_RESET_PROBE)
+    exercise_storage_reset();
+#endif
     exercise_keys();
     exercise_key_negatives();
     exercise_ffm_negatives();

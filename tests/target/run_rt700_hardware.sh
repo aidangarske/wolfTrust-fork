@@ -120,7 +120,11 @@ record_build() {
             "${WT_ATTEST_COSE:-0}" "${WT_SECURE_IMAGE_HEADER_SIZE:-0}"
         printf 'guest_flags=%s\n' "$1"
         printf 'secure_flags=%s\n' "${secure_flags:-}"
-        printf 'reset=hardware reset plus GPIO20, retained SRAM\n'
+        if [ "$scenario" = writeonce ]; then
+            printf 'reset=individual probe hardware resets, retained vault\n'
+        else
+            printf 'reset=hardware reset plus GPIO20, retained SRAM\n'
+        fi
         printf 'vault_policy=%s\n' "${2:-unchanged}"
         git -C "$repo" status --short --untracked-files=no
         git -C "$repo" submodule status
@@ -268,7 +272,11 @@ clear_mailboxes() {
 reset_board() {
     timeout 60 pyocd reset -t "$target" -m hw >/dev/null 2>&1 || \
         fail "could not release the core"
-    "$here/lib/rt700_reset.sh" reset
+    # Each observed writeonce phase needs one boot, without an intervening
+    # second reset changing SEEDED to VERIFIED before it can be observed.
+    if [ "$scenario" != writeonce ]; then
+        "$here/lib/rt700_reset.sh" reset
+    fi
 }
 
 
@@ -521,6 +529,26 @@ PYEOF
         "guest$id token measurement matches the signed Secure image ($measurement)"
 }
 
+check_storage_reset() {
+    local want="$1" base signature phase bits status its_flags ps_flags
+    base="$(guest_symbol 0 g_storage_reset)"
+    signature="$(mailbox_word "$base" 0)"
+    phase="$(mailbox_word "$base" 4)"
+    bits="$(mailbox_word "$base" 8)"
+    status="$(mailbox_word "$base" 12)"
+    its_flags="$(mailbox_word "$base" 16)"
+    ps_flags="$(mailbox_word "$base" 20)"
+    check "$([ "$signature" = 57545352 ] && [ "$phase" = "$want" ]; echo $?)" \
+        "storage reset phase 0x$phase (want 0x$want, signature 0x$signature)"
+    check "$([ "$bits" = 000003ff ] && [ "$status" = 00000000 ]; echo $?)" \
+        "ITS/PS exact data, metadata, set/remove refusal and unchanged data (0x$bits/0x$status)"
+    check "$([ "$its_flags" = 00000001 ] && [ "$ps_flags" = 00000001 ]; echo $?)" \
+        "both objects retain WRITE_ONCE metadata (0x$its_flags/0x$ps_flags)"
+    reformatted="$(mailbox_word "$(elf_sym g_vault_reformatted)" 0)"
+    check "$([ "$reformatted" = 00000000 ]; echo $?)" \
+        "storage boot did not use the vault reformat recovery path"
+}
+
 check_peer_progress() {
     local base="$1" offset="$2" before after
     before="$(mailbox_word "$base" "$offset")"
@@ -639,6 +667,25 @@ check_launch_masks() {
 }
 
 case "$scenario" in
+writeonce)
+    run_chain "$(rt700_guest_flags "$scenario" 0)"
+    check_launch_masks 00000003 00000000
+    check_psa_guest 0
+    check_psa_guest 1
+    check_storage_reset 00000001
+    check_peer_progress "$(guest_result_addr 1)" 16
+    stage "independent second hardware reset with vault and images retained"
+    clear_mailboxes
+    reset_board
+    sleep 2
+    check_launch_masks 00000003 00000000
+    check_psa_guest 0
+    check_psa_guest 1
+    check_storage_reset 00000002
+    check_peer_progress "$(guest_result_addr 1)" 16
+    stop_uart
+    log "PASS: hardware/$scenario"
+    ;;
 authneg)
     run_chain ""
     check_launch_masks 00000002 00000001
@@ -838,7 +885,7 @@ wrpneg)
     log "PASS: hardware/$scenario"
     ;;
 *)
-    log "usage: $0 romsmoke|positive|ahbscneg|authneg|restart|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover"
+    log "usage: $0 romsmoke|positive|ahbscneg|authneg|restart|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|writeonce|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover"
     exit 2
     ;;
 esac

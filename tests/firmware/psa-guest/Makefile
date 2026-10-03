@@ -38,6 +38,7 @@ WT_GUEST_FAULT_PROBE ?= 0
 WT_ATTEST_NEG_PROBE ?= 0
 WT_HSM_ATTACK_PROBE ?= 0
 WT_FWU_PROBE ?= 0
+WT_STORAGE_RESET_PROBE ?= 0
 # Bytes of candidate body the FWU probe streams past the header, so a runner
 # can push the staging across every data sector of its update partition.
 WT_FWU_PROBE_STREAM_BYTES ?=
@@ -263,6 +264,10 @@ CFLAGS += -DWT_EXPECTED_MEASUREMENT_HEX=\"$(WT_EXPECTED_MEASUREMENT_HEX)\"
 endif
 
 PROBE_CFLAGS :=
+ifeq ($(WT_STORAGE_RESET_PROBE),1)
+PROBE_CFLAGS += -DWT_STORAGE_RESET_PROBE
+SHARED_SRCS += $(ROOT)/tests/firmware/common/psa_storage_reset_checks.c
+endif
 ifeq ($(WT_GUEST_FAULT_PROBE),1)
 PROBE_CFLAGS += -DWT_GUEST_FAULT_PROBE
 endif

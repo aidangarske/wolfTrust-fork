@@ -371,6 +371,23 @@ their results do not qualify the Zephyr/FreeRTOS pair required by issue #60.
 replaces the first sector, which is excluded from that body comparison.
 This staging fixture does not prove authenticated v2 swap or rollback.
 
+`writeonce` uses the portable storage body in
+`tests/firmware/common/psa_storage_reset_checks.c`. A fresh boot creates one
+ITS and one PS object with WRITE_ONCE, checks exact bytes and metadata,
+requires `PSA_ERROR_NOT_PERMITTED` for replacement and removal, and checks
+the bytes again. A separate reset retains the vault and repeats the checks
+without reseeding either object. Partial or corrupt stored state fails.
+Both clients must still complete their PSA lifecycle and the peer must
+progress. This fixture uses the board's development lifecycle; it does not
+change OTP or establish secured-lifecycle qualification.
+
+The hardware adapter uses one probe hardware reset for each observed phase,
+avoiding an extra boot between seeding and observation. It never erases the
+vault between phases. The emulator case uses GDB `monitor reset` within one
+process, retaining the modeled NOR; Secure breakpoints are removed before
+wolfBoot authenticates the second boot. Both engine cases are in the full
+M33MU CI matrix. Run either adapter with `writeonce` as its scenario.
+
 With `WT_RT700_GUEST_FIXTURE=os`, the hardware PSA cases resolve each
 OS timer record from its matching guest ELF. Both independent OS tasks must
 complete ten sleeps, each total duration must stay within 1000..30000 ms,

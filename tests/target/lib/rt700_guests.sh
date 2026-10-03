@@ -6,7 +6,7 @@ rt700_guest_kind() {
         bothpsa:os|bothiso:os) echo os; return ;;
     esac
     case "$1" in
-        bothpsa|bothiso|attestneg|hsmattackneg|fwustage) echo psa ;;
+        bothpsa|bothiso|attestneg|hsmattackneg|fwustage|writeonce) echo psa ;;
         confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover|vaultrecoversec)
             echo conformance ;;
         *) echo basic ;;
@@ -33,6 +33,7 @@ rt700_guest_flags() {
         restart) echo "WT_GUEST_FAULT_PROBE=1" ;;
         attestneg) echo "WT_ATTEST_NEG_PROBE=1" ;;
         hsmattackneg) echo "WT_HSM_ATTACK_PROBE=1" ;;
+        writeonce) echo "WT_STORAGE_RESET_PROBE=1" ;;
         fwustage)
             echo "WT_FWU_PROBE=1 WT_FWU_PROBE_STREAM_BYTES=0x21000u WT_FWU_PROBE_SEQUENTIAL=1" ;;
         confboot) echo "WT_RUN_CONFORMANCE=1 WT_M33MU_EXPECT_BKPT=$trap" ;;

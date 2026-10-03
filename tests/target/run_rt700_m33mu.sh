@@ -201,6 +201,12 @@ IMAGE_HEADER_SIZE=1024 WOLFBOOT_PARTITION_SIZE=0x40000 WOLFBOOT_SECTOR_SIZE=0x10
     "$wolfboot_dir/tools/keytools/sign" --ecc256 build/wolftrust.bin \
     "$wolfboot_dir/wolfboot_signing_private_key.der" 1
 [ -s build/wolftrust_v1_signed.bin ] || fail "signing produced no image"
+if [ "$scenario" = writeonce ]; then
+  M33MU="$M33MU" RT700_WOLFBOOT_DIR="$wolfboot_dir" \
+      bash "$here/run_rt700_storage_reset.sh"
+  log "PASS: rt700/$scenario"
+  exit 0
+fi
 # The harness, not the guest, holds wolfBoot's measurement of the signed image
 # and matches the attestation token's reported value against it.
 expected_measurement="$(python3 tests/scripts/read_wolfboot_measurement.py \

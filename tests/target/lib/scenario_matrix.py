@@ -115,6 +115,7 @@ PORTS = {
             ("wrpfence wrpoff wrpneg",
              "RT700 XSPI guest fence: launches, refuses unfenced, blocks erase"),
             ("bothpsa bothiso", "RT700 both-guest PSA lifecycle and isolation"),
+            ("writeonce", "RT700 ITS/PS WRITE_ONCE persistence across reset"),
             ("attestneg fwustage",
              "RT700 attestation negatives and FWU staging"),
             ("hsmattackneg",
