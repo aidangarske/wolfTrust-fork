@@ -25,6 +25,13 @@ symbol() {
 storage="$(symbol 0 g_storage_reset)"
 mailbox="$(symbol 0 g_guest_mailbox)"
 peer="$(symbol 1 g_guest_mailbox)"
+measurement="$(python3 tests/scripts/read_wolfboot_measurement.py build/wolftrust_v1_signed.bin)"
+[[ "$measurement" =~ ^[0-9a-f]{64}$ ]]
+expected="$(python3 - "$measurement" <<'PYEOF'
+import sys
+print("{" + ",".join(f"0x{x:02x}" for x in bytes.fromhex(sys.argv[1])) + "}")
+PYEOF
+)"
 log=build/rt700_storage_reset
 "$m33mu" --cpu imxrt700 --gdb --port "$port" \
     "$boot/wolfboot.bin" build/wolftrust_v1_signed.bin:0x40000 \
@@ -48,6 +55,7 @@ if ! timeout "$budget" "$gdb" --batch \
     -ex "set \$storage = (unsigned int *)$storage" \
     -ex "set \$guest = (unsigned int *)$mailbox" \
     -ex "set \$peer = (unsigned int *)$peer" \
+    -ex "set \$expected = $expected" \
     -x tests/scripts/check_rt700_storage_reset.gdb > "$log.gdb.log" 2>&1; then
     cat "$log.gdb.log"
     exit 1
