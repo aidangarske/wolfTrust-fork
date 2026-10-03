@@ -7,7 +7,8 @@ m33mu="${M33MU:-/tmp/m33mu_rt700_src/build/m33mu}"
 boot="${RT700_WOLFBOOT_DIR:-/tmp/wolfboot_rt700}"
 gdb="${ARM_GDB:-arm-none-eabi-gdb}"
 port="${RT700_STORAGE_GDB_PORT:-19361}"
-budget="${RT700_STORAGE_TIMEOUT:-180}"
+# The total covers two full PSA boots, each normally given 180 seconds.
+budget="${RT700_STORAGE_TIMEOUT:-360}"
 [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -gt 0 ] && [ "$port" -le 65535 ]
 [[ "$budget" =~ ^[0-9]+$ ]] && [ "$budget" -gt 0 ]
 guest=tests/firmware/psa-guest/build

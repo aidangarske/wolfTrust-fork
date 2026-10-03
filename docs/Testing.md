@@ -427,6 +427,9 @@ vault between phases. The emulator case uses GDB `monitor reset` within one
 process, retaining the modeled NOR; Secure breakpoints are removed before
 wolfBoot authenticates the second boot. Both engine cases are in the full
 M33MU CI matrix. Run either adapter with `writeonce` as its scenario.
+The emulator's total `RT700_STORAGE_TIMEOUT` defaults to 360 seconds for
+two complete PSA boots, allowing the normal 180 seconds per boot. A timeout
+still fails the case; neither the storage nor PSA assertions are relaxed.
 
 With `WT_RT700_GUEST_FIXTURE=os`, the hardware PSA cases resolve each
 OS timer record from its matching guest ELF. Both independent OS tasks must
