@@ -99,6 +99,19 @@ static int wt_ffm_find_partition(const wt_ffm_runtime_t* runtime,
     return WT_FFM_ERROR_POLICY;
 }
 
+/* The running instance of a partition caller; Non-secure callers have none. */
+static uint32_t wt_ffm_caller_instance(const wt_ffm_runtime_t* runtime,
+                                       psa_client_id_t caller)
+{
+    uint16_t partition_index;
+
+    if (wt_ffm_find_partition(runtime, (int32_t)caller, &partition_index) !=
+            WT_FFM_SUCCESS) {
+        return 0U;
+    }
+    return runtime->partitions[partition_index].instance;
+}
+
 static int wt_ffm_find_service(const wt_ffm_runtime_t* runtime, uint32_t sid,
                                uint16_t* service_index)
 {
@@ -213,6 +226,9 @@ static int wt_ffm_connection_from_handle(wt_ffm_runtime_t* runtime,
         return WT_FFM_ERROR_HANDLE;
     if (connection->caller != caller)
         return WT_FFM_ERROR_POLICY;
+    if (connection->client_instance !=
+            wt_ffm_caller_instance(runtime, caller))
+        return WT_FFM_ERROR_HANDLE;
 
     *connection_index = index;
     return WT_FFM_SUCCESS;
@@ -618,6 +634,20 @@ static size_t wt_ffm_client_connection_count(const wt_ffm_runtime_t* runtime,
     return count;
 }
 
+static size_t wt_ffm_ns_connection_count(const wt_ffm_runtime_t* runtime)
+{
+    size_t count = 0U;
+    size_t i;
+
+    for (i = 0U; i < WT_FFM_MAX_CONNECTIONS; i++) {
+        if (runtime->connections[i].allocated != 0U &&
+                runtime->connections[i].caller < 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
 psa_handle_t wt_ffm_connect(wt_ffm_runtime_t* runtime,
                             psa_client_id_t caller, uint32_t sid,
                             uint32_t version)
@@ -648,6 +678,11 @@ psa_handle_t wt_ffm_connect(wt_ffm_runtime_t* runtime,
     if (wt_ffm_client_connection_count(runtime, caller) >=
             WT_FFM_MAX_CONNECTIONS_PER_CLIENT)
         return (psa_handle_t)PSA_ERROR_CONNECTION_BUSY;
+    /* Non-secure clients share a bounded part of the pool; the rest stays
+     * for the Secure Partitions' dependency connections. */
+    if (caller < 0 && wt_ffm_ns_connection_count(runtime) >=
+            WT_FFM_MAX_NS_CONNECTIONS)
+        return (psa_handle_t)PSA_ERROR_CONNECTION_BUSY;
 
     if (wt_ffm_alloc_connection(runtime, &connection_index) !=
             WT_FFM_SUCCESS)
@@ -659,6 +694,7 @@ psa_handle_t wt_ffm_connect(wt_ffm_runtime_t* runtime,
 
     connection = &runtime->connections[connection_index];
     connection->caller = caller;
+    connection->client_instance = wt_ffm_caller_instance(runtime, caller);
     connection->service_index = service_index;
     connection->state = WT_IPC_CONNECTION_PENDING_CONNECT;
     handle = wt_ffm_make_handle(WT_FFM_HANDLE_CONNECTION, connection_index,
@@ -913,6 +949,11 @@ psa_handle_t wt_ffm_connect_begin(wt_ffm_runtime_t* runtime,
     if (wt_ffm_client_connection_count(runtime, caller) >=
             WT_FFM_MAX_CONNECTIONS_PER_CLIENT)
         return (psa_handle_t)PSA_ERROR_CONNECTION_BUSY;
+    /* Non-secure clients share a bounded part of the pool; the rest stays
+     * for the Secure Partitions' dependency connections. */
+    if (caller < 0 && wt_ffm_ns_connection_count(runtime) >=
+            WT_FFM_MAX_NS_CONNECTIONS)
+        return (psa_handle_t)PSA_ERROR_CONNECTION_BUSY;
 
     if (wt_ffm_alloc_connection(runtime, &connection_index) !=
             WT_FFM_SUCCESS)
@@ -924,6 +965,7 @@ psa_handle_t wt_ffm_connect_begin(wt_ffm_runtime_t* runtime,
 
     connection = &runtime->connections[connection_index];
     connection->caller = caller;
+    connection->client_instance = wt_ffm_caller_instance(runtime, caller);
     connection->service_index = service_index;
     connection->state = WT_IPC_CONNECTION_PENDING_CONNECT;
     handle = wt_ffm_make_handle(WT_FFM_HANDLE_CONNECTION, connection_index,
@@ -1186,6 +1228,26 @@ int wt_ffm_fail_client_connections(wt_ffm_runtime_t* runtime,
         freed++;
     }
     return freed;
+}
+
+int wt_ffm_partition_restarted(wt_ffm_runtime_t* runtime,
+                               int32_t partition_id, psa_status_t status)
+{
+    uint16_t partition_index;
+    wt_ffm_partition_runtime_t* partition;
+    int failed;
+
+    if (wt_ffm_find_partition(runtime, partition_id, &partition_index) !=
+            WT_FFM_SUCCESS) {
+        return WT_FFM_ERROR_POLICY;
+    }
+    failed = wt_ffm_fail_partition_messages(runtime, partition_id, status);
+    (void)wt_ffm_fail_client_connections(runtime,
+                                         (psa_client_id_t)partition_id);
+    partition = &runtime->partitions[partition_index];
+    partition->asserted_signals = 0U;
+    partition->instance++;
+    return failed;
 }
 
 int wt_ffm_dispatch_pending(wt_ffm_runtime_t* runtime, uint16_t msg_index)

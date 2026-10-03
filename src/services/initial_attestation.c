@@ -26,6 +26,7 @@
 
 #include "wolftrust/services/attestation_cose.h"
 #include "wolftrust/services/hsm.h"
+#include "wolftrust/services/hsm_relay.h"
 
 #include "psa/lifecycle.h"
 
@@ -69,6 +70,16 @@ static uint8_t g_signer_id[WC_SHA256_DIGEST_SIZE];
 static bool g_handoff_ready;
 static bool g_attest_ready;
 
+/* SERVICE_HSM signer binding: transport, the attestation partition's own id
+ * (stamped by the SVC on target), the crypto service's SID, and the cached
+ * connection. A NULL transport selects the engine's local signer. */
+static wt_spm_transport_fn g_attest_hsm_transport;
+static wt_ffm_runtime_t* g_attest_hsm_runtime;
+static int32_t g_attest_hsm_partition;
+static uint32_t g_attest_hsm_sid;
+static psa_handle_t g_attest_hsm_handle;
+static uint8_t g_attest_hsm_restarted;
+
 static void wt_attest_force_zero(void* memory, size_t size)
 {
     volatile uint8_t* bytes = (volatile uint8_t*)memory;
@@ -79,13 +90,177 @@ static void wt_attest_force_zero(void* memory, size_t size)
     }
 }
 
+int wt_initial_attest_bind_hsm(wt_spm_transport_fn transport,
+                               wt_ffm_runtime_t* runtime,
+                               int32_t partition_id, uint32_t hsm_sid)
+{
+    if (transport == NULL || partition_id <= 0) {
+        return WT_ATTEST_ERROR_INVALID_ARGUMENT;
+    }
+    g_attest_hsm_transport = transport;
+    g_attest_hsm_runtime = runtime;
+    g_attest_hsm_partition = partition_id;
+    g_attest_hsm_sid = hsm_sid;
+    g_attest_hsm_handle = 0;
+    g_attest_hsm_restarted = 0U;
+    return WT_ATTEST_SUCCESS;
+}
+
+void wt_initial_attest_hsm_restarted(void)
+{
+    g_attest_hsm_restarted = 1U;
+}
+
+static int wt_attest_hsm_xfer(wt_spm_call_t* call)
+{
+    if (g_attest_hsm_transport(g_attest_hsm_runtime, call) !=
+            WT_FFM_SUCCESS || call->ret_int == WT_FFM_ERROR_NOT_READY) {
+        return WH_ERROR_ABORTED;
+    }
+    return 0;
+}
+
+/* Release a connection the crypto partition's fault dropped to the error
+ * state: FF-M lets the client close such a handle, never call it again. */
+static void wt_attest_hsm_close(void)
+{
+    wt_spm_call_t call;
+
+    if (g_attest_hsm_handle > 0) {
+        (void)memset(&call, 0, sizeof(call));
+        call.op = WT_SPM_OP_CLOSE;
+        call.partition_id = g_attest_hsm_partition;
+        call.msg_handle = g_attest_hsm_handle;
+        (void)wt_attest_hsm_xfer(&call);
+    }
+    g_attest_hsm_handle = 0;
+    g_attest_hsm_restarted = 0U;
+}
+
+/* One attestation-door call on SERVICE_HSM: in is the digest (SIGN) or
+ * absent (PUBLIC_KEY); out receives exactly out_len bytes. Maps the door's
+ * BAD_STATE (no IAK yet) onto WH_ERROR_NOTREADY like the local signer. */
+static int wt_attest_hsm_call(int32_t type, const uint8_t* in, size_t in_len,
+                              uint8_t* out, size_t out_len)
+{
+    wt_spm_call_t call;
+    int ret = 0;
+
+    if (g_attest_hsm_restarted != 0U) {
+        wt_attest_hsm_close();
+    }
+    if (g_attest_hsm_handle <= 0) {
+        (void)memset(&call, 0, sizeof(call));
+        call.op = WT_SPM_OP_CONNECT;
+        call.partition_id = g_attest_hsm_partition;
+        call.sid = g_attest_hsm_sid;
+        call.version = 1U;
+        ret = wt_attest_hsm_xfer(&call);
+        if (ret == 0 &&
+                (call.ret_int != WT_FFM_SUCCESS || call.ret_handle <= 0)) {
+            ret = WH_ERROR_ABORTED;
+        }
+        if (ret == 0) {
+            g_attest_hsm_handle = call.ret_handle;
+        }
+    }
+    if (ret == 0) {
+        (void)memset(&call, 0, sizeof(call));
+        call.op = WT_SPM_OP_CALL;
+        call.partition_id = g_attest_hsm_partition;
+        call.msg_handle = g_attest_hsm_handle;
+        call.call_type = type;
+        if (in != NULL) {
+            call.sp_in[0].base = in;
+            call.sp_in[0].len = in_len;
+            call.sp_in_len = 1U;
+        }
+        call.sp_out[0].base = out;
+        call.sp_out[0].len = out_len;
+        call.sp_out_len = 1U;
+        ret = wt_attest_hsm_xfer(&call);
+        if (ret == 0 && call.ret_int != WT_FFM_SUCCESS) {
+            ret = WH_ERROR_ABORTED;
+        }
+    }
+    if (ret == 0) {
+        if (call.ret_status == PSA_ERROR_COMMUNICATION_FAILURE) {
+            /* The crypto partition faulted under this request
+             * (WT-FFM-0017): close the dropped connection now. */
+            wt_attest_hsm_close();
+            ret = WH_ERROR_ABORTED;
+        }
+        else if (call.ret_status == PSA_ERROR_BAD_STATE) {
+            ret = WH_ERROR_NOTREADY;
+        }
+        else if (call.ret_status != PSA_SUCCESS ||
+                 call.sp_out[0].len != out_len) {
+            ret = WH_ERROR_ABORTED;
+        }
+    }
+    return ret;
+}
+
+static int wt_attest_signer_sign(const uint8_t* digest, size_t digestSize,
+    uint8_t* signature, size_t signatureCapacity, size_t* signatureSize)
+{
+    int ret;
+
+    if (g_attest_hsm_transport == NULL) {
+        return wt_hsm_attest_sign(digest, digestSize, signature,
+                                  signatureCapacity, signatureSize);
+    }
+    if (signatureSize == NULL) {
+        return WH_ERROR_BADARGS;
+    }
+    *signatureSize = 0u;
+    if (digest == NULL || digestSize != WT_HSM_ATTEST_DIGEST_LEN ||
+            signature == NULL ||
+            signatureCapacity < WT_HSM_ATTEST_SIGNATURE_LEN) {
+        return WH_ERROR_BADARGS;
+    }
+    ret = wt_attest_hsm_call(WT_HSM_OP_ATTEST_SIGN, digest, digestSize,
+                             signature, WT_HSM_ATTEST_SIGNATURE_LEN);
+    if (ret == 0) {
+        *signatureSize = WT_HSM_ATTEST_SIGNATURE_LEN;
+    }
+    else {
+        (void)memset(signature, 0, signatureCapacity);
+    }
+    return ret;
+}
+
+static int wt_attest_signer_public_key(uint8_t* publicKey,
+    size_t publicKeyCapacity, size_t* publicKeySize)
+{
+    int ret;
+
+    if (g_attest_hsm_transport == NULL) {
+        return wt_hsm_attest_public_key(publicKey, publicKeyCapacity,
+                                        publicKeySize);
+    }
+    if (publicKeySize == NULL) {
+        return WH_ERROR_BADARGS;
+    }
+    *publicKeySize = WT_HSM_ATTEST_PUBLIC_KEY_LEN;
+    if (publicKey == NULL || publicKeyCapacity < WT_HSM_ATTEST_PUBLIC_KEY_LEN) {
+        return WH_ERROR_BADARGS;
+    }
+    ret = wt_attest_hsm_call(WT_HSM_OP_ATTEST_PUBLIC_KEY, NULL, 0u,
+                             publicKey, WT_HSM_ATTEST_PUBLIC_KEY_LEN);
+    if (ret != 0) {
+        (void)memset(publicKey, 0, publicKeyCapacity);
+    }
+    return ret;
+}
+
 static int wt_attest_hsm_sign(void* context, const uint8_t* digest,
     size_t digestSize, uint8_t* signature, size_t signatureCapacity,
     size_t* signatureSize)
 {
     (void)context;
-    return wt_hsm_attest_sign(digest, digestSize, signature,
-                              signatureCapacity, signatureSize);
+    return wt_attest_signer_sign(digest, digestSize, signature,
+                                 signatureCapacity, signatureSize);
 }
 
 static int wt_attest_prepare(void)
@@ -103,8 +278,8 @@ static int wt_attest_prepare(void)
         return WT_ATTEST_ERROR_NOT_READY;
     }
 
-    ret = wt_hsm_attest_public_key(publicKey, sizeof(publicKey),
-                                   &publicKeySize);
+    ret = wt_attest_signer_public_key(publicKey, sizeof(publicKey),
+                                      &publicKeySize);
     if (ret == WH_ERROR_NOTREADY) {
         ret = WT_ATTEST_ERROR_NOT_READY;
     }
@@ -200,8 +375,8 @@ static int wt_attest_eat_sign(void* context, int32_t algorithm,
     if (algorithm != WOLFCOSE_ALG_ES256) {
         return WOLFCOSE_E_INVALID_ARG;
     }
-    return wt_hsm_attest_sign(digest, digestSize, signature,
-                              signatureSize, signatureLength);
+    return wt_attest_signer_sign(digest, digestSize, signature,
+                                 signatureSize, signatureLength);
 }
 
 static int wt_attest_build_claims(wt_guest_id_t guestId,
@@ -465,8 +640,8 @@ int wt_initial_attest_get_iak_public_key(uint8_t* publicKey,
     }
     ret = wt_attest_prepare();
     if (ret == WT_ATTEST_SUCCESS) {
-        ret = wt_hsm_attest_public_key(publicKey, publicKeyCapacity,
-                                       publicKeySize);
+        ret = wt_attest_signer_public_key(publicKey, publicKeyCapacity,
+                                          publicKeySize);
         if (ret != 0) {
             ret = WT_ATTEST_ERROR_CRYPTO;
         }

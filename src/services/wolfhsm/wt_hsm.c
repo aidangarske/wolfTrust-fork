@@ -45,6 +45,13 @@
 #include "wolfssl/wolfcrypt/error-crypt.h"
 #include "wolfssl/wolfcrypt/ecc.h"
 
+/* wolfCrypt's callback device table lives in this partition's private band;
+ * a default device id would make every partition's one-shot hash read it. */
+#if defined(WT_TARGET_BUILD) && defined(WOLF_CRYPTO_CB) && \
+    !defined(WC_NO_DEFAULT_DEVID)
+#error "hsm engine: build with WC_NO_DEFAULT_DEVID"
+#endif
+
 /* wolfHSM headers. */
 #include "wolfhsm/wh_error.h"
 #include "wolfhsm/wh_comm.h"
@@ -69,6 +76,7 @@
 #include "wolftrust/sched/tasklet.h"
 #include "wolftrust/sync/mutex.h"
 #include "wolftrust/nvm_store.h"
+#include "wolftrust/services/nvm_client.h"
 #include "wolftrust/services/hsm.h"
 #include "wolftrust/services/hsm_relay.h"
 #include "wolftrust/services/vault_service.h"
@@ -85,6 +93,9 @@
 #ifndef WOLFHSM_CFG_THREADSAFE
 #error "wolfTrust requires WOLFHSM_CFG_THREADSAFE for shared wolfHSM state"
 #endif
+
+WT_STATIC_ASSERT(WT_HSM_ATTEST_NOT_READY == WH_ERROR_NOTREADY,
+               "attestation door not-ready code must match wolfHSM");
 
 /* -------------------------------------------------------------------------
  * Per-tasklet secure stacks. Target builds may override WT_CO_STACK_SIZE
@@ -114,17 +125,22 @@ typedef struct wt_hsm_guest {
 
 static wt_hsm_guest_t g_guests[WT_MAX_GUESTS];
 
+/* The store every server binds to: the direct vault store during the
+ * privileged bootstrap (IAK provisioning, rollback floors), then the crypto
+ * partition's IPC-backed view once wt_hsm_bind_nvm has run. */
+static whNvmContext* g_hsm_nvm = &g_wt_nvm_ctx;
+
 #define WT_HSM_ATTEST_KEY_ID 0xF0u
 #define WT_HSM_ATTEST_PUBLIC_KEY_SIZE 65u
 
-static whServerContext g_attest_server;
-static whServerCryptoContext g_attest_crypto;
-static whCommServerConfig g_attest_comm_cfg;
-static whServerConfig g_attest_server_cfg;
-static uint8_t g_attest_public_key[WT_HSM_ATTEST_PUBLIC_KEY_SIZE];
-static int g_attest_init_status = WH_ERROR_NOTREADY;
-static bool g_attest_init_attempted;
-static bool g_attest_ready;
+static whServerContext g_hsm_attest_server;
+static whServerCryptoContext g_hsm_attest_crypto;
+static whCommServerConfig g_hsm_attest_comm_cfg;
+static whServerConfig g_hsm_attest_server_cfg;
+static uint8_t g_hsm_attest_public_key[WT_HSM_ATTEST_PUBLIC_KEY_SIZE];
+static int g_hsm_attest_init_status = WH_ERROR_NOTREADY;
+static bool g_hsm_attest_init_attempted;
+static bool g_hsm_attest_ready;
 
 /* The shared NVM store, lock, lifecycle latch, and rollback floors moved to
  * the engine-independent src/services/nvm_store.c (wolftrust/nvm_store.h). */
@@ -150,39 +166,6 @@ static void wt_hsm_force_zero(void* memory, size_t size);
 /* =========================================================================
  * wt_hsm_init
  * ====================================================================== */
-/* Wire the NVM flash-log config, bring up the shared NVM context, and bind the
- * vault, sealer, and key backends. Re-callable: wt_hsm_vault_format runs it
- * again against a freshly erased pool. The lockConfig path is mandatory because
- * per-guest tasklets share one wolfHSM NVM context. */
-static int wt_hsm_bind_store(void)
-{
-    int rc;
-
-    rc = wt_nvm_store_bind();
-    if (rc != WH_ERROR_OK) {
-        return rc;
-    }
-
-    if (wt_hsm_vault_init(&g_wt_nvm_ctx) == 0) {
-        wt_vault_service_set_backend(&wt_hsm_vault_backend);
-        if (wt_hsm_seal_init(&g_wt_nvm_ctx) == 0) {
-            wt_hsm_vault_set_sealer(&wt_hsm_sealer);
-        }
-        else {
-            /* Reinit on the format/recovery path can fail after a prior
-             * success; drop the sealer so sealed writes fail closed rather
-             * than run with a stale or zero key. */
-            wt_hsm_vault_set_sealer(NULL);
-        }
-        /* Keys live in the wolfHSM server keystore, reached through the
-         * SERVICE_HSM relay (WT-FFM-0054) — the vault has no key backend, so
-         * its key ops stay fail-closed. Only the RANDOM face is served. */
-        wt_vault_service_set_rng(wt_hsm_vault_random);
-    }
-
-    return 0;
-}
-
 /* Erase the whole vault region and rebuild a blank store. Caller must have
  * checked wt_nvm_reformat_allowed() -- this destroys every object, including
  * WRITE_ONCE storage and the sealed device key. */
@@ -192,36 +175,12 @@ static int wt_hsm_vault_format(void)
 
     rc = wt_hsm_flash_format();
     if (rc == 0) {
-        rc = wt_hsm_bind_store();
+        rc = wt_nvm_vault_bind();
     }
     if (rc == 0) {
         wt_nvm_mark_reformatted();
     }
     return rc;
-}
-
-/* Vault RNG (WT-FFM-0054): a wolfCrypt DRBG in the shared keystore trust
- * band, installed on SERVICE_VAULT's RANDOM face at boot. It remains separate
- * from the wolfHSM server keystore because this is entropy plumbing, not key
- * storage. */
-static WC_RNG g_vault_rng;
-static int g_vault_rng_ready;
-
-psa_status_t wt_hsm_vault_random(uint8_t* out, size_t len)
-{
-    if (out == NULL || len == 0U) {
-        return PSA_ERROR_INVALID_ARGUMENT;
-    }
-    if (g_vault_rng_ready == 0) {
-        if (wc_InitRng_ex(&g_vault_rng, NULL, INVALID_DEVID) != 0) {
-            return PSA_ERROR_GENERIC_ERROR;
-        }
-        g_vault_rng_ready = 1;
-    }
-    if (wc_RNG_GenerateBlock(&g_vault_rng, out, (word32)len) != 0) {
-        return PSA_ERROR_GENERIC_ERROR;
-    }
-    return PSA_SUCCESS;
 }
 
 int wt_hsm_init(void)
@@ -233,16 +192,10 @@ int wt_hsm_init(void)
         return rc;
     }
 
-    rc = g_wt_hsm_flash_cb.Init(wt_hsm_flash_context(),
-                                wt_hsm_flash_config());
-    if (rc != 0) {
-        return rc;
-    }
-
-    /* Initialise the shared NVM lock once, before wh_Nvm_Init wires it in. */
+    /* Initialise the NVM lock once, before wh_Nvm_Init wires it in. */
     wt_mutex_init(&g_wt_nvm_lock_mutex);
 
-    return wt_hsm_bind_store();
+    return wt_nvm_vault_bind();
 }
 
 /* =========================================================================
@@ -261,11 +214,11 @@ static void wt_hsm_tasklet_main(void *arg)
 #endif
 
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-    /* Key provisioning touches the shared persistent store and therefore
-     * must run from a coroutine that can own the wolfHSM NVM mutex. The
-     * bootstrap path runs this tasklet before guest dispatch; this fallback
-     * also keeps a direct HSM-driven startup safe on ports without that hook. */
-    if (!g_attest_ready) {
+    /* Key provisioning touches the persistent store and therefore must run
+     * from a coroutine that can own the wolfHSM NVM mutex: the boot-time
+     * bootstrap resumes this tasklet once, before the crypto partition's
+     * store is rebound to its IPC view. A failed provisioning parks it. */
+    if (!g_hsm_attest_ready) {
         if (wt_hsm_attest_init() != WH_ERROR_OK) {
             for (;;) {
                 wt_tasklet_block();
@@ -284,6 +237,10 @@ static void wt_hsm_tasklet_main(void *arg)
     for (;;) {
         int rc;
 
+        if (!g->ready) {
+            wt_tasklet_block();
+            continue;
+        }
         /* This tasklet runs only at attestation bootstrap, before any partition
          * is schedulable; the runtime pump is the relay, which pins itself in
          * wt_hsm_relay_submit (WT-FFM-0011). */
@@ -386,10 +343,13 @@ static int wt_hsm_guest_init(wt_guest_id_t guest_id)
     /* ------------------------------------------------------------------
      * 7. Create tasklet.
      * ---------------------------------------------------------------- */
-    tasklet = wt_tasklet_create_blocked(wt_hsm_priv_stack(guest_id),
-                                        WT_CO_STACK_SIZE,
-                                        wt_hsm_tasklet_main,
-                                        (void *)(uintptr_t)guest_id);
+    tasklet = wt_hsm_guest_tasklet(guest_id);
+    if (tasklet == NULL) {
+        tasklet = wt_tasklet_create_blocked(wt_hsm_priv_stack(guest_id),
+                                            WT_CO_STACK_SIZE,
+                                            wt_hsm_tasklet_main,
+                                            (void *)(uintptr_t)guest_id);
+    }
     if (tasklet == NULL) {
         wh_Server_Cleanup(&g->server);
         wc_FreeRng(g->crypto.rng);
@@ -500,9 +460,19 @@ static const whTransportServerCb g_relay_transport_cb = {
     .Cleanup = wt_hsm_relay_srv_cleanup
 };
 
-/* Re-assert every pointer the server pump dereferences from link-time
- * constants before the pump, so a keystore partition that rewrote the
- * band-resident copies cannot steer the pump (WT-FFM-0011). */
+/* Only two stores exist: the direct one the boot bootstrap provisions on,
+ * and the partition's door view every later pump uses. */
+static whNvmContext* wt_hsm_nvm_target(void)
+{
+    if (g_hsm_nvm == &g_wt_nvm_ctx) {
+        return &g_wt_nvm_ctx;
+    }
+    return wt_nvm_client_partition_nvm();
+}
+
+/* Re-assert every pointer a server pump dereferences from link-time
+ * constants before the pump, so a forged value is never followed by the
+ * bootstrap tasklet or the relay partition (WT-FFM-0011). */
 static void wt_hsm_server_pin(wt_guest_id_t guest_id)
 {
     wt_hsm_guest_t *g = &g_guests[guest_id];
@@ -516,10 +486,15 @@ static void wt_hsm_server_pin(wt_guest_id_t guest_id)
     comm->transport_context = transport_ctx;
     comm->hdr  = (whCommHeader *)packet;
     comm->data = (void *)(packet + sizeof(whCommHeader));
-    g->server.nvm    = &g_wt_nvm_ctx;
     g->server.crypto = &g->crypto;
     g->server.devId  = INVALID_DEVID;
-    wt_nvm_store_pin();
+    g->server.nvm = wt_hsm_nvm_target();
+    if (g->server.nvm == &g_wt_nvm_ctx) {
+        wt_nvm_store_pin();
+    }
+    else {
+        wt_nvm_client_partition_pin();
+    }
 }
 
 static void wt_hsm_relay_bind(wt_guest_id_t guest_id,
@@ -544,7 +519,7 @@ static void wt_hsm_bind_server_cfg(wt_guest_id_t guest_id)
     g->comm_cfg.transport_config  = NULL;
     g->comm_cfg.server_id         = (uint8_t)wt_hsm_guest_client_id(guest_id);
     g->server_cfg.comm_config     = &g->comm_cfg;
-    g->server_cfg.nvm             = &g_wt_nvm_ctx;
+    g->server_cfg.nvm             = wt_hsm_nvm_target();
     g->server_cfg.crypto          = &g->crypto;
 #if defined(WOLF_CRYPTO_CB)
     g->server_cfg.devId           = INVALID_DEVID;
@@ -682,55 +657,71 @@ uint16_t wt_hsm_guest_client_id(wt_guest_id_t guest_id)
     return (uint16_t)(guest_id + 1u);
 }
 
+/* Provisioning needs a coroutine (the NVM mutex refuses the boot context)
+ * and the direct store, so it runs here, before the crypto partition's store
+ * is rebound to its IPC view, on guest 0's tasklet; a port that seats its
+ * guests later inherits the tasklet created here. */
 int wt_hsm_attest_bootstrap(void)
 {
-    wt_guest_id_t gid;
     wt_tasklet_t *tasklet;
 
-    if (g_attest_ready) {
+    if (g_hsm_attest_ready) {
         return WH_ERROR_OK;
     }
-    for (gid = 0u; gid < WT_MAX_GUESTS; gid++) {
-        tasklet = wt_hsm_guest_tasklet(gid);
-        if (!g_guests[gid].ready || tasklet == NULL) {
-            continue;
-        }
-        wt_tasklet_wake(tasklet);
-        if (wt_tasklet_resume(tasklet) == 0u) {
+    tasklet = wt_hsm_guest_tasklet(0u);
+    if (tasklet == NULL) {
+        tasklet = wt_tasklet_create_blocked(wt_hsm_priv_stack(0u),
+                                            WT_CO_STACK_SIZE,
+                                            wt_hsm_tasklet_main,
+                                            (void *)0);
+        if (tasklet == NULL) {
             return WH_ERROR_ABORTED;
         }
-        return g_attest_ready ? WH_ERROR_OK : g_attest_init_status;
+        wt_hsm_priv_register(0u, tasklet);
     }
-
-    return WH_ERROR_NOTREADY;
+    wt_tasklet_wake(tasklet);
+    if (wt_tasklet_resume(tasklet) == 0u) {
+        return WH_ERROR_ABORTED;
+    }
+    return g_hsm_attest_ready ? WH_ERROR_OK : g_hsm_attest_init_status;
 }
 
 /* =========================================================================
  * wt_hsm_signal_fault
  *
  * Called from the Secure fault dispatcher for a terminal tasklet fault. Drops
- * any NVM lock the tasklet held, invokes the optional transport notification
- * hook, erases retained tasklet state, and clears the ready bit. The default
- * notification hook is a no-op, and no current port replaces it.
+ * any NVM lock the tasklet held, erases retained tasklet state, and clears
+ * the ready bit so the relay rejects HSM calls from this guest.
  *
  * Idempotent: calling on an already-faulted guest is harmless.
  * ====================================================================== */
-static int wt_hsm_fault_notify_noop(wt_guest_id_t guest_id)
+static int wt_hsm_attest_server_rebuild(void)
 {
-    (void)guest_id;
-    return WH_ERROR_OK;
-}
+    int rc;
 
-static wt_hsm_fault_notify_fn g_hsm_fault_notify = wt_hsm_fault_notify_noop;
-
-void wt_hsm_set_fault_notify(wt_hsm_fault_notify_fn fn)
-{
-    g_hsm_fault_notify = (fn != NULL) ? fn : wt_hsm_fault_notify_noop;
+    (void)wh_Server_Cleanup(&g_hsm_attest_server);
+    (void)wc_FreeRng(g_hsm_attest_crypto.rng);
+    rc = wc_InitRng_ex(g_hsm_attest_crypto.rng, NULL, INVALID_DEVID);
+    if (rc == 0) {
+        rc = wh_Server_Init(&g_hsm_attest_server, &g_hsm_attest_server_cfg);
+    }
+    if (rc == 0) {
+        g_hsm_attest_server.comm->client_id = WH_CLIENT_ID_MAX;
+        rc = wh_Server_SetConnected(&g_hsm_attest_server, WH_COMM_CONNECTED);
+    }
+    if (rc != 0) {
+        /* Fail closed: a signer that could not be rebuilt reports not-ready
+         * from here on, never the bootstrap's success status. */
+        g_hsm_attest_ready = false;
+        g_hsm_attest_init_status = WH_ERROR_NOTREADY;
+    }
+    return rc;
 }
 
 int wt_hsm_relay_reinit_servers(void)
 {
     int             rc = WH_ERROR_OK;
+    int             attest_rc = WH_ERROR_OK;
     wt_hsm_guest_t *g;
     wt_tasklet_t   *tasklet;
     wt_guest_id_t   gid;
@@ -771,7 +762,30 @@ int wt_hsm_relay_reinit_servers(void)
             break;
         }
     }
+    /* The signer may have been torn by the same fault; rebuild it whether
+     * or not a guest server failed above, so it never stays ready stale. */
+    if (g_hsm_attest_ready) {
+        attest_rc = wt_hsm_attest_server_rebuild();
+    }
+    if (rc == WH_ERROR_OK) {
+        rc = attest_rc;
+    }
     return rc;
+}
+
+int wt_hsm_bind_nvm(whNvmContext* nvm)
+{
+    wt_guest_id_t gid;
+
+    if (nvm == NULL) {
+        return WH_ERROR_BADARGS;
+    }
+    g_hsm_nvm = nvm;
+    for (gid = 0; gid < WT_MAX_GUESTS; gid++) {
+        g_guests[gid].server_cfg.nvm = nvm;
+    }
+    g_hsm_attest_server_cfg.nvm = nvm;
+    return wt_hsm_relay_reinit_servers();
 }
 
 int wt_hsm_signal_fault(wt_guest_id_t guest_id)
@@ -791,9 +805,6 @@ int wt_hsm_signal_fault(wt_guest_id_t guest_id)
     if (tasklet != NULL) {
         wt_hsm_release_locks(tasklet);
     }
-
-    /* Notify through the optional port hook before erasing transport state. */
-    (void)g_hsm_fault_notify(guest_id);
 
     wt_hsm_force_zero(&g_relay_bufs[guest_id],
                       sizeof(g_relay_bufs[guest_id]));
@@ -853,7 +864,7 @@ static int wt_hsm_attest_transport_cleanup(void* context)
     return WH_ERROR_OK;
 }
 
-static const whTransportServerCb g_attest_transport_cb = {
+static const whTransportServerCb g_hsm_attest_transport_cb = {
     .Init = wt_hsm_attest_transport_init,
     .Recv = wt_hsm_attest_transport_recv,
     .Send = wt_hsm_attest_transport_send,
@@ -900,7 +911,7 @@ static int wt_hsm_attest_export_public(void)
     request.id = WT_HSM_ATTEST_KEY_ID;
     request.algo = WH_KEY_ALGO_ECC;
 
-    ret = wh_Server_HandleKeyRequest(&g_attest_server,
+    ret = wh_Server_HandleKeyRequest(&g_hsm_attest_server,
         WH_COMM_MAGIC_NATIVE, WH_KEY_EXPORT_PUBLIC, (uint16_t)sizeof(request),
         &request, &responseSize, response.bytes);
     result = (whMessageKeystore_ExportPublicResponse*)response.bytes;
@@ -925,10 +936,10 @@ static int wt_hsm_attest_export_public(void)
         }
     }
     if (ret == WH_ERROR_OK) {
-        g_attest_public_key[0] = 0x04u;
+        g_hsm_attest_public_key[0] = 0x04u;
         ret = wc_ecc_export_public_raw(&publicKey,
-            &g_attest_public_key[1], &xSize,
-            &g_attest_public_key[33], &ySize);
+            &g_hsm_attest_public_key[1], &xSize,
+            &g_hsm_attest_public_key[33], &ySize);
         if ((ret == 0) && ((xSize != 32u) || (ySize != 32u))) {
             ret = WH_ERROR_ABORTED;
         }
@@ -973,7 +984,7 @@ static int wt_hsm_attest_generate_key(void)
     (void)memcpy(keygen->label, label, sizeof(label) - 1u);
     requestSize = (uint16_t)(sizeof(*header) + sizeof(*keygen));
 
-    ret = wh_Server_HandleCryptoRequest(&g_attest_server,
+    ret = wh_Server_HandleCryptoRequest(&g_hsm_attest_server,
         WH_COMM_MAGIC_NATIVE, WC_ALGO_TYPE_PK, 0u, requestSize,
         request.bytes, &responseSize, response.bytes);
     if (ret == WH_ERROR_OK) {
@@ -995,11 +1006,61 @@ static int wt_hsm_attest_generate_key(void)
     if (ret == WH_ERROR_OK) {
         serverKeyId = WH_MAKE_KEYID(WH_KEYTYPE_CRYPTO, WH_CLIENT_ID_MAX,
                                     WT_HSM_ATTEST_KEY_ID);
-        ret = wh_Server_KeystoreCommitKey(&g_attest_server, serverKeyId);
+        ret = wh_Server_KeystoreCommitKey(&g_hsm_attest_server, serverKeyId);
     }
 
     wt_hsm_force_zero(&request, sizeof(request));
     wt_hsm_force_zero(&response, sizeof(response));
+    return ret;
+}
+
+/* Bring up the signer's own server on the bound store. */
+static int wt_hsm_attest_server_open(void)
+{
+    int ret;
+
+    (void)memset(&g_hsm_attest_crypto, 0, sizeof(g_hsm_attest_crypto));
+    ret = wc_InitRng_ex(g_hsm_attest_crypto.rng, NULL, INVALID_DEVID);
+    if (ret != 0) {
+        return ret;
+    }
+
+    (void)memset(&g_hsm_attest_comm_cfg, 0, sizeof(g_hsm_attest_comm_cfg));
+    g_hsm_attest_comm_cfg.transport_cb = &g_hsm_attest_transport_cb;
+    g_hsm_attest_comm_cfg.server_id = 0u;
+
+    (void)memset(&g_hsm_attest_server_cfg, 0, sizeof(g_hsm_attest_server_cfg));
+    g_hsm_attest_server_cfg.comm_config = &g_hsm_attest_comm_cfg;
+    g_hsm_attest_server_cfg.nvm = g_hsm_nvm;
+    g_hsm_attest_server_cfg.crypto = &g_hsm_attest_crypto;
+#if defined(WOLF_CRYPTO_CB)
+    g_hsm_attest_server_cfg.devId = INVALID_DEVID;
+#endif
+
+    ret = wh_Server_Init(&g_hsm_attest_server, &g_hsm_attest_server_cfg);
+    if (ret == WH_ERROR_OK) {
+        g_hsm_attest_server.comm->client_id = WH_CLIENT_ID_MAX;
+        ret = wh_Server_SetConnected(&g_hsm_attest_server, WH_COMM_CONNECTED);
+    }
+    return ret;
+}
+
+int wt_hsm_attest_restore(const uint8_t* publicKey, size_t publicKeySize)
+{
+    int ret;
+
+    /* Boot provisioned no signer: it stays not ready (fail closed). */
+    if (publicKey == NULL ||
+            publicKeySize != WT_HSM_ATTEST_PUBLIC_KEY_SIZE) {
+        return WH_ERROR_OK;
+    }
+    g_hsm_attest_init_attempted = true;
+    ret = wt_hsm_attest_server_open();
+    if (ret == WH_ERROR_OK) {
+        (void)memcpy(g_hsm_attest_public_key, publicKey, publicKeySize);
+        g_hsm_attest_ready = true;
+    }
+    g_hsm_attest_init_status = ret;
     return ret;
 }
 
@@ -1010,38 +1071,15 @@ int wt_hsm_attest_init(void)
 #if defined(WT_VAULT_FOREIGN_PROBE) && defined(WT_VAULT_PROBE_SECURED)
     wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_SECURED);
 #endif
-    if (g_attest_ready) {
+    if (g_hsm_attest_ready) {
         return WH_ERROR_OK;
     }
-    if (g_attest_init_attempted) {
-        return g_attest_init_status;
+    if (g_hsm_attest_init_attempted) {
+        return g_hsm_attest_init_status;
     }
-    g_attest_init_attempted = true;
+    g_hsm_attest_init_attempted = true;
 
-    (void)memset(&g_attest_crypto, 0, sizeof(g_attest_crypto));
-    ret = wc_InitRng_ex(g_attest_crypto.rng, NULL, INVALID_DEVID);
-    if (ret != 0) {
-        g_attest_init_status = ret;
-        return ret;
-    }
-
-    (void)memset(&g_attest_comm_cfg, 0, sizeof(g_attest_comm_cfg));
-    g_attest_comm_cfg.transport_cb = &g_attest_transport_cb;
-    g_attest_comm_cfg.server_id = 0u;
-
-    (void)memset(&g_attest_server_cfg, 0, sizeof(g_attest_server_cfg));
-    g_attest_server_cfg.comm_config = &g_attest_comm_cfg;
-    g_attest_server_cfg.nvm = &g_wt_nvm_ctx;
-    g_attest_server_cfg.crypto = &g_attest_crypto;
-#if defined(WOLF_CRYPTO_CB)
-    g_attest_server_cfg.devId = INVALID_DEVID;
-#endif
-
-    ret = wh_Server_Init(&g_attest_server, &g_attest_server_cfg);
-    if (ret == WH_ERROR_OK) {
-        g_attest_server.comm->client_id = WH_CLIENT_ID_MAX;
-        ret = wh_Server_SetConnected(&g_attest_server, WH_COMM_CONNECTED);
-    }
+    ret = wt_hsm_attest_server_open();
     if (ret == WH_ERROR_OK) {
         ret = wt_hsm_attest_export_public();
 #if defined(WT_VAULT_FOREIGN_PROBE)
@@ -1070,10 +1108,11 @@ int wt_hsm_attest_init(void)
                     /* vault_format re-inited the store under the attest server;
                      * rebind the server to the fresh store before re-provisioning
                      * so its keystore view is not stale. */
-                    ret = wh_Server_Init(&g_attest_server, &g_attest_server_cfg);
+                    ret = wh_Server_Init(&g_hsm_attest_server,
+                                         &g_hsm_attest_server_cfg);
                     if (ret == WH_ERROR_OK) {
-                        g_attest_server.comm->client_id = WH_CLIENT_ID_MAX;
-                        ret = wh_Server_SetConnected(&g_attest_server,
+                        g_hsm_attest_server.comm->client_id = WH_CLIENT_ID_MAX;
+                        ret = wh_Server_SetConnected(&g_hsm_attest_server,
                                                      WH_COMM_CONNECTED);
                     }
                     if (ret == WH_ERROR_OK) {
@@ -1088,14 +1127,14 @@ int wt_hsm_attest_init(void)
     }
 
     if (ret == WH_ERROR_OK) {
-        g_attest_ready = true;
+        g_hsm_attest_ready = true;
     }
     else {
-        wt_hsm_force_zero(g_attest_public_key,
-                          sizeof(g_attest_public_key));
+        wt_hsm_force_zero(g_hsm_attest_public_key,
+                          sizeof(g_hsm_attest_public_key));
     }
-    g_attest_init_status = ret;
-    return g_attest_init_status;
+    g_hsm_attest_init_status = ret;
+    return g_hsm_attest_init_status;
 }
 
 int wt_hsm_attest_sign(const uint8_t* digest, size_t digestSize,
@@ -1121,7 +1160,11 @@ int wt_hsm_attest_sign(const uint8_t* digest, size_t digestSize,
         return WH_ERROR_BADARGS;
     }
     *signatureSize = 0u;
-    if (!g_attest_ready || (digest == NULL) || (digestSize != 32u) ||
+    if (!g_hsm_attest_ready) {
+        return (g_hsm_attest_init_status != WH_ERROR_OK) ?
+               g_hsm_attest_init_status : WH_ERROR_NOTREADY;
+    }
+    if ((digest == NULL) || (digestSize != 32u) ||
         (signature == NULL) || (signatureCapacity < 64u)) {
         return WH_ERROR_BADARGS;
     }
@@ -1138,7 +1181,7 @@ int wt_hsm_attest_sign(const uint8_t* digest, size_t digestSize,
     (void)memcpy(sign + 1, digest, digestSize);
     requestSize = (uint16_t)(sizeof(*header) + sizeof(*sign) + digestSize);
 
-    ret = wh_Server_HandleCryptoRequest(&g_attest_server,
+    ret = wh_Server_HandleCryptoRequest(&g_hsm_attest_server,
         WH_COMM_MAGIC_NATIVE, WC_ALGO_TYPE_PK, 0u, requestSize,
         request.bytes, &responseSize, response.bytes);
     if (ret == WH_ERROR_OK) {
@@ -1186,15 +1229,16 @@ int wt_hsm_attest_public_key(uint8_t* publicKey, size_t publicKeyCapacity,
         return WH_ERROR_BADARGS;
     }
     *publicKeySize = WT_HSM_ATTEST_PUBLIC_KEY_SIZE;
-    if (!g_attest_ready) {
-        return g_attest_init_status;
+    if (!g_hsm_attest_ready) {
+        return (g_hsm_attest_init_status != WH_ERROR_OK) ?
+               g_hsm_attest_init_status : WH_ERROR_NOTREADY;
     }
     if ((publicKey == NULL) ||
         (publicKeyCapacity < WT_HSM_ATTEST_PUBLIC_KEY_SIZE)) {
         return WH_ERROR_BADARGS;
     }
 
-    (void)memcpy(publicKey, g_attest_public_key,
+    (void)memcpy(publicKey, g_hsm_attest_public_key,
                  WT_HSM_ATTEST_PUBLIC_KEY_SIZE);
     return WH_ERROR_OK;
 }
@@ -1205,9 +1249,8 @@ int wt_hsm_attest_public_key(uint8_t* publicKey, size_t publicKeyCapacity,
 __attribute__((used, noinline))
 int wt_platform_hsm_pin_probe(void)
 {
-    /* Per-guest pointers are forged inline on the relay pump path, so the guest
-     * crypto markers prove that pin; here verify the shared NVM-chain pin
-     * synchronously and leave the store correct for the vault (WT-FFM-0011). */
-    return wt_nvm_store_pin_probe();
+    /* The relay forges and re-pins the per-guest pointers on every pump; here
+     * verify the door view's chain. The vault checks the direct store's. */
+    return wt_nvm_client_partition_pin_probe();
 }
 #endif

@@ -85,29 +85,12 @@
 #define WT_FLASH_ECC_BANK      (1u << 22)
 #define WT_FLASH_ECCD          (1u << 31)
 
-typedef struct wt_hsm_flash_config {
-    uintptr_t base;
-    uint32_t size;
-    uint32_t sector_size;
-    uint32_t program_unit;
-} wt_hsm_flash_config_t;
-
-typedef struct wt_hsm_flash_context {
-    uintptr_t base;
-    uint32_t size;
-    uint32_t sector_size;
-    uint32_t program_unit;
-    bool write_locked;
-} wt_hsm_flash_context_t;
-
 static const wt_hsm_flash_config_t g_hsm_flash_cfg = {
     .base = WT_HSM_NVM_FLASH_BASE_S,
     .size = WT_HSM_NVM_FLASH_SIZE,
     .sector_size = WT_FLASH_SECTOR_SIZE,
     .program_unit = 16u,
 };
-
-static wt_hsm_flash_context_t g_hsm_flash_ctx;
 
 /* The keystore partitions run unprivileged and their flash context struct
  * lives in partition-writable RAM, so its base/size cannot be trusted by the
@@ -155,8 +138,6 @@ volatile uint32_t g_wt_flash_erase_calls __attribute__((used));
 volatile uint32_t g_wt_flash_first_err __attribute__((used));
 volatile uint32_t g_wt_flash_first_err_off __attribute__((used));
 volatile uint32_t g_wt_flash_first_err_sr __attribute__((used));
-volatile uint32_t g_wt_flash_gate_aborts __attribute__((used));
-volatile uint32_t g_wt_flash_gate_abort_info __attribute__((used));
 static volatile uint32_t g_flash_ecc_active;
 static volatile uint32_t g_flash_ecc_detected;
 static volatile uint32_t g_flash_ecc_bank;

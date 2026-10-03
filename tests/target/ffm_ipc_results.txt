@@ -1,0 +1,102 @@
+# Arm PSA Firmware Framework IPC suite: the per-test result the confboot
+# scenario must reproduce on both crypto engines. Recorded against
+# psa-arch-tests e17d294fa89dab56bbbcbb6e7751d2521f871577
+# (tests/upstream/psa-arch-tests.rev); a new pin needs a new record.
+#
+# The four skipped tests probe a Secure Partition heap. The image allocates no
+# memory (SP_HEAP_MEM_SUPP is not defined), so there is no heap to isolate:
+#   74  NSPE access to APP-RoT heap
+#   78  NSPE access to PSA-RoT heap
+#   82  APP-RoT access to PSA-RoT heap
+#   86  SP access to another SP's heap
+#
+# test result
+1 Passed
+2 Passed
+3 Passed
+4 Passed
+5 Passed
+6 Passed
+7 Passed
+8 Passed
+9 Passed
+10 Passed
+11 Passed
+12 Passed
+13 Passed
+14 Passed
+15 Passed
+16 Passed
+17 Passed
+18 Passed
+19 Passed
+20 Passed
+21 Passed
+22 Passed
+23 Passed
+24 Passed
+25 Passed
+26 Passed
+27 Passed
+28 Passed
+29 Passed
+30 Passed
+31 Passed
+32 Passed
+33 Passed
+34 Passed
+35 Passed
+36 Passed
+37 Passed
+38 Passed
+39 Passed
+40 Passed
+41 Passed
+42 Passed
+43 Passed
+44 Passed
+45 Passed
+46 Passed
+47 Passed
+48 Passed
+49 Passed
+50 Passed
+51 Passed
+52 Passed
+53 Passed
+54 Passed
+55 Passed
+56 Passed
+57 Passed
+58 Passed
+59 Passed
+60 Passed
+61 Passed
+62 Passed
+63 Passed
+64 Passed
+65 Passed
+66 Passed
+68 Passed
+69 Passed
+70 Passed
+71 Passed
+72 Passed
+73 Passed
+74 Skipped
+75 Passed
+76 Passed
+77 Passed
+78 Skipped
+79 Passed
+80 Passed
+81 Passed
+82 Skipped
+83 Passed
+84 Passed
+85 Passed
+86 Skipped
+87 Passed
+88 Passed
+89 Passed
+90 Passed

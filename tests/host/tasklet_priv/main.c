@@ -82,6 +82,7 @@ int main(void)
 {
     struct wt_co *co;
     wt_priv_band_t band;
+    wt_priv_band_t bands[3];
 
     wt_co_init();
 
@@ -122,6 +123,28 @@ int main(void)
           "in-RAM range overlapping the band refused");
     check(wt_priv_stack_ok(0x0F00u, 0x100u, 0x1000u, 0x2000u, &band, 1u) == 0,
           "range outside secure RAM refused");
+
+    /* Three adjacent per-partition bands, as the ports declare them. */
+    bands[0].base = 0x1400u;
+    bands[0].size = 0x100u;
+    bands[1].base = 0x1500u;
+    bands[1].size = 0x080u;
+    bands[2].base = 0x1580u;
+    bands[2].size = 0x200u;
+    check(wt_priv_stack_ok(0x1440u, 0x040u, 0x1000u, 0x2000u, bands, 3u) == 0,
+          "range in the first band refused");
+    check(wt_priv_stack_ok(0x1500u, 0x040u, 0x1000u, 0x2000u, bands, 3u) == 0,
+          "range in the second band refused");
+    check(wt_priv_stack_ok(0x1600u, 0x100u, 0x1000u, 0x2000u, bands, 3u) == 0,
+          "range in the third band refused");
+    check(wt_priv_stack_ok(0x1380u, 0x100u, 0x1000u, 0x2000u, bands, 3u) == 0,
+          "range straddling into the first band refused");
+    check(wt_priv_stack_ok(0x1700u, 0x100u, 0x1000u, 0x2000u, bands, 3u) == 0,
+          "range straddling out of the last band refused");
+    check(wt_priv_stack_ok(0x1300u, 0x100u, 0x1000u, 0x2000u, bands, 3u) == 1,
+          "range touching the first band from below accepted");
+    check(wt_priv_stack_ok(0x1780u, 0x080u, 0x1000u, 0x2000u, bands, 3u) == 1,
+          "range touching the last band from above accepted");
 
     /* The privileged path (wt_co_create_blocked) enforces the stack check; the
      * demoted SP path (wt_co_create_blocked_ex) is exempt and accepts either. */

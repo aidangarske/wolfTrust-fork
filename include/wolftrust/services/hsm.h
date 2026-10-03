@@ -30,6 +30,8 @@
 #include "wolfhsm/wh_comm.h"
 #include "wolfhsm/wh_common.h"
 
+struct whNvmContext_t;
+
 /* Initialise the wolfHSM service: wolfCrypt static memory pool,
  * target-backed NVM, shared lock, the per-guest crypto contexts, but NOT
  * the per-guest relay transport (wired by wt_hsm_guest_init_relay for each
@@ -115,15 +117,18 @@ void wt_hsm_release_locks(struct wt_co *co);
 struct wt_mutex;
 struct wt_mutex *wt_hsm_nvm_lock_mutex(void);
 
-/* Rebuild every ready per-guest server after a relay-partition fault: a
- * request may have been torn mid-flight, leaving the server DRBG or handler
- * state unusable. Fails closed — a guest whose re-init fails stays down. */
+/* Rebuild every ready server (per-guest and attestation) after a
+ * relay-partition fault: a request may have been torn mid-flight, leaving
+ * the server DRBG or handler state unusable. Fails closed — a guest whose
+ * re-init fails stays down. */
 int wt_hsm_relay_reinit_servers(void);
 
-/* Terminal-fault NS-client notifier. The default is a no-op, and no current
- * port installs a replacement, so this path does not notify NS clients. */
-typedef int (*wt_hsm_fault_notify_fn)(wt_guest_id_t guest_id);
-void wt_hsm_set_fault_notify(wt_hsm_fault_notify_fn fn);
+/* Bind the crypto partition's wolfHSM servers to nvm and rebuild them on it.
+ * Boot provisions the IAK on the direct store; before the scheduler starts,
+ * the servers are rebound to the crypto partition's IPC-backed NVM context
+ * (wolftrust/services/nvm_client.h) so the running partition never touches
+ * the vault's store memory. Privileged bootstrap only. */
+int wt_hsm_bind_nvm(struct whNvmContext_t* nvm);
 
 /* Provision or reopen the Initial Attestation Key in the wolfHSM keystore.
  * The private key is non-exportable and restricted to signing. */
@@ -132,6 +137,11 @@ int wt_hsm_attest_init(void);
 /* Run one secure HSM tasklet during bootstrap so the Initial Attestation Key
  * is provisioned before any Non-secure guest can request attestation. */
 int wt_hsm_attest_bootstrap(void);
+
+/* Rebuild the signer in a crypto partition band that a restart reset, from
+ * the public key the SPM kept at boot. A NULL key (boot provisioned no
+ * signer) leaves it not ready. The private key never leaves the store. */
+int wt_hsm_attest_restore(const uint8_t* publicKey, size_t publicKeySize);
 
 /* Sign a SHA-256 digest with the protected Initial Attestation Key. Output is
  * the 64-byte COSE ECDSA form, r followed by s. */
@@ -205,9 +215,33 @@ uint32_t wt_hsm_vault_flags_of(const uint8_t* label);
 psa_status_t wt_hsm_vault_reserve_object(whNvmSize len);
 
 /* Vault-domain RNG (WT-FFM-0054): entropy for SERVICE_VAULT's RANDOM face,
- * produced by a wolfCrypt DRBG owned by the privileged vault domain. Installed
- * via wt_vault_service_set_rng at boot. Only linked into builds that carry
- * wolfCrypt. */
+ * produced by a wolfCrypt DRBG the vault partition alone owns (wt_hsm_seal.c).
+ * The DRBG is seeded by the privileged bring-up of the vault's band, at boot
+ * and after a restart reset the band; the partition itself only draws from
+ * it, so no wolfCrypt initialisation state is read in-thread. random fails
+ * closed until init has run. Only linked into builds that carry wolfCrypt. */
+int wt_hsm_vault_rng_init(void);
 psa_status_t wt_hsm_vault_random(uint8_t* out, size_t len);
+
+/* Store-parameterised twins of the directory helpers, for a backend bound to
+ * a store other than the vault's own (the crypto partition's IPC-backed
+ * context). */
+psa_status_t wt_hsm_vault_lookup_in(struct whNvmContext_t* nvm,
+                                    int32_t owner, int32_t sub, uint64_t uid,
+                                    whNvmId* out_id, whNvmMetadata* out_meta,
+                                    whNvmId* out_free_id);
+psa_status_t wt_hsm_vault_reserve_object_in(struct whNvmContext_t* nvm,
+                                            whNvmSize len);
+
+/* Keystore object door (SERVICE_VAULT WT_VAULT_OP_NVM_*): the vault-side
+ * policy and store access behind the crypto partition's NVM callbacks,
+ * installed with wt_vault_service_set_nvm_backend. An id is reachable only
+ * when its type nibble is non-zero (a wolfHSM keystore object) or it is a
+ * vault-window object whose label carries the key flag; the directory
+ * table, seal key, rollback table, and stage object are never reachable.
+ * add reserves pool headroom before writing so a full pool can never poison
+ * later adds. */
+struct wt_vault_nvm_backend;
+extern const struct wt_vault_nvm_backend wt_hsm_vault_nvm_backend;
 
 #endif /* WOLFTRUST_SERVICES_HSM_H */

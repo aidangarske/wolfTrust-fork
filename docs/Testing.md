@@ -147,6 +147,35 @@ than their names suggest:
   parked on its stack top, so the exception frame lands on the seal words;
   that partition alone faults and restarts, and the guests keep running.
 
+`bandneg1` through `bandneg6` prove the vault, attestation, and crypto
+partitions cannot reach each other's data band:
+
+| Scenario | Prober | Band touched |
+| --- | --- | --- |
+| `bandneg1` | crypto | vault |
+| `bandneg2` | crypto | attestation |
+| `bandneg3` | attestation | vault |
+| `bandneg4` | attestation | crypto |
+| `bandneg5` | vault | attestation |
+| `bandneg6` | vault | crypto |
+
+The prober reads the band, is restarted, writes the band, and is restarted
+again. Both accesses must fault on the prober's own stack, and the full
+positive lifecycle must still complete. The crypto and attestation probers
+also confirm the keystore services they do not own are refused.
+
+`restartneg1`, `restartneg2`, and `restartneg3` prove a restarted crypto,
+attestation, or vault partition starts from its band's link-time image. The
+partition changes initialized and zero-initialized state in its own band and
+faults; its restarted instance faults again if either value survived.
+
+`manifestneg` removes a required feature, `manifestneg2` declares isolation
+level 2, and `manifestneg3` composes a partition table that reaches another
+partition's band. Each must halt the boot before anything is scheduled.
+
+Each numbered probe variant is its own matrix row; CI packs each family
+into one job.
+
 Three more cover the SPM's own fault handling:
 
 - `mspovfneg` pushes on the Secure main stack in the reset path until
@@ -180,6 +209,13 @@ make test-vnet-target
 `test-vnet` is host-only. `test-vnet-target` launches two
 authenticated wolfIP guests under M33MU.
 
+The wolfIP guests poll once per guest millisecond and idle between ticks so
+empty copied IPC calls leave time for the guest clock to advance. The `vnet`
+and `vnetneg` M33MU scenarios allow 180 wall-clock seconds for the initial ARP
+delay in guest time and the copied IPC round trip on shared runners. Both
+require the mediated ping reply and clean breakpoint exit; `vnetneg` also
+requires both isolation faults and recovery.
+
 ### Engine matrix
 
 The full CI scenario list adds `engine: [native, hsm]` as a matrix dimension.
@@ -200,7 +236,8 @@ Validation of the engine split completed under both engines with:
 
 - the applicable M33MU scenario matrix;
 - the Arm FF-M IPC suite at 85 passed, 4 heap-dependent tests skipped, and
-  0 failed;
+  0 failed, test for test as recorded in
+  [`tests/target/ffm_ipc_results.txt`](../tests/target/ffm_ipc_results.txt);
 - the current dev_apis Crypto schedule at 64 passed, 13 skipped, and 0 failed
   (77 scheduled tests; c047 is configuration-skipped in addition to the
   upstream schedule); and

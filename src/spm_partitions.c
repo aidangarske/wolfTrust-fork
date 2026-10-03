@@ -39,6 +39,14 @@
 #include "wolftrust/services/fwu_service.h"
 #include "wolftrust/services/hsm.h"
 #include "wolftrust/services/hsm_relay.h"
+#include "wolftrust/services/nvm_client.h"
+#include "wolftrust/nvm_store.h"
+#include "wolftrust/boot.h"
+#include "wolftrust/boot_handoff.h"
+#include "wolftrust/partition.h"
+#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
+#include "wolftrust/services/initial_attestation.h"
+#endif
 #ifndef WT_ENGINE_HSM
 #include "wolftrust/services/crypto_native.h"
 #endif
@@ -56,15 +64,82 @@
 
 /* Generated in every secure build; the ITS entry embeds SERVICE_VAULT_SID as
  * a code constant — the unprivileged loop cannot read SPM RAM at runtime. */
+#include "psa_manifest/pid.h"
 #include "psa_manifest/sid.h"
 
 /* Port flash staging backend (WT-FWU-0002), driven by the FWU partition
  * through the gate's privileged backend ops. */
 extern const wt_fwu_backend_t wt_fwu_flash_backend;
 
+#if defined(WT_BAND_NEG_PROBE) && (WT_BAND_NEG_PROBE != 0)
+/* A keystore service the prober does not own must be refused at the gate;
+ * reaching the privileged backend would be a privilege escape, so trap with
+ * a fault the scenario does not expect. */
+static void wt_spm_band_probe_refused(wt_spm_op_t op, int32_t sub_op)
+{
+    wt_spm_call_t pin;
+    uint8_t scratch[4];
+
+    (void)memset(&pin, 0, sizeof(pin));
+    pin.op = op;
+    pin.call_type = sub_op;
+    if (op == WT_SPM_OP_KEYSTORE_ENTROPY) {
+        pin.buffer = scratch;
+        pin.num_bytes = sizeof(scratch);
+    }
+    if (wt_arch_sp_trap(&pin) != WT_FFM_ERROR_ARGUMENT) {
+        wt_arch_sp_fault_probe(1u);
+    }
+}
+
+/* Band isolation proof (WT-FFM-0011): the prober reads another partition's
+ * data band, and after its restart writes it; both must MemManage-fault
+ * inside the prober. Its third run serves normally. Never built into
+ * production images. */
+static void wt_spm_band_probe(void* arg, unsigned int target)
+{
+    volatile uint32_t* band =
+        (volatile uint32_t*)wt_platform_probe_address(target);
+    volatile uint32_t seen;
+
+    if (((intptr_t)arg & WT_SP_FAULT_PROBE_RESTARTED) == 0) {
+        seen = *band;
+        (void)seen;
+        wt_arch_sp_fault_probe(3u);
+    }
+    else if (((intptr_t)arg & WT_SP_FAULT_PROBE_SECOND) == 0) {
+        *band = 0xA5A5A5A5u;
+        wt_arch_sp_fault_probe(4u);
+    }
+}
+
+#define WT_BAND_PROBE_ID(arg) \
+    ((int32_t)((intptr_t)(arg) & ~(intptr_t)WT_SP_FAULT_PROBE_RESTARTED & \
+               ~(intptr_t)WT_SP_FAULT_PROBE_SECOND))
+#endif
+
+#if defined(WT_RESTART_NEG_PROBE) && (WT_RESTART_NEG_PROBE != 0)
+/* Restart proof (WT-FFM-0051): the partition plants state in its own band
+ * and faults; its restarted instance must find the band's link-time image.
+ * Never built into production images. */
+static void wt_spm_restart_probe(void* arg, int (*probe)(int restarted))
+{
+    if (((intptr_t)arg & WT_SP_FAULT_PROBE_RESTARTED) == 0) {
+        (void)probe(0);
+        wt_arch_sp_fault_probe(0u);
+    }
+    else if (probe(1) == 0) {
+        wt_arch_sp_fault_probe(2u);
+    }
+}
+
+#define WT_RESTART_PROBE_ID(arg) \
+    ((int32_t)((intptr_t)(arg) & ~(intptr_t)WT_SP_FAULT_PROBE_RESTARTED))
+#endif
+
 /* SERVICE_HSM's relay loop: a confined scheduled SP. The submit pump reaches
- * the wolfHSM server state through the shared keystore band its manifest
- * domain grants; flash, entropy, and the NVM lock trap to the SVC gate. */
+ * the crypto engine state in the partition's own data band; persistent key
+ * objects go through SERVICE_VAULT, entropy traps to the SVC gate. */
 static void wt_spm_hsm_entry(void* arg)
 {
     int32_t partition_id = (int32_t)(intptr_t)arg;
@@ -93,55 +168,220 @@ static void wt_spm_hsm_entry(void* arg)
     partition_id = (int32_t)((intptr_t)arg &
                              ~(intptr_t)WT_SP_FAULT_PROBE_RESTARTED);
 #endif
+#if defined(WT_BAND_NEG_PROBE) && (WT_BAND_NEG_PROBE != 0)
+    partition_id = WT_BAND_PROBE_ID(arg);
+    wt_spm_band_probe_refused(WT_SPM_OP_KEYSTORE_FLASH,
+                              WT_SPM_KS_FLASH_BLANKCHECK);
+    wt_spm_band_probe_refused(WT_SPM_OP_KEYSTORE_LOCK,
+                              WT_SPM_KS_LOCK_RELEASE);
+#if (WT_BAND_NEG_PROBE == 1)
+    wt_spm_band_probe(arg, WT_PROBE_VAULT_DATA_BAND);
+#elif (WT_BAND_NEG_PROBE == 2)
+    wt_spm_band_probe(arg, WT_PROBE_ATTEST_DATA_BAND);
+#endif
+#endif
+#if defined(WT_RESTART_NEG_PROBE) && (WT_RESTART_NEG_PROBE != 0)
+    partition_id = WT_RESTART_PROBE_ID(arg);
+#if (WT_RESTART_NEG_PROBE == 1)
+    wt_spm_restart_probe(arg, wt_hsm_relay_restart_probe);
+#endif
+#endif
+#if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
+    /* The crypto partition forges its own server pointers for the relay to
+     * re-pin on its next pump, and self-verifies the door view's pin. */
+    if (wt_platform_hsm_pin_probe() == 0) {
+        wt_arch_sp_fault_probe(0u);
+    }
+#endif
 
     for (;;) {
         (void)wt_hsm_relay_dispatch(NULL, NULL, partition_id);
     }
 }
 
-int wt_spm_hsm_start(wt_ffm_runtime_t* runtime, int32_t partition_id)
+#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
+/* What boot established about the attestation signer, kept in SPM RAM: a
+ * restarted crypto partition is rebuilt from this, never from its own band. */
+static uint8_t g_spm_iak_public[WT_HSM_ATTEST_PUBLIC_KEY_LEN];
+static size_t g_spm_iak_public_len;
+#endif
+
+/* Wire the crypto partition's band to the relay seams and to the vault's
+ * door; boot and every restart run the same steps. */
+static int wt_spm_hsm_bind(int32_t partition_id)
 {
     wt_hsm_relay_set_transport(wt_spm_svc_transport);
+    /* Boot provisioned on the direct store; the running partition only ever
+     * sees the vault through its door (the client context lives in the
+     * crypto partition's own data band, nvm_client.o). */
+    if (wt_nvm_client_bind_partition(wt_spm_svc_transport, NULL, partition_id,
+                                     SERVICE_VAULT_SID) != 0) {
+        return WT_FFM_ERROR_STATE;
+    }
 #if defined(WT_ENGINE_HSM)
+    if (wt_hsm_bind_nvm(wt_nvm_client_partition_nvm()) != 0) {
+        return WT_FFM_ERROR_STATE;
+    }
     wt_hsm_relay_set_submit(wt_hsm_relay_submit, NULL);
 #else
     /* Native engine: SERVICE_HSM stays the single mediated door; its packets
      * carry the native wire and dispatch straight into wolfCrypt. */
+    if (wt_native_bind_nvm(wt_nvm_client_partition_nvm()) != 0) {
+        return WT_FFM_ERROR_STATE;
+    }
     wt_hsm_relay_set_submit(wt_native_submit, (void*)(intptr_t)partition_id);
 #endif
+#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
+    wt_hsm_relay_set_attest_ops(PARTITION_ATTEST_ID, wt_hsm_attest_sign,
+                                wt_hsm_attest_public_key);
+#endif
+    return WT_FFM_SUCCESS;
+}
+
+static int wt_spm_hsm_restore(int32_t partition_id)
+{
+#if defined(WT_ENGINE_HSM)
+    const wt_guest_config_t* configs;
+    size_t cfg_count = 0u;
+    wt_guest_id_t gid;
+
+    configs = wt_partitions_config_table(&cfg_count);
+    for (gid = 0u; configs != NULL && gid < WT_MAX_GUESTS &&
+            gid < cfg_count; gid++) {
+        if (wt_hsm_guest_init_relay(gid) != 0) {
+            return WT_FFM_ERROR_STATE;
+        }
+    }
+#endif
+#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
+    if (wt_hsm_attest_restore((g_spm_iak_public_len != 0u) ?
+                              g_spm_iak_public : NULL,
+                              g_spm_iak_public_len) != 0) {
+        return WT_FFM_ERROR_STATE;
+    }
+#endif
+    return wt_spm_hsm_bind(partition_id);
+}
+
+int wt_spm_hsm_start(wt_ffm_runtime_t* runtime, int32_t partition_id)
+{
+    int ret;
+
+#if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
+    /* Taken before the store is rebound to the door view, which the boot
+     * context cannot call through. */
+    g_spm_iak_public_len = 0u;
+    if (wt_hsm_attest_public_key(g_spm_iak_public, sizeof(g_spm_iak_public),
+                                 &g_spm_iak_public_len) != 0) {
+        g_spm_iak_public_len = 0u;
+    }
+#endif
+    ret = wt_spm_hsm_bind(partition_id);
+    if (ret != WT_FFM_SUCCESS) {
+        return ret;
+    }
     wt_spm_set_hsm_partition(partition_id);
-    return wt_spm_sched_add(runtime, partition_id, wt_spm_hsm_entry,
-                            (void*)(intptr_t)partition_id);
+    ret = wt_spm_sched_add(runtime, partition_id, wt_spm_hsm_entry,
+                           (void*)(intptr_t)partition_id);
+    if (ret == WT_FFM_SUCCESS) {
+        ret = wt_spm_sched_set_restore(partition_id, wt_spm_hsm_restore);
+    }
+    return ret;
 }
 
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
-/* SERVICE_ATTEST's dispatch loop: a confined scheduled SP. The sign path
- * reaches the attestation wolfHSM server through the shared keystore band;
- * flash, entropy, and the NVM lock trap to the SVC gate. */
+/* SERVICE_ATTEST's dispatch loop: a confined scheduled SP. The token state
+ * lives in the partition's own data band; the IAK stays with the crypto
+ * partition, reached through SERVICE_HSM's attestation door, and the boot
+ * measurements come from the SVC gate's read-only snapshot. */
 static void wt_spm_attest_entry(void* arg)
 {
     int32_t partition_id = (int32_t)(intptr_t)arg;
 
+#if defined(WT_BAND_NEG_PROBE) && (WT_BAND_NEG_PROBE != 0)
+    partition_id = WT_BAND_PROBE_ID(arg);
+    wt_spm_band_probe_refused(WT_SPM_OP_KEYSTORE_FLASH,
+                              WT_SPM_KS_FLASH_BLANKCHECK);
+    wt_spm_band_probe_refused(WT_SPM_OP_KEYSTORE_LOCK,
+                              WT_SPM_KS_LOCK_RELEASE);
+    wt_spm_band_probe_refused(WT_SPM_OP_KEYSTORE_ENTROPY, 0);
+#if (WT_BAND_NEG_PROBE == 3)
+    wt_spm_band_probe(arg, WT_PROBE_VAULT_DATA_BAND);
+#elif (WT_BAND_NEG_PROBE == 4)
+    wt_spm_band_probe(arg, WT_PROBE_HSM_DATA_BAND);
+#endif
+#endif
+#if defined(WT_RESTART_NEG_PROBE) && (WT_RESTART_NEG_PROBE != 0)
+    partition_id = WT_RESTART_PROBE_ID(arg);
+#if (WT_RESTART_NEG_PROBE == 2)
+    wt_spm_restart_probe(arg, wt_attestation_restart_probe);
+#endif
+#endif
     for (;;) {
         (void)wt_attestation_service_dispatch(NULL, NULL, partition_id);
     }
 }
 
-int wt_spm_attest_start(wt_ffm_runtime_t* runtime, int32_t partition_id)
+static int wt_spm_attest_bind(int32_t partition_id)
 {
     wt_attestation_service_set_transport(wt_spm_svc_transport);
-    return wt_spm_sched_add(runtime, partition_id, wt_spm_attest_entry,
-                            (void*)(intptr_t)partition_id);
+    if (wt_initial_attest_bind_hsm(wt_spm_svc_transport, NULL, partition_id,
+                                   SERVICE_HSM_SID) != WT_ATTEST_SUCCESS) {
+        return WT_FFM_ERROR_STATE;
+    }
+    return WT_FFM_SUCCESS;
+}
+
+static int wt_spm_attest_restore(int32_t partition_id)
+{
+    const wt_boot_handoff_t* handoff = wt_boot_handoff_retained();
+
+    /* As at boot, a handoff the partition cannot take leaves attestation
+     * degraded (every request fails closed), not the restart refused. */
+    if (handoff != NULL) {
+        (void)wt_initial_attest_init(handoff);
+    }
+    return wt_spm_attest_bind(partition_id);
+}
+
+int wt_spm_attest_start(wt_ffm_runtime_t* runtime, int32_t partition_id)
+{
+    int ret;
+
+    ret = wt_spm_attest_bind(partition_id);
+    if (ret == WT_FFM_SUCCESS) {
+        ret = wt_spm_sched_add(runtime, partition_id, wt_spm_attest_entry,
+                               (void*)(intptr_t)partition_id);
+    }
+    if (ret == WT_FFM_SUCCESS) {
+        ret = wt_spm_sched_set_restore(partition_id, wt_spm_attest_restore);
+    }
+    return ret;
 }
 #endif /* WT_ATTEST_COSE */
 
-/* The vault partition's service loop: a confined scheduled SP. Its file-scope
- * backend/transport seams live in the shared keystore band its manifest
- * domain grants; flash, entropy, and the NVM lock trap to the SVC gate. */
+/* The vault partition's service loop: a confined scheduled SP. The NVM
+ * store, its flash context, the sealer, and the service seams live in the
+ * partition's own data band; flash, entropy, and the NVM lock trap to the
+ * SVC gate. */
 static void wt_spm_vault_entry(void* arg)
 {
     int32_t partition_id = (int32_t)(intptr_t)arg;
 
+#if defined(WT_BAND_NEG_PROBE) && (WT_BAND_NEG_PROBE != 0)
+    partition_id = WT_BAND_PROBE_ID(arg);
+#if (WT_BAND_NEG_PROBE == 5)
+    wt_spm_band_probe(arg, WT_PROBE_ATTEST_DATA_BAND);
+#elif (WT_BAND_NEG_PROBE == 6)
+    wt_spm_band_probe(arg, WT_PROBE_HSM_DATA_BAND);
+#endif
+#endif
+#if defined(WT_RESTART_NEG_PROBE) && (WT_RESTART_NEG_PROBE != 0)
+    partition_id = WT_RESTART_PROBE_ID(arg);
+#if (WT_RESTART_NEG_PROBE == 3)
+    wt_spm_restart_probe(arg, wt_vault_restart_probe);
+#endif
+#endif
 #if defined(WT_DEPUTY_NEG_PROBE) && (WT_DEPUTY_NEG_PROBE == 1)
     /* Privileged-deputy proof (WT-FFM-0011): the vault owns the writable flash
      * context, so it forges the base and size to aim the privileged NVM path at
@@ -154,9 +394,10 @@ static void wt_spm_vault_entry(void* arg)
     }
 #endif
 #if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
-    /* Verify the NVM-chain pin and fault the scenario on a failed heal, so
-     * hsmpinneg fails loudly rather than proceed on forged state (WT-FFM-0011). */
-    if (wt_platform_hsm_pin_probe() == 0) {
+    /* The vault owns the direct store and self-verifies its chain's pin. A
+     * failed heal faults here so the scenario fails loudly instead of
+     * proceeding on forged state (WT-FFM-0011). */
+    if (wt_nvm_store_pin_probe() == 0) {
         wt_arch_sp_fault_probe(0u);
     }
 #endif
@@ -165,13 +406,35 @@ static void wt_spm_vault_entry(void* arg)
     }
 }
 
+static void wt_spm_vault_bind(void)
+{
+    wt_vault_service_set_transport(wt_spm_svc_transport);
+    wt_vault_service_set_keystore_client(PARTITION_HSM_ID);
+}
+
+static int wt_spm_vault_restore(int32_t partition_id)
+{
+    (void)partition_id;
+    if (wt_nvm_vault_bind() != 0) {
+        return WT_FFM_ERROR_STATE;
+    }
+    wt_spm_vault_bind();
+    return WT_FFM_SUCCESS;
+}
+
 int wt_spm_vault_start(wt_ffm_runtime_t* runtime, int32_t partition_id)
 {
-    /* The vault must run as a scheduled coroutine: every op takes the shared
-     * NVM path, whose mutex cannot be held from the bootstrap context. */
-    wt_vault_service_set_transport(wt_spm_svc_transport);
-    return wt_spm_sched_add(runtime, partition_id, wt_spm_vault_entry,
-                            (void*)(intptr_t)partition_id);
+    int ret;
+
+    /* The vault must run as a scheduled coroutine: every op takes the NVM
+     * path, whose mutex cannot be held from the bootstrap context. */
+    wt_spm_vault_bind();
+    ret = wt_spm_sched_add(runtime, partition_id, wt_spm_vault_entry,
+                           (void*)(intptr_t)partition_id);
+    if (ret == WT_FFM_SUCCESS) {
+        ret = wt_spm_sched_set_restore(partition_id, wt_spm_vault_restore);
+    }
+    return ret;
 }
 
 /* The ITS partition's service loop: a normal UNPRIVILEGED scheduled SP.
@@ -219,8 +482,8 @@ static void wt_spm_its_entry(void* arg)
     for (;;) {
 #if defined(WT_KEYSTORE_NEG_PROBE) && (WT_KEYSTORE_NEG_PROBE == 1)
         /* Keystore-band isolation proof (WT-FFM-0062): the ITS partition is a
-         * non-keystore SP whose domain does not grant the shared keystore
-         * band, so this read must MemManage-fault. Placed in ITS (which runs
+         * non-keystore SP whose domain grants none of the keystore data
+         * bands, so this read must MemManage-fault. Placed in ITS (which runs
          * on every guest storage op) rather than FWU (which never runs without
          * a client). Its own build so it never races the crossdomain probe.
          * Never built into production images. */

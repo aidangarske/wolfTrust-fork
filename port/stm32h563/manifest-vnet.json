@@ -151,10 +151,10 @@
           "share_id": 0
         },
         {
-          "base": 805785600,
-          "size": 81920,
-          "attributes": 35,
-          "share_id": 1
+          "base": 805793792,
+          "size": 2048,
+          "attributes": 19,
+          "share_id": 0
         }
       ],
       "interrupt_resources": [],
@@ -192,10 +192,10 @@
           "share_id": 0
         },
         {
-          "base": 805785600,
-          "size": 81920,
-          "attributes": 35,
-          "share_id": 1
+          "base": 805795840,
+          "size": 71680,
+          "attributes": 19,
+          "share_id": 0
         }
       ],
       "interrupt_resources": [],
@@ -234,9 +234,9 @@
         },
         {
           "base": 805785600,
-          "size": 81920,
-          "attributes": 35,
-          "share_id": 1
+          "size": 8192,
+          "attributes": 19,
+          "share_id": 0
         }
       ],
       "interrupt_resources": [],
@@ -416,7 +416,9 @@
           "connection_based": true
         }
       ],
-      "dependencies": [],
+      "dependencies": [
+        4102
+      ],
       "interrupts": []
     },
     {
@@ -437,7 +439,9 @@
           "connection_based": true
         }
       ],
-      "dependencies": [],
+      "dependencies": [
+        4098
+      ],
       "interrupts": []
     },
     {

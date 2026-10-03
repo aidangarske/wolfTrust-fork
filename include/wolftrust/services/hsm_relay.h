@@ -30,7 +30,8 @@
  * monitor's per-guest server tasklet), and the server's response packet is
  * written back as outvec[0]. The relay never parses packet contents — the
  * wolfHSM comm layer owns the protocol; the SPM owns caller identity and the
- * copied-transfer bounds (WT-FFM-0041/0047). */
+ * copied-transfer bounds (WT-FFM-0041/0047). A Secure Partition caller's
+ * PSA_IPC_CALL is refused with PSA_ERROR_NOT_PERMITTED. */
 
 /* One wolfHSM wire packet: whCommHeader (8) + WOLFHSM_CFG_COMM_DATA_LEN (368)
  * = 376 bytes on this platform; bound with headroom, under the FF-M copied
@@ -48,6 +49,37 @@ typedef int (*wt_hsm_relay_submit_fn)(void* submit_ctx, int32_t client_id,
 /* Install the submit hook. NULL restores the fail-closed default, which
  * refuses every packet with PSA_ERROR_NOT_SUPPORTED. */
 void wt_hsm_relay_set_submit(wt_hsm_relay_submit_fn fn, void* submit_ctx);
+
+/* Attestation signing door (isolation level 3): the attestation partition
+ * holds no key material and reaches the Initial Attestation Key only through
+ * these psa_call types on SERVICE_HSM, served for the one partition
+ * registered here and refused for every other client (Non-secure clients
+ * included). SIGN takes the 32-byte digest in invec[0] and returns the
+ * 64-byte r||s signature in outvec[0]; PUBLIC_KEY returns the 65-byte X9.63
+ * point in outvec[0]. The engine's local signer pair is installed by the
+ * platform start hook; NULL (the default) refuses both. */
+#define WT_HSM_OP_ATTEST_SIGN       1
+#define WT_HSM_OP_ATTEST_PUBLIC_KEY 2
+
+/* Signer result for "no Initial Attestation Key yet"; equals the engines'
+ * WH_ERROR_NOTREADY (asserted where they are linked) so the relay stays free
+ * of wolfHSM headers. */
+#define WT_HSM_ATTEST_NOT_READY      (-2001)
+
+#define WT_HSM_ATTEST_DIGEST_LEN     32U
+#define WT_HSM_ATTEST_SIGNATURE_LEN  64U
+#define WT_HSM_ATTEST_PUBLIC_KEY_LEN 65U
+
+typedef int (*wt_hsm_attest_sign_fn)(const uint8_t* digest, size_t digest_len,
+                                     uint8_t* signature,
+                                     size_t signature_capacity,
+                                     size_t* signature_len);
+typedef int (*wt_hsm_attest_public_key_fn)(uint8_t* public_key,
+                                           size_t public_key_capacity,
+                                           size_t* public_key_len);
+void wt_hsm_relay_set_attest_ops(int32_t attest_partition_id,
+                                 wt_hsm_attest_sign_fn sign,
+                                 wt_hsm_attest_public_key_fn public_key);
 
 /* Transport seam, mirroring the other services: direct gate calls on the
  * host, the SVC transport when scheduled on target. NULL restores default. */

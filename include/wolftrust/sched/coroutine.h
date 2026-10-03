@@ -103,7 +103,7 @@ void wt_co_wake(wt_co_t *co);
 wt_co_t *wt_co_current(void);
 
 /* Read state — used by audit/instrumentation, not for scheduling
- * decisions in user code. */
+ * decisions in user code. A NULL handle reports WT_CO_FAULTED. */
 wt_co_state_t wt_co_state(const wt_co_t *co);
 
 /* True when a wake arrived while the coroutine was active and is latched

@@ -312,6 +312,7 @@ static int run_guest(uint32_t guest_id)
     int tries;
     volatile uint32_t spin;
     uint32_t next_ping_ms = 200;  /* first ping after a short ARP window */
+    uint32_t last_poll_ms = UINT32_MAX;
     uint8_t rx_buf[64];
     uint8_t mac_ram[6];
 
@@ -369,7 +370,15 @@ static int run_guest(uint32_t guest_id)
     }
 
     for (;;) {
-        wolfIP_poll(ip, (uint64_t)now_ms());
+        uint32_t poll_ms = now_ms();
+
+        /* Empty copied IPC polls must leave time for the guest clock. */
+        if (poll_ms == last_poll_ms) {
+            __asm volatile("wfi");
+            continue;
+        }
+        last_poll_ms = poll_ms;
+        wolfIP_poll(ip, (uint64_t)poll_ms);
 
         if (guest_id == 0u) {
             uint32_t t = now_ms();

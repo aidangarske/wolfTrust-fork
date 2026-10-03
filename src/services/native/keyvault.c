@@ -19,7 +19,8 @@
  */
 
 /* wolfCrypt key-op backend (WT-FFM-0046): every private-key computation runs
- * inside the privileged vault domain against material that never leaves it.
+ * inside the crypto partition against material copied in through the vault's
+ * keystore door, and no result carries it back out.
  * Keys are vault NVM objects (shared (owner, sub_owner, uid) directory)
  * stored SENSITIVE + NONEXPORTABLE, so no *Checked NVM path can return the
  * bytes, the storage face refuses key-flagged objects, and no wire op
@@ -62,25 +63,28 @@ static whNvmContext* g_kv_nvm;
 static WC_RNG g_kv_rng;
 static int g_kv_rng_ready;
 
+/* The DRBG is seeded here, in privileged context (boot, or the restart that
+ * reset the band), never lazily in the partition thread, so wolfCrypt's
+ * initialisation state is only read from SPM context. */
+static int wt_hsm_kv_rng_init(void)
+{
+    if (g_kv_rng_ready != 0) {
+        return 0;
+    }
+    if (wc_InitRng_ex(&g_kv_rng, NULL, INVALID_DEVID) != 0) {
+        return -1;
+    }
+    g_kv_rng_ready = 1;
+    return 0;
+}
+
 int wt_hsm_keyvault_init(whNvmContext* nvm)
 {
     if (nvm == NULL) {
         return -1;
     }
     g_kv_nvm = nvm;
-    return 0;
-}
-
-/* Fault-recovery hook (WT-SYS-0008): the vault DRBG is the only mutable crypto
- * state that outlives a torn native request. Invalidate it so the restarted
- * service re-seeds on next use; a re-seed failure then fails the op closed
- * rather than drawing from a half-updated generator. */
-void wt_hsm_keyvault_reset(void)
-{
-    if (g_kv_rng_ready != 0) {
-        (void)wc_FreeRng(&g_kv_rng);
-        g_kv_rng_ready = 0;
-    }
+    return wt_hsm_kv_rng_init();
 }
 
 static void wt_hsm_kv_zeroize(uint8_t* buf, size_t len)
@@ -96,18 +100,14 @@ static void wt_hsm_kv_zeroize(uint8_t* buf, size_t len)
 static psa_status_t wt_hsm_kv_rng(WC_RNG** out)
 {
     if (g_kv_rng_ready == 0) {
-        if (wc_InitRng_ex(&g_kv_rng, NULL, INVALID_DEVID) != 0) {
-            return PSA_ERROR_GENERIC_ERROR;
-        }
-        g_kv_rng_ready = 1;
+        return PSA_ERROR_BAD_STATE;
     }
     *out = &g_kv_rng;
     return PSA_SUCCESS;
 }
 
-/* Vault-domain randomness (WT-FFM-0054): serves the vault RANDOM face and
- * the native wire so non-secure DRBG seeds come from the same vault RNG
- * that generates key material. */
+/* The crypto partition's keyvault DRBG, served on the native wire RANDOM op;
+ * SERVICE_VAULT's RANDOM face draws from its own DRBG. */
 psa_status_t wt_hsm_keyvault_random(uint8_t* out, size_t len)
 {
     WC_RNG* rng;
@@ -138,7 +138,8 @@ static psa_status_t wt_hsm_kv_store(int32_t owner, int32_t sub, uint64_t uid,
     psa_status_t status;
     int rc;
 
-    status = wt_hsm_vault_lookup(owner, sub, uid, NULL, NULL, &free_id);
+    status = wt_hsm_vault_lookup_in(g_kv_nvm, owner, sub, uid, NULL, NULL,
+                                    &free_id);
     if (status == PSA_SUCCESS) {
         return PSA_ERROR_ALREADY_EXISTS;
     }
@@ -151,7 +152,7 @@ static psa_status_t wt_hsm_kv_store(int32_t owner, int32_t sub, uint64_t uid,
     /* Reserve and reclaim before the add, exactly like wt_hsm_vault_set: key
      * generate/destroy churn over the native wire must not fill the shared log
      * or eat the headroom the seal-counter table and rollback floor need. */
-    status = wt_hsm_vault_reserve_object((whNvmSize)obj_len);
+    status = wt_hsm_vault_reserve_object_in(g_kv_nvm, (whNvmSize)obj_len);
     if (status != PSA_SUCCESS) {
         return status;
     }
@@ -182,7 +183,8 @@ static psa_status_t wt_hsm_kv_load(int32_t owner, int32_t sub, uint64_t uid,
     if (g_kv_nvm == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
-    status = wt_hsm_vault_lookup(owner, sub, uid, &id, &meta, NULL);
+    status = wt_hsm_vault_lookup_in(g_kv_nvm, owner, sub, uid, &id, &meta,
+                                    NULL);
     if (status != PSA_SUCCESS) {
         return status;
     }
@@ -558,7 +560,8 @@ psa_status_t wt_hsm_keyvault_destroy(int32_t owner, int32_t sub, uint64_t uid)
     if (g_kv_nvm == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
-    status = wt_hsm_vault_lookup(owner, sub, uid, &id, &meta, NULL);
+    status = wt_hsm_vault_lookup_in(g_kv_nvm, owner, sub, uid, &id, &meta,
+                                    NULL);
     if (status != PSA_SUCCESS) {
         return status;
     }

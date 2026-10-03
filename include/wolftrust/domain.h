@@ -164,7 +164,8 @@ typedef enum wt_domain_validation_result {
     WT_DOMAIN_ERROR_INTERRUPT = -22,
     WT_DOMAIN_ERROR_INTERRUPT_OWNERSHIP = -23,
     WT_DOMAIN_ERROR_SPM_COUNT = -24,
-    WT_DOMAIN_ERROR_LAUNCH_POLICY = -25
+    WT_DOMAIN_ERROR_LAUNCH_POLICY = -25,
+    WT_DOMAIN_ERROR_ISOLATION = -26
 } wt_domain_validation_result_t;
 
 /* Phase 3 must call this on generated manifests before runtime scheduling. */

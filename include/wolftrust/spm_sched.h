@@ -39,22 +39,48 @@ typedef void (*wt_spm_sp_entry_fn)(void* arg);
 int wt_spm_sched_add(wt_ffm_runtime_t* runtime, int32_t partition_id,
                      wt_spm_sp_entry_fn entry, void* arg);
 
+/* Rebuilds a partition's data band after a restart reset it to its link-time
+ * image: the same privileged setup boot ran, from SPM-held inputs only.
+ * Nonzero fails the restart closed. */
+typedef int (*wt_spm_sp_restore_fn)(int32_t partition_id);
+
+/* Register the restore hook of an already scheduled partition. */
+int wt_spm_sched_set_restore(int32_t partition_id,
+                             wt_spm_sp_restore_fn restore);
+
+/* The composition invariant (WT-FFM-0011): once every partition is scheduled,
+ * no composed table may grant write access to memory another partition can
+ * reach, or any access to SPM-private RAM. WT_FFM_ERROR_ISOLATION refuses the
+ * boot. */
+int wt_spm_sched_validate(void);
+
+#if (defined(WT_BAND_NEG_PROBE) && (WT_BAND_NEG_PROBE != 0)) || \
+    (defined(WT_RESTART_NEG_PROBE) && (WT_RESTART_NEG_PROBE != 0))
+/* Test builds only: run a probing partition through its faults at boot. */
+void wt_spm_sched_prime(int32_t partition_id);
+#endif
+
+/* Non-zero when [address, address + size) lies within one region of the
+ * scheduled partition's composed table that grants the access. */
+int wt_spm_partition_memory_ok(int32_t partition_id, const void* address,
+                               size_t size, int need_write);
+
 /* Start the SERVICE_HSM relay partition (WT-FFM-0054) as a scheduled
- * UNPRIVILEGED SP confined to its manifest domain: its loop reaches the
- * wolfHSM server state through the shared keystore band, and flash, entropy,
- * and the NVM lock trap to the SVC gate. */
+ * UNPRIVILEGED SP confined to its manifest domain: the crypto state lives in
+ * its private band, the store is reached over IPC to SERVICE_VAULT, and only
+ * entropy traps to the SVC gate. */
 int wt_spm_hsm_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 
 /* Start the SERVICE_ATTEST partition as a scheduled UNPRIVILEGED SP: its
- * dispatch loop runs on its own stack and reaches the attestation server state
- * through the shared keystore band its manifest domain grants. Defined only
- * in attestation-enabled builds. */
+ * dispatch loop runs on its own stack with the token state in its private
+ * band, and signs over IPC to SERVICE_HSM. Defined only in
+ * attestation-enabled builds. */
 int wt_spm_attest_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 
 /* Start the vault partition (WT-FFM-0047) as a scheduled UNPRIVILEGED SP:
- * the loop reaches the wolfHSM NVM state through the shared keystore band, and
- * the NVM lock traps to the SVC gate. Clients still cross the gate; the
- * manifest's dependencies[] authorizes them. */
+ * the store state lives in its private band, and flash, entropy, and the NVM
+ * lock trap to the SVC gate. Clients still cross the gate; the manifest's
+ * dependencies[] authorizes them. */
 int wt_spm_vault_start(wt_ffm_runtime_t* runtime, int32_t partition_id);
 
 /* Start the ITS partition as a normal UNPRIVILEGED scheduled SP whose service

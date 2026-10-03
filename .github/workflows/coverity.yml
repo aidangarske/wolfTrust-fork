@@ -1,10 +1,8 @@
 name: Coverity Scan
 
 on:
-  push:
-    branches: [main]
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * 0' # Sundays at 00:00 UTC
   workflow_dispatch:
 
 concurrency:
@@ -43,10 +41,41 @@ jobs:
             echo 'Register wolfTrust on Coverity Scan and configure COVERITY_SCAN_TOKEN and COVERITY_SCAN_EMAIL.' >&2
             exit 1
           fi
-      - name: Run Coverity Scan
+      - name: Capture Coverity build
         uses: vapier/coverity-scan-action@1b6fd4eaba6651aa354c9ea7f48caa1710b4e12e # v1
         with:
           project: wolfTrust
           token: ${{ secrets.COVERITY_SCAN_TOKEN }}
           email: ${{ secrets.COVERITY_SCAN_EMAIL }}
           command: sh tools/ci-static-analysis-build.sh
+          dry_run: 'true'
+      - name: Restrict capture to wolfTrust sources
+        shell: bash
+        run: |
+          export PATH="$PWD/cov-analysis/bin:$PATH"
+          python3 tools/ci-coverity-filter.py
+          tar -czf cov-int.tgz cov-int
+      - name: Submit build to Coverity Scan
+        shell: bash
+        env:
+          COVERITY_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
+          COVERITY_EMAIL: ${{ secrets.COVERITY_SCAN_EMAIL }}
+        run: |
+          response_file="$RUNNER_TEMP/coverity-upload-response.txt"
+          http_status=$(curl \
+            --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --form-string "token=$COVERITY_TOKEN" \
+            --form-string "email=$COVERITY_EMAIL" \
+            --form 'file=@cov-int.tgz' \
+            --form-string "version=$GITHUB_SHA" \
+            --form-string "description=wolfTrust $GITHUB_REF" \
+            'https://scan.coverity.com/builds?project=wolfTrust')
+          cat "$response_file"
+          # Coverity's official upload script requires 201 for a new submission.
+          if [ "$http_status" != '201' ]; then
+            echo "::error::Coverity did not accept the build submission (HTTP $http_status)."
+            exit 1
+          fi
+          printf '%s\n' 'Coverity accepted the build for analysis. Results are published after server-side processing.' >> "$GITHUB_STEP_SUMMARY"

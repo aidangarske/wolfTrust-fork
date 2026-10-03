@@ -63,6 +63,13 @@ case " $known " in
   *) echo "usage: $0 $(echo "$known" | tr ' ' '|')" >&2; exit 2 ;;
 esac
 
+# Variant scenarios carry their probe number in the name (bandneg3 = probe 3).
+family="$scenario"
+case "$scenario" in
+  bandneg[1-6]) family=bandneg; band_probe="${scenario#bandneg}" ;;
+  restartneg[1-3]) family=restartneg ;;
+esac
+
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$repo"
 
@@ -265,6 +272,11 @@ fi
 quit_flag="--quit-on-faults"
 expect_bkpt=0x7f
 timeout_s=60
+if [ "$scenario" = "vnet" ] || [ "$scenario" = "vnetneg" ]; then
+  # wolfIP's initial ARP delay uses guest time, which can take longer than
+  # 60 wall-clock seconds to advance on a shared CI runner.
+  timeout_s=180
+fi
 if [ "$scenario" = "restart" ]; then
   quit_flag=""
   timeout_s=40
@@ -312,7 +324,8 @@ elif [ "$scenario" = "xnneg" ]; then
 elif [ "$scenario" = "spfaultneg" ] || [ "$scenario" = "panicneg" ] ||
      [ "$scenario" = "vnetneg" ] || [ "$scenario" = "sealneg" ] ||
      [ "$scenario" = "sealpivotneg" ] || [ "$scenario" = "svcneg" ] ||
-     [ "$scenario" = "busfaultneg" ]; then
+     [ "$scenario" = "busfaultneg" ] || [ "$family" = "bandneg" ] ||
+     [ "$family" = "restartneg" ]; then
   # The SP faults on purpose; wolfTrust catches the fault and restarts
   # the partition in place, so halting on the fault would defeat the
   # recovery. The rest of the lifecycle then completes normally through the
@@ -390,7 +403,7 @@ refute_re()  { if grep -Eq "$2" "$log"; then check_fail "$1" "unexpected: $2"; \
                else check_pass "$1"; fi; }
 
 case "$scenario" in
-  positive|deputyneg|hsmpinneg|periphneg)
+  positive|deputyneg|hsmpinneg|periphneg|bandneg[1-6]|restartneg[1-3])
     if [ "$scenario" = "periphneg" ]; then
       # WT-FFM-0068: the guest reads and clears the SPM's RNG through its
       # Non-secure alias, proves an NS-to-NS GPDMA copy works, then needs a
@@ -400,6 +413,59 @@ case "$scenario" in
         'wolfTrust periph probe (LEAKED|INCONCLUSIVE)'
       expect "NS RNG poke and NS DMA copies blocked" \
         "wolfTrust periph probe blocked"
+    fi
+    if [ "$family" = "restartneg" ]; then
+      # The partition plants state in its own band and faults once (udf #0).
+      # Its restarted instance traps again (udf #2) if the band did not
+      # return to its link-time image, so exactly one fault must be seen.
+      restart_faults=$(grep -cE '^\[USGFLT\] CFSR=0x00010000' "$log" || true)
+      if [ "$restart_faults" -eq 1 ]; then
+        check_pass "partition faulted once and restarted on a reset band"
+      else
+        check_fail "band reset on restart" \
+          "expected 1 UNDEFINSTR UsageFault, saw $restart_faults"
+      fi
+      refute_re "the fault was the planted one" \
+        '^\[USGFLT\] mem16\[[^]]*\]=0xde02'
+      refute_re "fault was contained, not escalated" \
+        '^(\[MEMFAULT\]|\[HARDFLT\]|HardFault|SecureFault)'
+    fi
+    if [ "$family" = "bandneg" ]; then
+      # The prober reads the other partition's band, is restarted, writes it,
+      # and is restarted again: both accesses must MemManage-fault on the
+      # prober's own stack, and neither may run on to the trap behind it.
+      case "$band_probe" in
+        1) band_addr=0x30075000; band_sp='0x3009[67]'
+           band_what="crypto partition denied the vault's band" ;;
+        2) band_addr=0x30077000; band_sp='0x3009[67]'
+           band_what="crypto partition denied the attestation band" ;;
+        3) band_addr=0x30075000; band_sp='0x3009[89]'
+           band_what="attestation partition denied the vault's band" ;;
+        4) band_addr=0x30077800; band_sp='0x3009[89]'
+           band_what="attestation partition denied the crypto band" ;;
+        5) band_addr=0x30077000; band_sp='0x300(8f|9[0-2])'
+           band_what="vault denied the attestation band" ;;
+        6) band_addr=0x30077800; band_sp='0x300(8f|9[0-2])'
+           band_what="vault denied the crypto band" ;;
+      esac
+      band_faults=$(grep -cE "^\[MEMFAULT\].*addr=$band_addr" "$log" || true)
+      if [ "$band_faults" -eq 2 ]; then
+        check_pass "$band_what, read then write (2 MEMFAULTs at $band_addr)"
+      else
+        check_fail "$band_what" \
+          "expected 2 MEMFAULTs at $band_addr, saw $band_faults"
+      fi
+      band_stacks=$(grep -cE "^\[MEMFAULT\] sp=$band_sp" "$log" || true)
+      if [ "$band_stacks" -eq 2 ]; then
+        check_pass "both faults taken on the prober's own stack"
+      else
+        check_fail "fault attribution" \
+          "expected 2 faults on a stack matching $band_sp, saw $band_stacks"
+      fi
+      refute_re "no access ran past its fault, no keystore pin was open" \
+        '^\[USGFLT\]'
+      refute_re "faults were contained, not escalated" \
+        '^(\[HARDFLT\]|HardFault|SecureFault)'
     fi
     if [ "$scenario" = "deputyneg" ]; then
       # The probe is called unconditionally at vault entry and faults the
@@ -432,8 +498,10 @@ case "$scenario" in
           "wt_platform_hsm_pin_probe not in the secure image"
       fi
     fi
-    refute_re "no fault markers in boot log" \
-      '^(\[MEMFAULT\]|\[HARDFLT\]|HardFault|SecureFault)'
+    if [ "$family" != "bandneg" ] && [ "$family" != "restartneg" ]; then
+      refute_re "no fault markers in boot log" \
+        '^(\[MEMFAULT\]|\[HARDFLT\]|HardFault|SecureFault)'
+    fi
     expect "TEE client initialized" "wolfTrust TEE client initialized"
     expect "FF-M psa_framework_version=0x0100" \
       "wolfTrust FF-M psa_framework_version=0x0100"
@@ -575,12 +643,36 @@ case "$scenario" in
     # i013-i023 server-misuse panics, and the i028-i046 message-access
     # misuse panics. i021 and i066
     # exercise the real LPUART1 NVIC route (P4.2c); i068-i087 exercise the
-    # SAU/MPU isolation probes. 89 total: 85 pass, 4 heap tests report
-    # SKIPPED (SP_HEAP_MEM_SUPP undefined: zero-allocation image); only i067
-    # (heap) is skipped. Needs the M33MU-1 SPSEL patch applied above.
+    # SAU/MPU isolation probes. 89 total: 85 pass, and the 4 heap tests
+    # (i074, i078, i082, i086) report SKIPPED because the zero-allocation
+    # image has no Secure Partition heap (SP_HEAP_MEM_SUPP undefined). Needs
+    # the M33MU-1 SPSEL patch applied above.
     expect_flat "Arm suite TOTAL PASSED : 85" "TOTAL PASSED    : 85"
     expect_flat "Arm suite TOTAL SKIPPED : 4" "TOTAL SKIPPED   : 4"
     expect_flat "Arm suite TOTAL FAILED : 0" "TOTAL FAILED    : 0"
+    # The totals alone would hide a pass and a skip trading places: hold the
+    # run to the recorded per-test results for the pinned suite revision.
+    conf_want="$repo/tests/target/ffm_ipc_results.txt"
+    conf_rev="$(cat "$repo/tests/upstream/psa-arch-tests.rev")"
+    if grep -Fq "$conf_rev" "$conf_want"; then
+      check_pass "results recorded for psa-arch-tests $conf_rev"
+    else
+      check_fail "conformance evidence" \
+        "$conf_want was not recorded for psa-arch-tests $conf_rev"
+    fi
+    conf_got="$repo/build/ffm-ipc-results.txt"
+    sed 's/freertos_guest1:.*$//' "$log" | tr -d '\r\n' | \
+      grep -aoE 'Num=[0-9]+|Result=[A-Za-z]+' | \
+      awk -F= '$1 == "Num" { num = $2 }
+               $1 == "Result" { if (num != "") print num, $2; num = "" }' | \
+      sort -n -u > "$conf_got"
+    if grep -v '^#' "$conf_want" | grep -v '^$' | \
+        diff - "$conf_got" > "$repo/build/ffm-ipc-results.diff"; then
+      check_pass "every test matches its recorded result (89 tests)"
+    else
+      check_fail "per-test conformance results" \
+        "$(tr '\n' ' ' < "$repo/build/ffm-ipc-results.diff")"
+    fi
     expect "[EXPECT BKPT] Success clean exit" "[EXPECT BKPT] Success"
     echo "PASS: target/confboot"
     ;;
@@ -746,11 +838,11 @@ case "$scenario" in
     check_fail "SP peripheral isolation" "expected MEMFAULT at 0x520C0800, none seen"
     ;;
   keystoreneg)
-    # A non-keystore partition (FWU) reads the shared keystore band; its
-    # manifest domain does not grant the band, so the read must MemManage-fault
-    # inside the FWU domain (WT-FFM-0062).
+    # A non-keystore partition (ITS) reads the vault's data band; its manifest
+    # domain grants none of the keystore data bands, so the read must
+    # MemManage-fault inside the ITS domain (WT-FFM-0062).
     if grep -Eq '\[MEMFAULT\].*addr=0x30075000' "$log"; then
-      check_pass "keystore-band read of 0x30075000 denied to a non-keystore SP (MEMFAULT)"
+      check_pass "keystore data band read of 0x30075000 denied to a non-keystore SP (MEMFAULT)"
       echo "PASS: target/keystoreneg"
       exit 0
     fi
@@ -908,7 +1000,7 @@ case "$scenario" in
     expect "[EXPECT BKPT] Success clean exit" "[EXPECT BKPT] Success"
     echo "PASS: target/vnetneg"
     ;;
-  manifestneg|manifestneg2)
+  manifestneg|manifestneg2|manifestneg3)
     # A corrupted manifest must fail activation closed BEFORE scheduling: the
     # boot halts on the production panic (BKPT 0x7E) and neither guest ever
     # starts. A guest banner in the log means the SPM scheduled work off an

@@ -110,6 +110,15 @@ $(TEST_BIN): $(ALL_OBJS) | $(BUILD_DIR)
 
 run: $(TEST_BIN)
 	$(TEST_BIN)
+	@result=0; \
+	$(TEST_BIN) --aes-setup-failure >$(BUILD_DIR)/aes_setup_failure.log 2>&1 || result=$$?; \
+	if [ "$$result" -ne 1 ]; then \
+	    cat $(BUILD_DIR)/aes_setup_failure.log; exit 1; \
+	fi; \
+	if ! grep -q '^PASS: AES-GCM setup failure returns safely$$' $(BUILD_DIR)/aes_setup_failure.log; then \
+	    cat $(BUILD_DIR)/aes_setup_failure.log; exit 1; \
+	fi; \
+	printf '%s\n' 'PASS: AES-GCM setup failure remains a failed test'
 
 compilers:
 	$(MAKE) clean run CC=gcc BUILD_DIR=$(BUILD_DIR)/gcc
