@@ -184,7 +184,8 @@ worked examples above give a concrete map for each board.
 3. Add `mk/arch-<arch>.mk` (if new) and `mk/target-<soc>.mk`; the root
    Makefile selects them from `ARCH` and `TARGET`, and `mk/common.mk` needs
    no change.
-4. Supply startup/vector and linker handling appropriate to the target.
+4. Supply startup/vector and linker handling appropriate to the target, and
+   give every object the port links an owner in `tools/secure_owners.txt`.
 5. Generate the manifest at build time and include its digest in the signed
    Secure image.
 6. Integrate application domains with the architecture's client boundary and

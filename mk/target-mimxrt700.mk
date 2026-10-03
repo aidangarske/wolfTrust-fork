@@ -56,10 +56,10 @@ TARGET_LDFLAGS := \
     -Wl,--defsym=WT_SECURE_FLASH_SIZE=$(WT_SECURE_FLASH_SIZE) \
     -Wl,--defsym=WT_SECURE_IMAGE_HEADER_SIZE=$(WT_SECURE_IMAGE_HEADER_SIZE)
 SECURE_LD := $(PORT_DIR)/secure.ld
-# Post-link placement check: the keystore and conformance bands from
-# memory_map.h (WT_KEYSTORE_BASE, WT_CONF_SP_DATA_BASE up to the MMIO windows);
-# this port uses no wolfHAL.
-WT_SECURE_LAYOUT_ARGS := --keystore 0x301D5000:0x301E9000 \
+# Post-link placement check: the per-partition keystore bands and the
+# conformance band from memory_map.h; this port uses no wolfHAL.
+WT_SECURE_LAYOUT_ARGS := --band vault=0x301D5000:0x301D7000 \
+    --band attest=0x301D7000:0x301D7800 --band hsm=0x301D7800:0x301E9000 \
     --confdata 0x301F3000:0x301F5C00 --no-wolfhal
 
 TARGET_PLATFORM_SRC := $(PORT_DIR)/platform_mimxrt700.c
@@ -67,4 +67,5 @@ TARGET_PARTITIONS_SRC := $(PORT_DIR)/partitions.c
 TARGET_EXTRA_SRCS := \
     $(wildcard $(PORT_DIR)/rng_entropy.c) \
     $(wildcard $(PORT_DIR)/hsm_flash.c) \
+    $(wildcard $(PORT_DIR)/hsm_flash_ctx.c) \
     $(wildcard $(PORT_DIR)/xspi_nor.c)

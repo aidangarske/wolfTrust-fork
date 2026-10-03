@@ -496,6 +496,12 @@ if [ "$mode" != "build" ]; then
       # cross-checked below against the wolfBoot measurement of the signed image.
       refute_re "no fault markers in UART" \
         '^(\[MEMFAULT\]|\[HARDFLT\]|HardFault|SecureFault|BusFault|UsageFault)'
+      zeroed=$(read_secure_u32 g_wt_boot_zeroed_bytes)
+      if [ -n "$zeroed" ] && [ $((0x$zeroed)) -gt 0 ]; then
+        check_pass "partition stacks and bands zeroed at boot (0x$zeroed bytes)"
+      else
+        check_fail "boot zeroing" "zeroed-bytes latch 0x${zeroed:-none}"
+      fi
       lc=$(read_guest0_u32 g_guest0_lifecycle)
       if [ -n "$lc" ] && [ $((0x$lc & 0xFF)) -eq 255 ]; then
         check_pass "guest0 full PSA/FF-M lifecycle latched (0x$lc)"
@@ -658,10 +664,10 @@ if [ "$mode" != "build" ]; then
       expect "guest1 alive after SP quarantined" "freertos_guest1: heartbeat"
       ;;
     keystoreneg)
-      # The ITS partition (a non-keystore SP) reads the shared keystore band on
-      # entry; its MPU domain does not grant the band, so the read faults and is
-      # gracefully quarantined. Proof is the captured fault address inside the
-      # keystore band and guest1 surviving.
+      # The ITS partition (a non-keystore SP) reads the vault's data band on
+      # entry; its MPU domain grants none of the keystore data bands, so the
+      # read faults and is gracefully quarantined. Proof is the captured fault
+      # address inside the keystore envelope and guest1 surviving.
       refute_re "keystore-band fault did not escalate to HardFault" \
         '^(\[HARDFLT\]|HardFault|SecureFault)'
       fault_cnt=$(read_secure_u32 g_tasklet_fault_count)

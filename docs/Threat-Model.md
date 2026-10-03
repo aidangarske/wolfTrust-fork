@@ -87,7 +87,7 @@ images.
 | Stale sealed-object replay | Each sealed write advances a persisted counter used in its nonce; the current slot counter authenticates reads. |
 | Firmware downgrade | Outside assembly-and-test and provisioning, boot checks the Secure-image and recorded-guest floors before first guest execution. Firmware Update separately checks the candidate Secure-image version against its boot-loaded floor before arming wolfBoot. |
 | Malformed update | Bounded aligned writes, staged-image header verification, version binding, and wolfBoot authentication before commit. |
-| Faulted Secure service | Synchronization is released before pinned calls fail. If policy selects a restart, private state is scrubbed before bounded recovery; otherwise, the port enters its fail-closed path. |
+| Faulted Secure service | Synchronization is released before pinned calls fail, and the connections the service held as a client are released. If policy selects a restart, its stack is cleared and its data band returns to its link-time image before bounded recovery; otherwise, the port enters its fail-closed path. |
 | Resource exhaustion | Fixed-size pools and buffers reject excess requests. A successful firmware-update `psa_fwu_start()` sets the owner timer; while the session remains active, any owner operation other than `psa_fwu_query()` or `psa_fwu_start()` that reaches dispatch refreshes it, including failed or unsupported operations. After 30,000 scheduler ticks without such a refresh, the next well-formed request from another client reclaims the session; ownership does not expire autonomously. |
 
 ## Residual risks and operational requirements
@@ -115,11 +115,10 @@ that property needs rollback-resistant monotonic storage in its port.
 
 ### Secure code is shared
 
-Secure Partition writable state is narrowed by the Secure MPU, but all service
-threads execute shared read/execute text from one linked image. The selected
-crypto engine, vault, and attestation also share a keystore data band. A defect
-in trusted shared code or an allowed shared backend can therefore affect more
-than one service.
+Secure Partition writable state is narrowed by the Secure MPU to one private
+band per partition, but all service threads execute shared read/execute text
+from one linked image. A defect in trusted shared code can therefore affect
+more than one service.
 
 ### Privileged handlers remain security-critical
 

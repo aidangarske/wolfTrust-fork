@@ -112,6 +112,97 @@ static const wt_memory_region_t secure_code[1] = {
     {SEC_CODE_BASE, SEC_CODE_SIZE, WT_MEM_ATTR_READ | WT_MEM_ATTR_EXEC}
 };
 
+#define SPM_RAM_BASE    0x30028000U
+#define SPM_RAM_SIZE    0x0004D000U
+#define BAND_A_BASE     0x30075000U
+#define BAND_A_SIZE     0x00002000U
+#define BAND_B_BASE     0x30077000U
+#define BAND_B_SIZE     0x00000800U
+#define WINDOW_BASE     0x30093000U
+#define WINDOW_SIZE     0x00003000U
+
+static void compose(wt_secure_domain_t* table, uintptr_t band_base,
+                    size_t band_size, uint32_t band_attributes)
+{
+    table->domain_id = 1U;
+    table->regions[0] = secure_code[0];
+    table->regions[1].base = band_base;
+    table->regions[1].size = band_size;
+    table->regions[1].attributes = band_attributes;
+    table->region_count = 2U;
+    table->stack_base = 0U;
+    table->stack_size = 0U;
+}
+
+/* The composition invariant: once every partition's table is composed, no
+ * partition can write memory another partition or the SPM can reach. */
+static void test_composed_isolation(void)
+{
+    static const wt_memory_region_t window[1] = {
+        {WINDOW_BASE, WINDOW_SIZE, WT_MEM_ATTR_READ | WT_MEM_ATTR_WRITE}
+    };
+    const uint32_t rw = WT_MEM_ATTR_READ | WT_MEM_ATTR_WRITE;
+    wt_secure_domain_t a;
+    wt_secure_domain_t b;
+
+    compose(&a, BAND_A_BASE, BAND_A_SIZE, rw);
+    compose(&b, BAND_B_BASE, BAND_B_SIZE, rw);
+    check(wt_secure_domains_isolated(&a, &b, NULL, 0U) == 1,
+          "adjacent private bands and shared code are isolated");
+    check(wt_secure_domains_isolated(&b, &a, NULL, 0U) == 1,
+          "isolation is symmetric");
+
+    compose(&b, BAND_A_BASE, BAND_A_SIZE, rw);
+    check(wt_secure_domains_isolated(&a, &b, NULL, 0U) == 0,
+          "one band writable by two partitions refused");
+    compose(&b, BAND_A_BASE + BAND_A_SIZE - 32U, 64U, rw);
+    check(wt_secure_domains_isolated(&a, &b, NULL, 0U) == 0,
+          "bands overlapping by one MPU granule refused");
+    check(wt_secure_domains_isolated(&b, &a, NULL, 0U) == 0,
+          "overlap refused in either order");
+    compose(&b, BAND_A_BASE, BAND_A_SIZE, WT_MEM_ATTR_READ);
+    check(wt_secure_domains_isolated(&a, &b, NULL, 0U) == 0,
+          "a band one partition writes and another reads refused");
+    compose(&a, BAND_A_BASE, BAND_A_SIZE, WT_MEM_ATTR_READ);
+    check(wt_secure_domains_isolated(&a, &b, NULL, 0U) == 1,
+          "memory both partitions only read may be shared");
+
+    /* The conformance window is the one named exception. */
+    compose(&a, WINDOW_BASE, 0x400U, rw);
+    compose(&b, WINDOW_BASE, 0x800U, rw);
+    check(wt_secure_domains_isolated(&a, &b, NULL, 0U) == 0,
+          "overlap outside any shared window refused");
+    check(wt_secure_domains_isolated(&a, &b, window, 1U) == 1,
+          "overlap inside the named shared window allowed");
+    compose(&b, WINDOW_BASE - 32U, 0x800U, rw);
+    check(wt_secure_domains_isolated(&a, &b, window, 1U) == 0,
+          "overlap reaching out of the shared window refused");
+    check(wt_secure_domains_isolated(&a, &b, NULL, 1U) == 0,
+          "null shared windows with a count refused");
+    check(wt_secure_domains_isolated(NULL, &b, NULL, 0U) == 0 &&
+          wt_secure_domains_isolated(&a, NULL, NULL, 0U) == 0,
+          "null table refused");
+    a.region_count = WT_MAX_MEMORY_REGIONS + 1U;
+    check(wt_secure_domains_isolated(&a, &b, NULL, 0U) == 0,
+          "oversized table refused");
+
+    /* SPM-private RAM is out of every partition's reach, read or write. */
+    compose(&a, BAND_A_BASE, BAND_A_SIZE, rw);
+    check(wt_secure_domain_excludes(&a, SPM_RAM_BASE, SPM_RAM_SIZE) == 1,
+          "band directly above SPM RAM does not reach it");
+    compose(&a, SPM_RAM_BASE + SPM_RAM_SIZE - 32U, 64U, rw);
+    check(wt_secure_domain_excludes(&a, SPM_RAM_BASE, SPM_RAM_SIZE) == 0,
+          "band reaching into SPM RAM refused");
+    compose(&a, SPM_RAM_BASE, 32U, WT_MEM_ATTR_READ);
+    check(wt_secure_domain_excludes(&a, SPM_RAM_BASE, SPM_RAM_SIZE) == 0,
+          "read-only grant over SPM RAM refused");
+    compose(&a, (uintptr_t)-64, 128U, rw);
+    check(wt_secure_domain_excludes(&a, SPM_RAM_BASE, SPM_RAM_SIZE) == 0,
+          "region wrapping the address space refused");
+    check(wt_secure_domain_excludes(NULL, SPM_RAM_BASE, SPM_RAM_SIZE) == 0,
+          "null table reaches nothing provably");
+}
+
 int main(void)
 {
     wt_secure_domain_t sp1;
@@ -210,6 +301,8 @@ int main(void)
     check(result == WT_SECURE_DOMAIN_ERROR_CAPACITY,
           "oversized composition rejected");
     check(table.region_count == 0U, "oversized composition leaves empty");
+
+    test_composed_isolation();
 
     if (failures != 0) {
         (void)printf("FAIL: ffm_domain (%d)\n", failures);

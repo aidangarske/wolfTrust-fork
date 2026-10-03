@@ -350,8 +350,34 @@ static int wt_domain_validate_resources(const wt_domain_descriptor_t* domain,
     return wt_domain_validate_entry_and_stack(domain);
 }
 
+/* Isolation level 3 isolates every Secure Partition's runtime state from
+ * every other partition: a writable resource may be shared only with the
+ * SPM, never between a Secure Partition and another partition. Read-only
+ * sharing (code, constants) is allowed at every level. */
+static int wt_domain_pair_isolated(const wt_domain_descriptor_t* first,
+                                   const wt_domain_descriptor_t* second,
+                                   const wt_memory_resource_t* resource,
+                                   wt_isolation_profile_t profile)
+{
+    if (profile != WT_ISOLATION_PROFILE_LEVEL_3)
+        return 1;
+    if ((resource->attributes & WT_MEMORY_ATTR_WRITE) == 0U)
+        return 1;
+    /* Shared devices answer to the FF-M resource-ownership rule instead. */
+    if ((resource->attributes & WT_MEMORY_ATTR_DEVICE) != 0U)
+        return 1;
+    if (first->domain_class == WT_DOMAIN_CLASS_SPM ||
+            second->domain_class == WT_DOMAIN_CLASS_SPM)
+        return 1;
+    if (first->domain_class != WT_DOMAIN_CLASS_SECURE_PARTITION &&
+            second->domain_class != WT_DOMAIN_CLASS_SECURE_PARTITION)
+        return 1;
+    return 0;
+}
+
 static int wt_domain_validate_pair(const wt_domain_descriptor_t* first,
-                                   const wt_domain_descriptor_t* second)
+                                   const wt_domain_descriptor_t* second,
+                                   wt_isolation_profile_t profile)
 {
     size_t i;
     size_t j;
@@ -366,9 +392,10 @@ static int wt_domain_validate_pair(const wt_domain_descriptor_t* first,
             const wt_memory_resource_t* second_resource =
                 &second->memory_resources[j];
 
-            if (wt_memory_resources_overlap(first_resource, second_resource) &&
-                    !wt_memory_resources_shared(first_resource,
-                                                second_resource)) {
+            if (!wt_memory_resources_overlap(first_resource, second_resource))
+                continue;
+            if (!wt_memory_resources_shared(first_resource,
+                                            second_resource)) {
                 if ((first_resource->attributes & WT_MEMORY_ATTR_SHARED) != 0U ||
                         (second_resource->attributes &
                          WT_MEMORY_ATTR_SHARED) != 0U) {
@@ -376,6 +403,9 @@ static int wt_domain_validate_pair(const wt_domain_descriptor_t* first,
                 }
                 return WT_DOMAIN_ERROR_OVERLAP;
             }
+            if (!wt_domain_pair_isolated(first, second, first_resource,
+                                         profile))
+                return WT_DOMAIN_ERROR_ISOLATION;
         }
     }
 
@@ -478,7 +508,7 @@ int wt_domain_validate_set(const wt_domain_descriptor_t* domains,
             return ret;
 
         for (j = 0U; j < i; j++) {
-            ret = wt_domain_validate_pair(&domains[i], &domains[j]);
+            ret = wt_domain_validate_pair(&domains[i], &domains[j], profile);
             if (ret != WT_DOMAIN_VALID)
                 return ret;
         }

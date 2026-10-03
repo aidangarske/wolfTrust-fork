@@ -104,17 +104,59 @@ Every shipped service loop runs as a scheduled unprivileged Secure coroutine.
 Its Secure MPU view contains:
 
 - shared read/execute Secure image text;
-- read-only Secure image constants;
-- its private stack and declared writable resources; and
-- explicitly shared resources such as the keystore band where required.
+- read-only Secure image constants; and
+- its private stack and its own writable data band.
+
+No two Secure Partitions share a writable byte (FF-M isolation level 3). The
+vault partition owns the NVM object store, its flash context, the sealer, and
+its DRBG; the crypto partition (`SERVICE_HSM`) owns the engine state and
+reaches persistent key objects only through `SERVICE_VAULT`'s keystore object
+door, an FF-M service that serves the registered crypto partition alone and
+only the ids and labels the keystore owns; the attestation partition owns the
+token state and holds no key material, obtaining every signature and the IAK
+public key from `SERVICE_HSM`'s attestation door. Each door client is
+confined to its door: the crypto partition's other vault requests and any
+Secure Partition's call on `SERVICE_HSM`'s ordinary crypto wire return
+`PSA_ERROR_NOT_PERMITTED`. The manifest generator and
+the runtime domain validator both refuse a level 3 manifest that shares a
+writable resource between partitions, so the split cannot regress silently.
+The keystore door hands the crypto partition the key objects it asks for.
+That is an IPC contract between two partitions, not shared memory.
+
+The tables the MPU is programmed from are checked again after they are
+composed. Before any partition runs, the SPM refuses to boot if a composed
+table grants write access to memory another partition can reach, or any access
+to SPM-private RAM. A request from a Secure Partition is checked against that
+partition's own composed table, and the SPM acts on one private copy of the
+request block, so the memory references it validated are the ones it uses.
+
+### Partition restart
+
+A restarted partition keeps nothing its previous instance held. The SPM:
+
+- fails every request the partition was serving and drops every connection to
+  it to the error state;
+- releases every connection and request the partition held as a client, so a
+  handle from the old instance is refused;
+- clears its asserted signals and masks its interrupt lines until the new
+  instance enables them;
+- clears its stack and returns its data band to its link-time image; and
+- rebuilds the band with the setup boot ran, from inputs the SPM holds: the
+  boot handoff, the attestation public key, and the contents of the store.
+
+Persistent state is the NVM store alone. Nothing in a partition's RAM survives
+its restart.
 
 Privileged handlers retain the SPM view. Flash, entropy, NVM lock, and reset
 operations are available only through narrow SVC operations that check the
-originating partition.
+originating partition: flash and the NVM lock answer only the vault, entropy
+only the vault and crypto partitions. The state those handlers consume (the
+NVM lock, the flash driver's state, the lifecycle latch, the rollback floors,
+and the privileged tasklet stacks) lives in SPM-private RAM, outside every
+partition band.
 
 This is writable-state isolation inside one linked image. Shared executable
-text is not per-partition code isolation, and the crypto, vault, and attestation
-domains share the keystore data band required by their backends.
+text is not per-partition code isolation.
 
 ### Processor state
 
@@ -188,16 +230,26 @@ so it is covered there).
 ### Link-time optimization
 
 The Secure image enables GCC link-time optimization by default. LTO can replace
-the original input-object names with generated objects, so the linker script
-also claims keystore state through its `-fdata-sections` names. CMSE veneers,
-exception handlers, hand-written assembly, and other assembly-referenced
-objects are compiled without LTO so their symbols and calling conventions stay
-stable.
+the original input-object names with generated objects, so every object that
+places state in a partition data band is compiled without LTO and claimed by
+name. CMSE veneers, exception handlers, hand-written assembly, and other
+assembly-referenced objects are compiled without LTO so their symbols and
+calling conventions stay stable. State from an optimized link unit can only
+land in SPM-private RAM.
 
-The post-link layout check rejects keystore or VNET writable state outside its
-assigned MPU band, missing exception entries, a linked heap allocator, and an
-RNG timeout object outside privileged SPM RAM. This keeps the optimization from
-weakening the boundaries described above. `WT_LTO=0` disables the optimization
+[`tools/secure_owners.txt`](../tools/secure_owners.txt) gives every linked
+object one owner: a partition, the SPM, or `shared` for code that runs in more
+than one domain. The post-link layout check reads the linker map and rejects:
+
+- a writable input section outside its owner's region;
+- an object with no owner;
+- a `shared` object that holds writable state;
+- a missing exception entry, a linked heap allocator, or a privileged tasklet
+  stack outside SPM-private RAM; and
+- in a production image, any conformance object, symbol, or data.
+
+The check runs at every link, with and without LTO, so the optimization cannot
+weaken the boundaries described above. `WT_LTO=0` disables the optimization
 without changing the memory policy.
 
 ## Per-guest cryptographic keys

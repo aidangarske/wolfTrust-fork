@@ -63,6 +63,20 @@ int wt_ffm_resolve_secure_domain(const wt_system_manifest_t* manifest,
 int wt_secure_domain_contains(const wt_secure_domain_t* domain,
                               uintptr_t addr, size_t len, int need_write);
 
+/* Non-zero only when no region of domain, whatever access it grants,
+ * overlaps [base, base + size): the range is out of the partition's reach. */
+int wt_secure_domain_excludes(const wt_secure_domain_t* domain,
+                              uintptr_t base, size_t size);
+
+/* Non-zero only when the two composed tables are isolated from each other:
+ * no region one of them can write overlaps any region of the other. Regions
+ * both only read (code, constants) may overlap, and so may regions that lie
+ * wholly inside one of the shared windows the caller names. */
+int wt_secure_domains_isolated(const wt_secure_domain_t* first,
+                               const wt_secure_domain_t* second,
+                               const wt_memory_region_t* shared,
+                               size_t shared_count);
+
 /* Compose the full secure MPU table for a Secure Partition: the shared
  * regions every partition needs to execute (secure code) followed by the
  * partition's own private regions. The Level 3 profile copies IOVEC

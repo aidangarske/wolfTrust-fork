@@ -193,13 +193,13 @@ scenario under both engines.
 
 The `hsmattackneg` and `hsmpinneg` scenarios are intentionally hsm-only.
 `hsmattackneg` injects raw wolfHSM protocol packets against a namespace and NVM
-relay surface not linked into the native engine; `hsmpinneg` forges the
-band-resident wolfHSM server pointers from a keystore partition and proves the
-relay re-pins them before its next pump, a server the native engine does not
-link. The privileged tasklet stacks and registry are covered by the host
-`tasklet_priv` suite and the `check_secure_layout.py` placement rule. All
-other scenario rows run under both engines. See [Testing](Testing.md) for the
-commands and validation scope.
+relay surface not linked into the native engine; `hsmpinneg` has the crypto
+partition forge its own wolfHSM server pointers and proves the relay re-pins
+them before its next pump, a server the native engine does not link. The
+privileged tasklet stacks and registry are covered by the host `tasklet_priv`
+suite and the `check_secure_layout.py` placement rule. All other scenario rows
+run under both engines. See [Testing](Testing.md) for the commands and
+validation scope.
 
 ## Authenticated image assembly
 

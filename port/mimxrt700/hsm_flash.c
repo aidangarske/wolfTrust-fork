@@ -37,17 +37,6 @@
 #include "wolftrust/services/fwu_service.h"
 #include "wolfhsm/wh_error.h"
 
-typedef struct wt_hsm_flash_config {
-    uintptr_t base;
-    uint32_t size;
-    uint32_t sector_size;
-    uint32_t program_unit;
-} wt_hsm_flash_config_t;
-
-typedef struct wt_hsm_flash_context {
-    bool write_locked;
-} wt_hsm_flash_context_t;
-
 static const wt_hsm_flash_config_t g_hsm_flash_cfg = {
     .base = WT_HSM_NVM_FLASH_BASE_S,
     .size = WT_HSM_NVM_FLASH_SIZE,
@@ -55,7 +44,6 @@ static const wt_hsm_flash_config_t g_hsm_flash_cfg = {
     .program_unit = 16u,
 };
 
-static wt_hsm_flash_context_t g_hsm_flash_ctx;
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
 /* The conformance DRIVER partition's NVMEM boot flag lives in its own flash
  * sector so it survives the suite's panic-test resets. */
@@ -74,7 +62,6 @@ static const wt_hsm_flash_config_t g_fwu_flash_cfg = {
     .program_unit = 16u,
 };
 static wt_hsm_flash_context_t g_fwu_flash_ctx;
-volatile uint32_t g_wt_flash_gate_aborts __attribute__((used));
 /* Last NOR driver failure, read over the debug port by the hardware harness. */
 volatile int32_t g_wt_nor_last_error __attribute__((used));
 
@@ -113,7 +100,6 @@ static int wt_hsm_flash_nor_result(int rc)
     }
     return WH_ERROR_OK;
 }
-volatile uint32_t g_wt_flash_gate_abort_info __attribute__((used));
 
 static int wt_flash_range_ok(const wt_hsm_flash_config_t *cfg,
                              uint32_t offset, uint32_t size)

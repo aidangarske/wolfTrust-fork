@@ -267,6 +267,11 @@ static void test_reinit(void)
 
     wt_co_init();
 
+    /* WT-FFM-0014: a missing scheduler context must remain diagnosable. */
+    EXPECT_INT(wt_co_state(NULL), WT_CO_FAULTED);
+    EXPECT_INT(wt_co_state(wt_co_current()), WT_CO_FAULTED);
+    (void)printf("PASS: WT-FFM-0014 missing coroutine state fails closed\n");
+
     /* Fill every creatable slot but one. */
     for (i = 0U; i < TEST_CO_COUNT - 1u; i++) {
         co[i] = wt_co_create_blocked_ex((uint8_t*)g_stacks[i],

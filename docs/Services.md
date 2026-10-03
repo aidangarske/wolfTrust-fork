@@ -13,7 +13,7 @@ manifest with a seventh service.
 | `SERVICE_ITS` | `0x1003` | Yes | PSA Internal Trusted Storage |
 | `SERVICE_PS` | `0x1004` | Yes | PSA Protected Storage |
 | `SERVICE_FWU` | `0x1005` | Yes | PSA Firmware Update staging for wolfBoot |
-| `SERVICE_HSM` | `0x1006` | Yes | Copied request relay for the selected native or wolfHSM crypto engine |
+| `SERVICE_HSM` | `0x1006` | Yes | Copied request relay for the selected native or wolfHSM crypto engine, plus the attestation partition's signing door |
 | `SERVICE_VNET` | `0x1007` | Yes, optional | Secure virtual Ethernet switch implemented by wolfTrust for optional Non-secure wolfIP guests |
 
 All service versions are `1`. ITS and Protected Storage declare a
@@ -59,8 +59,8 @@ footprint differences.
 ## Vault
 
 `SERVICE_VAULT` is inaccessible to Non-secure clients. It provides backing
-operations for the storage front ends and a Secure randomness operation. Each
-object is indexed by:
+operations for the storage front ends, a Secure randomness operation, and the
+crypto partition's keystore object door. Each storage object is indexed by:
 
 ```text
 (calling Secure Partition, delegated end-client, UID)
@@ -71,10 +71,15 @@ allowing either front end to escape its own vault namespace.
 
 The vault uses the wolfHSM NVM object-store library and checked operations for
 write-once and object-metadata policy in both engines. Storage calls cannot
-create, read, or overwrite the reserved key-object type. The native engine
-installs the vault key backend used by its explicit key wire. The wolfHSM
-engine instead manages guest cryptographic keys in its server keystore behind
-`SERVICE_HSM`.
+create, read, or overwrite the reserved key-object type. The vault also serves
+a keystore object door (`WT_VAULT_OP_NVM_*`) to the crypto partition alone:
+the crypto engine's persistent key objects live in the vault's store, but the
+crypto partition reaches them only through this FF-M service, which admits only
+wolfHSM keystore ids and key-flagged vault objects and never the directory,
+seal key, rollback table, or a storage front end's objects. The crypto
+partition is confined to that door: every other vault request from it (storage,
+`WT_VAULT_OP_KEY_*`, `RANDOM`) returns `PSA_ERROR_NOT_PERMITTED`, and keys are
+managed behind `SERVICE_HSM`.
 
 ## Internal Trusted Storage
 
@@ -146,8 +151,13 @@ The EAT/PSA claim set binds:
 - one software component for each guest that passed launch verification.
 
 The service also supports internal call types for exact token-size and
-uncompressed P-256 public-key queries. The private attestation key is never
-exported.
+uncompressed P-256 public-key queries. The attestation partition holds no key
+material: every signature and the public key come from `SERVICE_HSM`'s
+attestation door (`WT_HSM_OP_ATTEST_SIGN`, `WT_HSM_OP_ATTEST_PUBLIC_KEY`),
+which serves the attestation partition alone and refuses every other client.
+`SERVICE_HSM`'s ordinary crypto wire (`PSA_IPC_CALL`) serves Non-secure clients
+only, so the attestation partition cannot use it. The private attestation key
+is never exported.
 
 ## Firmware Update
 

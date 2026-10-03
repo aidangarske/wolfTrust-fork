@@ -34,6 +34,27 @@ struct wt_trap_frame;
 #define WT_SP_FAULT_PROBE_RESTARTED 0x40000000
 #define WT_SP_FAULT_PROBE_SECOND    0x20000000
 
+#if defined(WT_RESTART_NEG_PROBE) && (WT_RESTART_NEG_PROBE != 0)
+/* Test builds only. A partition's own translation unit plants state in its
+ * data band before a deliberate fault; after the restart the band must hold
+ * its link-time image again. Returns 1 when it does. */
+#define WT_RESTART_PROBE_DEFINE(name) \
+    static volatile uint32_t name##_data = 0x5A5A5A5Au; \
+    static volatile uint32_t name##_bss; \
+    int name(int restarted) \
+    { \
+        if (restarted == 0) { \
+            name##_data = 0xC0DEC0DEu; \
+            name##_bss = 0xC0DEC0DEu; \
+            return 1; \
+        } \
+        return (name##_data == 0x5A5A5A5Au) && (name##_bss == 0u); \
+    }
+int wt_hsm_relay_restart_probe(int restarted);
+int wt_attestation_restart_probe(int restarted);
+int wt_vault_restart_probe(int restarted);
+#endif
+
 /* Re-issues a blocked call after each wake; the gate stamps the caller id. */
 int wt_spm_sp_call(struct wt_spm_call* call);
 int wt_spm_svc_transport(wt_ffm_runtime_t* runtime, struct wt_spm_call* call);

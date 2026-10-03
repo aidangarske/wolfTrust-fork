@@ -138,9 +138,11 @@ or interrupt is ready. The dispatcher continues running ready partitions until
 the system is quiescent, which permits partition-to-partition IPC without
 executing one partition on another partition's stack.
 
-A Secure Partition fault first releases held synchronization state and then
-completes its pinned client call with a communication failure. If policy selects
-a restart, wolfTrust scrubs declared private writable memory before rearming the
+A Secure Partition fault first releases held synchronization state, completes
+its pinned client calls with a communication failure, and releases every
+connection the partition held as a client. If policy selects a restart,
+wolfTrust clears the partition's stack, returns its data band to its link-time
+image, and rebuilds the band from inputs the SPM holds before rearming the
 partition. A forbidden or exhausted restart, or a failed rearm, escalates to
 the port's fail-closed path.
 

@@ -29,8 +29,8 @@
  * latch and rollback floors (wt_hsm_set_boot_lifecycle, wt_hsm_rollback_*)
  * ride this store and keep their public names in services/hsm.h. */
 
-/* The single shared NVM context and its serialisation mutex. The mutex must
- * be initialised (wt_mutex_init) before wt_nvm_store_bind wires it in. */
+/* The vault's NVM context and its SPM-owned serialisation mutex. The mutex
+ * must be initialised (wt_mutex_init) before wt_nvm_store_bind wires it in. */
 extern whNvmContext g_wt_nvm_ctx;
 extern wt_mutex_t   g_wt_nvm_lock_mutex;
 
@@ -39,15 +39,21 @@ extern wt_mutex_t   g_wt_nvm_lock_mutex;
  * again against a freshly erased pool. Returns a WH_ERROR_* code. */
 int wt_nvm_store_bind(void);
 
-/* Re-assert every callback and context pointer in the shared NVM chain from
- * link-time constants. The contexts live in the shared keystore band, so a
- * keystore partition can rewrite them; a server pump calls this first so a
- * forged pointer is never dereferenced (WT-FFM-0011). */
+/* Bring the vault's band up from a clean image: the port flash context, the
+ * store, the vault and sealer backends, and the RANDOM-face DRBG. Boot runs
+ * it, the format path runs it against an erased pool, and the vault's restart
+ * runs it after its band was reset. Returns a WH_ERROR_* code. */
+int wt_nvm_vault_bind(void);
+
+/* Re-assert every callback and context pointer in the direct store's chain
+ * from link-time constants, so a forged pointer is never dereferenced
+ * (WT-FFM-0011). */
 void wt_nvm_store_pin(void);
 
 #if defined(WT_HSM_PIN_NEG_PROBE) && (WT_HSM_PIN_NEG_PROBE == 1)
 /* Test builds only: corrupt every pointer wt_nvm_store_pin repairs, heal them
- * synchronously, and return 1 iff all six were restored (WT-FFM-0011). */
+ * synchronously, and return 1 iff all six hold their exact canonical address
+ * again (WT-FFM-0011). */
 int wt_nvm_store_pin_probe(void);
 #endif
 
