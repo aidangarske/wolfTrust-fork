@@ -431,31 +431,31 @@ case "$scenario" in
       refute_re "no fault markers in boot log" \
         '^(\[MEMFAULT\]|\[HARDFLT\]|HardFault|SecureFault)'
     fi
-    expect "TEE client initialized" "wolfTrust TEE client initialized"
-    expect "FF-M psa_framework_version=0x0100" \
+    expect_flat "TEE client initialized" "wolfTrust TEE client initialized"
+    expect_flat "FF-M psa_framework_version=0x0100" \
       "wolfTrust FF-M psa_framework_version=0x0100"
-    expect "mediated crypto dispatch verified" \
+    expect_flat "mediated crypto dispatch verified" \
       "wolfTrust FF-M mediated crypto dispatch verified"
-    expect "ITS set/get verified" \
+    expect_flat "ITS set/get verified" \
       "wolfTrust ITS set/get verified"
-    expect "PS sealed set/get verified" \
+    expect_flat "PS sealed set/get verified" \
       "wolfTrust PS sealed set/get verified"
-    expect "key-ops sign/verify verified" \
+    expect_flat "key-ops sign/verify verified" \
       "wolfTrust key-ops sign/verify verified"
-    expect "key negatives verified" \
+    expect_flat "key negatives verified" \
       "wolfTrust key negatives verified"
     expect_flat "forged-handle call rejected" \
       "wolfTrust FF-M forged-handle call rejected"
     expect_flat "oversized-vector call rejected" \
       "wolfTrust FF-M oversized-vector call rejected"
-    expect "psa_hash_compute(SHA-256) KAT verified" \
+    expect_flat "psa_hash_compute(SHA-256) KAT verified" \
       "psa_hash_compute(SHA-256) KAT verified"
-    expect "psa_initial_attestation st=0" "psa_initial_attestation st=0"
-    expect "attestation COSE_Sign1 verified" \
+    expect_flat "psa_initial_attestation st=0" "psa_initial_attestation st=0"
+    expect_flat "attestation COSE_Sign1 verified" \
       "wolfTrust attestation: COSE_Sign1 verified"
-    expect "token measurement equals wolfBoot measurement of the signed image" \
+    expect_flat "token measurement equals wolfBoot measurement of the signed image" \
       "wolfTrust attestation: token measurement=$WT_EXPECTED_MEASUREMENT_HEX"
-    expect "attestation fields verify=0 lifecycle=0x1000 measurement=ok cose=ES256" \
+    expect_flat "attestation fields verify=0 lifecycle=0x1000 measurement=ok cose=ES256" \
       "attestation verify=0 challenge=ok identity=ok lifecycle=0x1000 measurement=ok cose=ES256"
     expect "guest1 FF-M SHA-256 KAT through SERVICE_CRYPTO (P7-S3)" \
       "freertos_guest1: ffm sha256 ok"
