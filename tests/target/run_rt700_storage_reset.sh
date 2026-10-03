@@ -12,18 +12,19 @@ budget="${RT700_STORAGE_TIMEOUT:-180}"
 [[ "$budget" =~ ^[0-9]+$ ]] && [ "$budget" -gt 0 ]
 guest=tests/firmware/psa-guest/build
 for file in build/wolftrust.elf build/wolftrust_v1_signed.bin \
-    "$guest/guest0.elf" "$guest/guest0.bin" "$guest/guest1.bin" \
+    "$guest/guest0.elf" "$guest/guest1.elf" "$guest/guest0.bin" "$guest/guest1.bin" \
     "$boot/wolfboot.elf" "$boot/wolfboot.bin"; do
     [ -f "$file" ] || { echo "FAIL: missing storage fixture $file" >&2; exit 1; }
 done
 command -v "$gdb" > /dev/null
 symbol() {
-    arm-none-eabi-nm "$guest/guest0.elf" |
-        awk -v name="$1" '$3 == name { addr = "0x" $1; n++ }
+    arm-none-eabi-nm "$guest/guest$1.elf" |
+        awk -v name="$2" '$3 == name { addr = "0x" $1; n++ }
             END { if (n != 1) exit 1; print addr }'
 }
-storage="$(symbol g_storage_reset)"
-mailbox="$(symbol g_guest_mailbox)"
+storage="$(symbol 0 g_storage_reset)"
+mailbox="$(symbol 0 g_guest_mailbox)"
+peer="$(symbol 1 g_guest_mailbox)"
 log=build/rt700_storage_reset
 "$m33mu" --cpu imxrt700 --gdb --port "$port" \
     "$boot/wolfboot.bin" build/wolftrust_v1_signed.bin:0x40000 \
@@ -46,6 +47,7 @@ if ! timeout "$budget" "$gdb" --batch \
     -ex "target remote localhost:$port" \
     -ex "set \$storage = (unsigned int *)$storage" \
     -ex "set \$guest = (unsigned int *)$mailbox" \
+    -ex "set \$peer = (unsigned int *)$peer" \
     -x tests/scripts/check_rt700_storage_reset.gdb > "$log.gdb.log" 2>&1; then
     cat "$log.gdb.log"
     exit 1
