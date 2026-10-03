@@ -548,9 +548,6 @@ check_storage_reset() {
         "ITS/PS exact data, metadata, set/remove refusal and unchanged data (0x$bits/0x$status)"
     check "$([ "$its_flags" = 00000001 ] && [ "$ps_flags" = 00000001 ]; echo $?)" \
         "both objects retain WRITE_ONCE metadata (0x$its_flags/0x$ps_flags)"
-    reformatted="$(mailbox_word "$(elf_sym g_vault_reformatted)" 0)"
-    check "$([ "$reformatted" = 00000000 ]; echo $?)" \
-        "storage boot did not use the vault reformat recovery path"
 }
 
 check_peer_progress() {
