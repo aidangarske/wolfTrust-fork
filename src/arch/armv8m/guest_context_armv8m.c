@@ -192,6 +192,13 @@ static uint32_t wt_read_psp_ns(void)
     return value;
 }
 
+static uint32_t wt_read_msp_ns(void)
+{
+    uint32_t value;
+    __asm volatile("mrs %0, msp_ns" : "=r"(value));
+    return value;
+}
+
 static uint32_t wt_read_control_ns(void)
 {
     uint32_t value;
@@ -731,7 +738,7 @@ void wt_arch_guest_context_capture(wt_guest_context_t* context,
                                        const wt_trap_frame_t* frame)
 {
     wt_trap_frame_t* stacked;
-    uintptr_t stacked_addr;
+    uintptr_t msp_ns;
 
     if (context == NULL || frame == NULL) {
         wt_platform_panic();
@@ -739,16 +746,18 @@ void wt_arch_guest_context_capture(wt_guest_context_t* context,
 
     stacked = (wt_trap_frame_t*)frame;
     context->psp_ns = wt_read_psp_ns();
-    stacked_addr = (uintptr_t)stacked;
+    msp_ns = wt_read_msp_ns();
+    /* A task interrupted on PSP has its frame on PSP_NS. Preserve the
+     * independent handler stack from MSP_NS rather than replacing it with
+     * that task's frame address. */
     /* A SecureFault can be raised before the NS exception frame exists (for
      * example, on a failed first BXNS). Preserve the configured guest MSP
      * in that case; replacing it with zero would make the recovery path
      * fabricate a frame at 0xffffffe0 and fault recursively. */
-    if (stacked_addr >= WT_PLATFORM_GUEST_STACK_WINDOW_BASE &&
-        stacked_addr <= (WT_PLATFORM_GUEST_STACK_WINDOW_BASE +
-                         WT_PLATFORM_GUEST_STACK_WINDOW_SIZE -
-                         sizeof(wt_trap_frame_t))) {
-        context->msp_ns = stacked_addr;
+    if (msp_ns >= WT_PLATFORM_GUEST_STACK_WINDOW_BASE &&
+        msp_ns <= (WT_PLATFORM_GUEST_STACK_WINDOW_BASE +
+                   WT_PLATFORM_GUEST_STACK_WINDOW_SIZE)) {
+        context->msp_ns = msp_ns;
     }
     context->control_ns = wt_read_control_ns();
     __asm volatile("mrs %0, psplim_ns" : "=r"(context->psplim_ns));
@@ -956,7 +965,10 @@ __attribute__((naked)) void SysTick_Handler(void)
         "stmia r1!, {r4-r11}            \n"
         "ldr r1, =g_live_exc_return     \n"
         "str lr, [r1]                   \n"
-        "mrs r0, msp_ns                 \n"
+        "tst lr, #4                     \n"
+        "ite eq                         \n"
+        "mrseq r0, msp_ns               \n"
+        "mrsne r0, psp_ns               \n"
         "b wt_secure_systick_dispatch   \n"
     );
 }

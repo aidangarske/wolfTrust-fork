@@ -371,3 +371,7 @@ jobs:
           ZEPHYR_TOOLCHAIN_VARIANT: cross-compile
           CROSS_COMPILE: /usr/local/bin/arm-none-eabi-
         run: tests/target/run_suite.sh ${{ matrix.arm }} ${{ matrix.key }}
+
+      - name: Check process-stack frame capture across OS guest switches
+        if: matrix.fixture == 'os'
+        run: tests/target/run_rt700_psp_frame.sh

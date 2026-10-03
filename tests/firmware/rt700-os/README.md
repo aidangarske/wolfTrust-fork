@@ -48,6 +48,12 @@ matching identity, ten crypto rounds, and a moving sleeping heartbeat.
 Console validation additionally requires ordered wakes and peer crypto
 inside each task's progress window. Preserve UART and SWD evidence separately.
 
+After an emulator OS run, tests/target/run_rt700_psp_frame.sh checks the
+compiled Secure monitor with GDB. It requires the matching first-stage ELF
+and an arm-none-eabi-gdb. The observer retains wolfBoot authentication, then
+checks a real FreeRTOS PSP frame's PC and the independent MSP bank across
+guest switches. The native and wolfHSM OS CI jobs run this check as well.
+
 FreeRTOS parent is pinned to f4fcc3b228643144727e9257ba12db1cb632b6e6 and
 its kernel gitlink is 3a22924e0a9ddbbc8b0758881c33b3422a5cc20d. Dependencies
 and build outputs stay outside tracked source. setup.sh prepares source and
