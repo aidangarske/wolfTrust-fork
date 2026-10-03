@@ -45,6 +45,37 @@ Record emulator, cross-build, and physical-board evidence separately: M33MU's
 RT700 model gives emulator evidence, the EVK gives silicon evidence, and
 neither substitutes for the other.
 
+## Zephyr and FreeRTOS qualification fixture
+
+Set `WT_RT700_GUEST_FIXTURE=os` to run Zephyr in guest0 and FreeRTOS in guest1
+for `bothpsa` and `bothiso`. The default fixture remains bare-metal. Prepare
+the pinned kernels with `tests/firmware/rt700-os/setup.sh`, then run on the
+host connected to the EVK:
+
+```sh
+export ZEPHYR_TOOLCHAIN_VARIANT=cross-compile
+export CROSS_COMPILE=/usr/bin/arm-none-eabi- # Adjust to the installed compiler.
+WT_ENGINE=native WT_RT700_GUEST_FIXTURE=os tests/target/run_rt700_hardware.sh bothpsa
+WT_ENGINE=native WT_RT700_GUEST_FIXTURE=os tests/target/run_rt700_hardware.sh bothiso
+WT_ENGINE=hsm WT_RT700_GUEST_FIXTURE=os tests/target/run_rt700_hardware.sh bothpsa
+WT_ENGINE=hsm WT_RT700_GUEST_FIXTURE=os tests/target/run_rt700_hardware.sh bothiso
+```
+
+Each case checks both PSA lifecycles, key and caller isolation, attestation
+against the signed Secure image, and two tasks per kernel that sleep ten
+times while mediated crypto continues. Matching ELFs locate the result records
+for SWD checks, including zero errors and continuing sleep heartbeats. The
+emulator CI runs the same four cases and additionally validates console sleep
+records and peer progress during a FreeRTOS critical section.
+
+The physical four-case OS matrix passed at
+`1f9a0a5b861d2f546fdadd4075dcd74222194c75`. This qualifies those cases at that
+revision; the remaining conformance, recovery and update matrix still requires
+separate evidence. FreeRTOS must use the core SysTick clock on the EVK. Leave
+`configSYSTICK_CLOCK_HZ` undefined so the CM33 port selects that clock: defining
+it selects the reference clock, which is stopped on this board and previously
+starved the guest during monitor timer restoration.
+
 ## What a MIMXRT700 port comprises
 
 A full port spans two repositories. The first-stage loader changes live in

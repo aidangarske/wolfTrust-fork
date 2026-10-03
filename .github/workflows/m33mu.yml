@@ -368,4 +368,6 @@ jobs:
           MCUXSDK: ${{ matrix.port == 'mimxrt700' && '1' || '' }}
           MCUXPRESSO: ${{ github.workspace }}/mcuxpresso-sdk/mcuxsdk
           MCUXPRESSO_CMSIS: ${{ github.workspace }}/CMSIS_5/CMSIS
+          ZEPHYR_TOOLCHAIN_VARIANT: cross-compile
+          CROSS_COMPILE: /usr/local/bin/arm-none-eabi-
         run: tests/target/run_suite.sh ${{ matrix.arm }} ${{ matrix.key }}
