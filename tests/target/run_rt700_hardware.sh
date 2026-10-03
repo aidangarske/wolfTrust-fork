@@ -360,6 +360,17 @@ run_chain() {
 
     expected_measurement="$(python3 "$repo/tests/scripts/read_wolfboot_measurement.py" \
         "$repo/build/wolftrust_v1_signed.bin")"
+    if [ "$scenario" = authneg ]; then
+        cp "$guest_build/guest0.bin" "$work/images/guest0-before-tamper.bin"
+        python3 - "$guest_build/guest0.bin" <<'PYEOF'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+image = bytearray(path.read_bytes())
+image[0x40] ^= 1
+path.write_bytes(image)
+PYEOF
+    fi
     cp "$repo/build/wolftrust_v1_signed.bin" "$guest_build/guest0.bin" \
         "$guest1_build/guest1.bin" "$work/images/"
     (cd "$work/images" && sha256sum *.bin *.elf) > "$work/image-sha256.txt"
@@ -628,6 +639,16 @@ check_launch_masks() {
 }
 
 case "$scenario" in
+authneg)
+    run_chain ""
+    check_launch_masks 00000002 00000001
+    signature="$(mailbox_word 0x20100000 0)"
+    check "$([ "$signature" = 00000000 ]; echo $?)" \
+        "tampered guest0 never wrote its result signature (0x$signature)"
+    check_guest 1 0x20140000
+    check_peer_progress 0x20140000 36
+    log "PASS: hardware/$scenario"
+    ;;
 confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover)
     run_chain "$(rt700_guest_flags "$scenario" 0)"
     check_launch_masks 00000003 00000000
@@ -817,7 +838,7 @@ wrpneg)
     log "PASS: hardware/$scenario"
     ;;
 *)
-    log "usage: $0 romsmoke|positive|ahbscneg|restart|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover"
+    log "usage: $0 romsmoke|positive|ahbscneg|authneg|restart|wrpfence|wrpoff|wrpneg|bothpsa|bothiso|attestneg|hsmattackneg|fwustage|confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover"
     exit 2
     ;;
 esac
