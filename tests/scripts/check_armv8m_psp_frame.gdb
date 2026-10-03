@@ -58,12 +58,12 @@ if (*(unsigned int *)0xe002ed04 & 0x10000000) != 0
   echo FAIL: invalid owner departure retained hardware PendSV\n
   quit 1
 end
-call wt_arch_restore_guest_bank(g_scheduler.runtime[0].context)
+call wt_virtual_systick_arm_arriving()
 if (*(unsigned int *)0xe002ed04 & 0x10000000) == 0 || g_guest_systick[0].pendsv != 0
   echo FAIL: arriving guest lost its own saved PendSV\n
   quit 1
 end
-call wt_arch_restore_guest_bank(g_scheduler.runtime[0].context)
+call wt_virtual_systick_arm_arriving()
 if (*(unsigned int *)0xe002ed04 & 0x10000000) == 0
   echo FAIL: repeated arm dropped the active guest pending PendSV\n
   quit 1
