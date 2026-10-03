@@ -462,6 +462,9 @@ evidence. The default completion limit is 900 seconds (`RT700_CONF_TIMEOUT`);
 UART report and skip context remain in the case evidence directory. Missing
 SWD observations during intentional resets are retried within that same limit;
 only an exact memory result row can supply a mailbox value.
+Addresses must also be valid 32-bit hexadecimal literals before a read;
+a missing linked symbol fails without falling back to address zero. The
+vault recovery test build retains its actual reformat diagnostic under LTO.
 
 `vaultrecover` additionally requires the injected provisioning probe to fire,
 the development lifecycle to remain selected, and the production vault

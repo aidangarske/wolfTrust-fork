@@ -56,7 +56,12 @@ wt_mutex_t g_wt_nvm_lock_mutex;
  * unknown lifecycle stays locked.
  * ---------------------------------------------------------------------- */
 static uint32_t g_boot_lifecycle;       /* PSA lifecycle from wolfBoot handoff */
-static int      g_vault_reformatted;    /* observability: reformatted this boot */
+#if defined(WT_VAULT_FOREIGN_PROBE)
+/* Keep the actual recovery store visible to the physical observer under LTO. */
+static volatile int g_vault_reformatted;
+#else
+static int g_vault_reformatted;
+#endif
 
 void wt_hsm_set_boot_lifecycle(uint32_t lifecycle)
 {

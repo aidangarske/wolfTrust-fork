@@ -427,7 +427,8 @@ PYEOF
 # One 32-bit word at base+offset over SWD, as eight lowercase hex digits.
 mailbox_word() {
     local address output
-    address="$(printf '0x%x' $(($1 + $2)))"
+    address="$(rt700_word_address "$1" "$2")" || \
+        fail "invalid SWD word address or offset"
     output="$(dap -c "read32 $address")" || return 1
     printf '%s\n' "$output" | rt700_parse_word "$address"
 }
