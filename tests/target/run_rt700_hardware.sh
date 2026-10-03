@@ -632,6 +632,17 @@ confboot|devstorage|devcrypto|devattest|devattestqcbor|vaultrecover)
     run_chain "$(rt700_guest_flags "$scenario" 0)"
     check_launch_masks 00000003 00000000
     check_conformance_guest
+    if [ "$scenario" = vaultrecover ]; then
+        probe_symbol=g_native_foreign_probe_fired
+        [ "${WT_ENGINE:-native}" = hsm ] && probe_symbol=g_foreign_probe_fired
+        probe="$(mailbox_word "$(elf_sym "$probe_symbol")" 0)"
+        reformatted="$(mailbox_word "$(elf_sym g_vault_reformatted)" 0)"
+        lifecycle="$(mailbox_word "$(elf_sym g_boot_lifecycle)" 0)"
+        check "$([ "$probe" = 00000001 ]; echo $?)" \
+            "blocked-provisioning probe executed (0x$probe)"
+        check "$([ "$lifecycle" = 00001000 ] && [ "$reformatted" = 00000001 ]; echo $?)" \
+            "development vault recovered through the production reformat path (0x$lifecycle/0x$reformatted)"
+    fi
     log "PASS: hardware/$scenario"
     ;;
 bothpsa|bothiso|attestneg|hsmattackneg|fwustage)
