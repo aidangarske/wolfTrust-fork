@@ -124,6 +124,10 @@ static psa_status_t wt_storage_ns_read(uint32_t sid, int32_t op, uint64_t uid,
     if (out_len == NULL || (out == NULL && out_cap != 0U)) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
+    /* The transfer cap below hides the full range from the SPM write check. */
+    if (out_cap > (size_t)(SIZE_MAX - (uintptr_t)out)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
     if (out_cap > WT_NS_STORAGE_TRANSFER - sizeof(hdr)) {
         out_cap = WT_NS_STORAGE_TRANSFER - sizeof(hdr);
     }

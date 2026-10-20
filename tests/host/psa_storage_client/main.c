@@ -47,6 +47,7 @@
 #include "wolfhsm/wh_nvm_flash.h"
 #include "wolfhsm/wh_flash_ramsim.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -72,6 +73,18 @@ static void check(int ok, const char* what)
         (void)printf("FAIL: %s\n", what);
         g_failures++;
     }
+}
+
+static int all_zero(const uint8_t* buf, size_t len)
+{
+    size_t i;
+
+    for (i = 0U; i < len; i++) {
+        if (buf[i] != 0U) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 /* ---- host memcheck standing in for the Armv8-M CMSE checker ---- */
@@ -346,6 +359,10 @@ int main(void)
     check(status == PSA_SUCCESS && got == sizeof(object) &&
           memcmp(large, object, sizeof(object)) == 0,
           "psa_its_get reads into a buffer above the transfer budget");
+    (void)memset(large, 0, sizeof(large));
+    status = psa_its_get(0x1111ULL, 0U, SIZE_MAX, large, &got);
+    check(status != PSA_SUCCESS && all_zero(large, sizeof(large)),
+          "psa_its_get refuses a buffer range that wraps the address space");
 
     /* WRITE_ONCE lifecycle through the client. */
     status = psa_its_set(0x2222ULL, sizeof(object), object,
@@ -392,6 +409,10 @@ int main(void)
     check(status == PSA_SUCCESS && got == sizeof(ps_object) &&
           memcmp(large, ps_object, sizeof(ps_object)) == 0,
           "psa_ps_get reads into a buffer above the transfer budget");
+    (void)memset(large, 0, sizeof(large));
+    status = psa_ps_get(0x4444ULL, 0U, SIZE_MAX, large, &got);
+    check(status != PSA_SUCCESS && all_zero(large, sizeof(large)),
+          "psa_ps_get refuses a buffer range that wraps the address space");
     (void)memset(&info, 0, sizeof(info));
     status = psa_ps_get_info(0x4444ULL, &info);
     check(status == PSA_SUCCESS && info.size == sizeof(ps_object) &&
