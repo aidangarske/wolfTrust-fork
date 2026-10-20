@@ -23,14 +23,14 @@
 
 #include "psa/client.h"
 
-/* A connection pinned in a Secure Partition fault completes with
- * COMMUNICATION_FAILURE and is dead thereafter (BAD_STATE); recovery
- * restarts the service, so the client heals by reconnecting and
- * re-binding its port, mirroring the wolfHSM client glue. */
+/* A service restart fails a pinned call with COMMUNICATION_FAILURE and leaves
+ * every connection to it dead (BAD_STATE or PROGRAMMER_ERROR), so the client
+ * heals by reconnecting and re-binding its port. */
 static int wt_vnet_psa_healable(psa_status_t status)
 {
     return status == PSA_ERROR_COMMUNICATION_FAILURE ||
-           status == PSA_ERROR_BAD_STATE;
+           status == PSA_ERROR_BAD_STATE ||
+           status == PSA_ERROR_PROGRAMMER_ERROR;
 }
 
 static psa_status_t wt_vnet_psa_do_open(wt_vnet_psa_ctx_t* ctx,
@@ -61,6 +61,9 @@ static int wt_vnet_psa_heal(wt_vnet_psa_ctx_t* ctx)
     psa_invec in_vec;
     psa_status_t status;
 
+    if (ctx->active == 0U) {
+        return WT_VNET_E_NOT_OPEN;
+    }
     if (ctx->handle != (int32_t)PSA_NULL_HANDLE) {
         psa_close((psa_handle_t)ctx->handle);
         ctx->handle = (int32_t)PSA_NULL_HANDLE;
@@ -93,8 +96,13 @@ int wt_vnet_psa_open(wt_vnet_psa_ctx_t* ctx, uint32_t sid, uint32_t version,
     ctx->sid = sid;
     ctx->version = version;
     ctx->mac_set = 0U;
+    ctx->active = 0U;
     status = wt_vnet_psa_do_open(ctx, info);
-    return (status != PSA_SUCCESS) ? (int)status : 0;
+    if (status != PSA_SUCCESS) {
+        return (int)status;
+    }
+    ctx->active = 1U;
+    return 0;
 }
 
 int wt_vnet_psa_set_mac(wt_vnet_psa_ctx_t* ctx, const uint8_t* mac6)
@@ -169,7 +177,11 @@ int wt_vnet_psa_rx_fetch(wt_vnet_psa_ctx_t* ctx, vnet_rx_meta_t* meta,
 
 void wt_vnet_psa_close(wt_vnet_psa_ctx_t* ctx)
 {
-    if (ctx != NULL && ctx->handle != (int32_t)PSA_NULL_HANDLE) {
+    if (ctx == NULL) {
+        return;
+    }
+    ctx->active = 0U;
+    if (ctx->handle != (int32_t)PSA_NULL_HANDLE) {
         psa_close((psa_handle_t)ctx->handle);
         ctx->handle = (int32_t)PSA_NULL_HANDLE;
     }

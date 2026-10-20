@@ -198,5 +198,11 @@ Port selection comes from the stamped caller identity. Secure pool tokens and
 generation counters do not cross into a guest. The mediated PSA transport MTU
 is 1000 bytes so a frame and receive metadata fit the copied-transfer budget.
 
+A `SERVICE_VNET` restart clears every port and MAC assignment. The client
+transport re-registers a guest's port and MAC on that guest's next TX or
+RX_FETCH. Frames sent to a port before its guest re-registers are dropped, so
+a receiver must keep polling RX_FETCH rather than wait only for the receive
+interrupt.
+
 See [API Reference](API-Reference.md) for client signatures and [Macros](Macros.md) for service build
 controls.
