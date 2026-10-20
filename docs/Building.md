@@ -70,7 +70,7 @@ The build records the variables enumerated by the
 `secure_build_mode.stamp` recipe and regenerates when one of those values
 changes. The current stamp omits `TOOLPREFIX`, `WT_GUEST_FLASH_WRP`, the VNET
 tuning variables (`WT_VNET_POOL_SLOTS`, `WT_VNET_FRAME_MAX`,
-`WT_VNET_RX_QUEUE_DEPTH`, `WT_VNET_RX_IRQ`, `WT_VNET_TIMEOUT_TICKS`, and
+`WT_VNET_RX_QUEUE_DEPTH`, `WT_VNET_RX_IRQ`, and
 `WT_VNET_UNKNOWN_UCAST_FLOOD`), and the test-only
 `WT_VAULT_FOREIGN_PROBE`, `WT_VAULT_PROBE_SECURED`, and
 `WT_CONF_DIAG_TRAP` variables. Use a fresh `BUILD_DIR` or clean the active

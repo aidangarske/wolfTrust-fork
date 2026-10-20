@@ -63,6 +63,11 @@ void wt_vnet_relay_set_transport(wt_spm_transport_fn fn)
     g_vnet_transport = (fn != NULL) ? fn : wt_spm_transport_direct;
 }
 
+static uint32_t wt_vnet_relay_now(void)
+{
+    return (g_vnet_tick != NULL) ? g_vnet_tick() : g_vnet_now_tick;
+}
+
 /* The SPM stamps NS callers as -(guest + 1); the mapping mirrors
  * wt_ffm_boot_caller_guest. Secure-origin callers have no switch port. */
 static int wt_vnet_relay_caller_vm(const vnet_switch_t* sw, int32_t client_id,
@@ -211,7 +216,7 @@ static psa_status_t wt_vnet_relay_tx(wt_ffm_runtime_t* runtime,
             len != msg->in_size[0]) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-    tick = (g_vnet_tick != NULL) ? g_vnet_tick() : g_vnet_now_tick;
+    tick = wt_vnet_relay_now();
     rc = vnet_switch_tx(sw, vm, g_vnet_tx_scratch, (uint16_t)len, tick);
     if (rc != WT_VNET_OK) {
         return (psa_status_t)rc;
@@ -249,7 +254,7 @@ static psa_status_t wt_vnet_relay_rx_fetch(wt_ffm_runtime_t* runtime,
         if (n == WT_VNET_E_BADARG) {
             /* Head frame does not fit the caller's buffer: drop and release
              * it so an undeliverable frame cannot wedge the queue or pin its
-             * shared pool slot until an expiry sweep that has no caller. */
+             * shared pool slot until it expires. */
             (void)vnet_switch_release_rx(sw, vm,
                                          g_vnet_meta_scratch.token_slot,
                                          g_vnet_meta_scratch.token_gen);
@@ -289,6 +294,10 @@ static psa_status_t wt_vnet_relay_op(wt_ffm_runtime_t* runtime,
         /* Fail closed: no switch installed, no path to any port. */
         return PSA_ERROR_NOT_SUPPORTED;
     }
+    /* Frames a receiver never fetches would otherwise pin the shared pool
+     * and refuse TX on every port. */
+    (void)vnet_switch_drop_expired(sw, wt_vnet_relay_now(),
+                                   WT_VNET_TIMEOUT_TICKS);
     rc = wt_vnet_relay_caller_vm(sw, msg->client_id, &vm);
     if (rc != WT_VNET_OK) {
         return (psa_status_t)rc;

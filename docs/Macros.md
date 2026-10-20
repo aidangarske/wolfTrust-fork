@@ -63,7 +63,7 @@ guest linker files, measurement records, and flash commands consistent.
 | `WT_VNET_FRAME_MAX` | Internal maximum Ethernet frame bytes; default `1536`. | Must be large enough for the selected link frame; PSA transport still limits the exposed MTU to 1000. |
 | `WT_VNET_RX_QUEUE_DEPTH` | Per-port receive queue depth; default `8`. | Static queue storage must fit the VNET data region. |
 | `WT_VNET_RX_IRQ` | Synthetic Non-secure receive interrupt; default `130`. | Must be representable and assigned consistently in the target IRQ policy. |
-| `WT_VNET_TIMEOUT_TICKS` | Reserved frame-expiration threshold; default `500`. | The value is compiled, but production code does not currently call `vnet_switch_drop_expired()`, so changing it has no runtime effect. |
+| `WT_VNET_TIMEOUT_TICKS` | Frame-expiration threshold in scheduler ticks; default `500`. | `SERVICE_VNET` drops queued frames older than this before each operation, so a port that stops fetching releases its frame-pool slots. |
 | `WT_VNET_UNKNOWN_UCAST_FLOOD` | Flood unknown unicast frames when set to `1`; default `0`. | Enable only when the guest-network policy permits it. |
 
 ## Fixed Secure wolfCrypt defines

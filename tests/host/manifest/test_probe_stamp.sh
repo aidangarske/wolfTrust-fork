@@ -58,6 +58,14 @@ for probe in WT_FP_NEG_PROBE WT_SEAL_NEG_PROBE WT_MSP_OVF_PROBE \
     check $st "dropping $probe restores the default stamp"
 done
 
+gen WT_VNET_TIMEOUT_TICKS=100
+if grep -q '^WT_VNET_TIMEOUT_TICKS=100$' "$stamp" &&
+   ! cmp -s "$stamp" "$build/default.stamp"; then st=0; else st=1; fi
+check $st "WT_VNET_TIMEOUT_TICKS=100 invalidates the stamp"
+gen
+if cmp -s "$stamp" "$build/default.stamp"; then st=0; else st=1; fi
+check $st "dropping WT_VNET_TIMEOUT_TICKS restores the default stamp"
+
 echo "probe build stamp tests: $checks checks, $failures failures"
 if [ "$failures" -eq 0 ]; then
     echo "PASS: probe_build_stamp"
