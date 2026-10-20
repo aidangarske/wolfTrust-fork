@@ -218,6 +218,12 @@ static psa_status_t wt_vnet_relay_tx(wt_ffm_runtime_t* runtime,
     }
     tick = wt_vnet_relay_now();
     rc = vnet_switch_tx(sw, vm, g_vnet_tx_scratch, (uint16_t)len, tick);
+    /* Expire only under pool pressure, so a slow receiver keeps its frames
+     * but a stalled one cannot pin the shared pool and refuse every port. */
+    if (rc == WT_VNET_E_POOL_FULL &&
+            vnet_switch_drop_expired(sw, tick, WT_VNET_TIMEOUT_TICKS) > 0U) {
+        rc = vnet_switch_tx(sw, vm, g_vnet_tx_scratch, (uint16_t)len, tick);
+    }
     if (rc != WT_VNET_OK) {
         return (psa_status_t)rc;
     }
@@ -294,10 +300,6 @@ static psa_status_t wt_vnet_relay_op(wt_ffm_runtime_t* runtime,
         /* Fail closed: no switch installed, no path to any port. */
         return PSA_ERROR_NOT_SUPPORTED;
     }
-    /* Frames a receiver never fetches would otherwise pin the shared pool
-     * and refuse TX on every port. */
-    (void)vnet_switch_drop_expired(sw, wt_vnet_relay_now(),
-                                   WT_VNET_TIMEOUT_TICKS);
     rc = wt_vnet_relay_caller_vm(sw, msg->client_id, &vm);
     if (rc != WT_VNET_OK) {
         return (psa_status_t)rc;

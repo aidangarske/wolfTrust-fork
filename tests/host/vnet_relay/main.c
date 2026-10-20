@@ -579,6 +579,25 @@ int main(void)
     n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
     check(n == WT_VNET_E_EMPTY,
           "SEC expired frames are gone from the receive queue");
+
+    /* Below pool pressure an aged frame still reaches a slow receiver. */
+    g_active_client = TEST_GUEST0;
+    frame[14] = 0x11U;
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == 0,
+          "SEC TX queues a frame for a slow receiver");
+    g_test_tick += WT_VNET_TIMEOUT_TICKS;
+    frame[14] = 0x22U;
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == 0,
+          "SEC TX past the timeout with free pool slots is queued");
+    g_active_client = TEST_GUEST1;
+    memset(rx_buf, 0, sizeof(rx_buf));
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == (int)sizeof(frame) && rx_buf[14] == 0x11U,
+          "SEC an aged frame is kept while the pool has free slots");
+    memset(rx_buf, 0, sizeof(rx_buf));
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == (int)sizeof(frame) && rx_buf[14] == 0x22U,
+          "SEC the newer frame follows the aged one");
     wt_vnet_psa_close(&c1);
     g_active_client = TEST_GUEST0;
     wt_vnet_psa_close(&c0);
