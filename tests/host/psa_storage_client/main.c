@@ -236,6 +236,7 @@ int main(void)
     struct psa_storage_info_t info;
     uint8_t buffer[64];
     uint8_t big[600];
+    uint8_t large[2048];
     size_t got = 0U;
     psa_status_t status;
 
@@ -332,6 +333,20 @@ int main(void)
           memcmp(buffer, object + 4U, got) == 0,
           "psa_its_get honors the read offset");
 
+    /* A destination larger than one copied transfer still reads the object. */
+    (void)memset(large, 0, sizeof(large));
+    status = psa_its_get(0x1111ULL, 0U,
+                         WT_FFM_TRANSFER_BYTES - sizeof(wt_vault_req_t) + 4U,
+                         large, &got);
+    check(status == PSA_SUCCESS && got == sizeof(object) &&
+          memcmp(large, object, sizeof(object)) == 0,
+          "psa_its_get reads into a buffer above the vault reply bound");
+    (void)memset(large, 0, sizeof(large));
+    status = psa_its_get(0x1111ULL, 0U, sizeof(large), large, &got);
+    check(status == PSA_SUCCESS && got == sizeof(object) &&
+          memcmp(large, object, sizeof(object)) == 0,
+          "psa_its_get reads into a buffer above the transfer budget");
+
     /* WRITE_ONCE lifecycle through the client. */
     status = psa_its_set(0x2222ULL, sizeof(object), object,
                          PSA_STORAGE_FLAG_WRITE_ONCE);
@@ -372,6 +387,11 @@ int main(void)
     check(status == PSA_SUCCESS && got == sizeof(ps_object) &&
           memcmp(buffer, ps_object, sizeof(ps_object)) == 0,
           "psa_ps_get returns the sealed object in the clear to its owner");
+    (void)memset(large, 0, sizeof(large));
+    status = psa_ps_get(0x4444ULL, 0U, sizeof(large), large, &got);
+    check(status == PSA_SUCCESS && got == sizeof(ps_object) &&
+          memcmp(large, ps_object, sizeof(ps_object)) == 0,
+          "psa_ps_get reads into a buffer above the transfer budget");
     (void)memset(&info, 0, sizeof(info));
     status = psa_ps_get_info(0x4444ULL, &info);
     check(status == PSA_SUCCESS && info.size == sizeof(ps_object) &&

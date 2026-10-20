@@ -242,6 +242,10 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
             if (cap > WT_VAULT_OBJECT_MAX) {
                 cap = WT_VAULT_OBJECT_MAX;
             }
+            /* The vault request header shares the reply's transfer budget. */
+            if (cap > WT_FFM_TRANSFER_BYTES - sizeof(vreq)) {
+                cap = WT_FFM_TRANSFER_BYTES - sizeof(vreq);
+            }
             status = wt_storage_vault_call(ctx, runtime, partition_id,
                                            WT_VAULT_OP_GET, &vreq, NULL, 0U,
                                            buffer, cap, &out_len);
