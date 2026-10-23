@@ -24,48 +24,7 @@ ENTRY(Reset_Handler)
 MEMORY {
   FLASH (rx) : ORIGIN = (WT_SECURE_FLASH_ORIGIN + WT_SECURE_IMAGE_HEADER_SIZE),
                LENGTH = (WT_SECURE_FLASH_SIZE - WT_SECURE_IMAGE_HEADER_SIZE)
-  /* cpu0 application SRAM through its Secure alias (WT_RAM_S_BASE in
-   * port/mimxrt700/memory_map.h); the guests live below it in their own
-   * SRAM partitions through the 0x20000000 Non-secure alias. */
-  RAM   (rwx): ORIGIN = 0x30188000, LENGTH = 308K - WT_VNET_DATA_LENGTH
-  /* SERVICE_VNET data band (WT-FFM-0011/0056): the switch state and relay
-   * scratch the confined vnet partition touches in-thread, carved from the
-   * RAM tail only in CONFIG_VNET builds (WT_VNET_DATA_LENGTH is 0 otherwise).
-   * Mirrors WT_VNET_DATA_* in port/mimxrt700/memory_map.h. */
-  VNETDATA (rw): ORIGIN = 0x30188000 + 308K - WT_VNET_DATA_LENGTH,
-                 LENGTH = WT_VNET_DATA_LENGTH
-  /* Per-partition keystore data bands (WT-FFM-0011 Level 3): the vault,
-   * attestation, and crypto partitions each own one private writable band
-   * (WT_SP_*_DATA_* in memory_map.h). Top of the general window. */
-  VAULTDATA (rw): ORIGIN = 0x301D5000, LENGTH = 8K
-  ATTESTDATA (rw): ORIGIN = 0x301D7000, LENGTH = 2K
-  HSMDATA (rw): ORIGIN = 0x301D7800, LENGTH = 70K
-  /* FWU partition stack: the PSA Firmware Update SP's execution stack
-   * (WT_SP_FWU_STACK_* in memory_map.h). Privileged coroutine that programs
-   * the wolfBoot update partition flash. Lowest SP band. */
-  FWUSTACK (rw): ORIGIN = 0x301E9000, LENGTH = 8K
-  /* PS partition stack: the sealed-storage SP's execution stack and
-   * MPU-domain RW resource (WT_SP_PS_STACK_* in memory_map.h). */
-  PSSTACK (rw): ORIGIN = 0x301EB000, LENGTH = 8K
-  /* ITS partition stack: the unprivileged storage SP's execution stack and
-   * MPU-domain RW resource (WT_SP_ITS_STACK_* in memory_map.h). */
-  ITSSTACK (rw): ORIGIN = 0x301ED000, LENGTH = 8K
-  /* Vault partition stack (WT-FFM-0047): the privileged vault coroutine's
-   * manifest-declared execution stack (WT_SP_VAULT_STACK_* in memory_map.h).
-   * 16K: ECC verify's point-table frame overflows 8K (PSPLIM STKOF). */
-  VAULTSTACK (rw): ORIGIN = 0x301EF000, LENGTH = 16K
-  /* Conformance Secure-Partition .data/.bss (P3a). Arm's partition sources hold
-   * their val_api/psa_api tables in .data; a hosted SP must reach its own data
-   * but not the SPM's, so it lives in this 8 KiB window (WT_CONF_SP_DATA_* in
-   * memory_map.h) that the SP MPU domain grants while SPM RAM at 0x30188000
-   * stays denied. Empty in non-conformance builds; CONFIG_VNET builds reuse
-   * the first 8 KiB as the SERVICE_VNET partition stack (WT_SP_VNET_STACK_*,
-   * manifest-vnet.json domain) - the two builds are mutually exclusive. */
-  CONFDATA (rw): ORIGIN = 0x301F3000, LENGTH = 12K
-  /* Secure per-partition stacks (WT-FFM-0011). The top 40 KiB of the secure
-   * RAM window, reserved so each Secure Partition runs on its own secure
-   * stack the MPU can confine. Mirrors WT_SP_SECURE_RAM_* in memory_map.h. */
-  SPSTACKS (rw): ORIGIN = 0x301F6000, LENGTH = 40K
+  INCLUDE secure_l3_memory.ld
   /* RAM code band through the Secure Code-region alias of SRAM partition 12
    * (WT_RAMFUNC_* in memory_map.h): the NSC gateway, because the IDAU honours
    * NSC only in the Code region, and the XSPI0 NOR program/erase code, which
@@ -74,13 +33,7 @@ MEMORY {
   RAMFUNC (rx): ORIGIN = 0x10200000, LENGTH = 16K
 }
 
-_estack = ORIGIN(RAM) + LENGTH(RAM);
-/* Secure main stack: MSPLIM_S is set to _sstack at reset. */
-_sstack = _estack - WT_SPM_STACK_SIZE;
-_wt_part_stacks_base = ORIGIN(FWUSTACK);
-_wt_part_stacks_limit = ORIGIN(VAULTSTACK) + LENGTH(VAULTSTACK);
-_wt_sp_stacks_base = ORIGIN(SPSTACKS);
-_wt_sp_stacks_limit = ORIGIN(SPSTACKS) + LENGTH(SPSTACKS);
+INCLUDE secure_l3_symbols.ld
 _sidata = LOADADDR(.data);
 
 SECTIONS {
@@ -152,122 +105,7 @@ SECTIONS {
     _econfbss = .;
   } > CONFDATA
 
-  /* Per-partition keystore state (WT-FFM-0011 Level 3). Every RAM object a
-   * keystore partition writes in-thread is claimed by its owning band before
-   * the general .data/.bss rules run: the vault's NVM store, flash context,
-   * directory, sealer, and RNG; the attestation partition's token state; the
-   * crypto partition's engine state and the wolfHSM/wolfCrypt library state
-   * it alone drives at runtime. Every object named here is built without LTO
-   * so its claim holds, and tools/check_secure_layout.py checks each claim
-   * against the owner map. Each band spans loaded data and zero-init bss so
-   * one MPU region covers the whole trust unit. */
-  .vault_data : {
-    . = ALIGN(32);
-    _s_vault = .;
-    _s_keystore = .;
-    *nvm_store.o(.data .data.*)
-    *wt_hsm_vault.o(.data .data.*)
-    *wt_hsm_seal.o(.data .data.*)
-    *wt_hsm_lock.o(.data .data.*)
-    *vault_service.o(.data .data.*)
-    *hsm_flash_ctx.o(.data .data.*)
-    *wh_sec_wh_nvm.o(.data .data.*)
-    *wh_sec_wh_nvm_flash.o(.data .data.*)
-    *wh_sec_wh_flash_unit.o(.data .data.*)
-    *wh_sec_wh_lock.o(.data .data.*)
-    . = ALIGN(4);
-    _e_vault_data = .;
-  } > VAULTDATA AT > FLASH
-  _si_vault = LOADADDR(.vault_data);
-
-  .vault_bss (NOLOAD) : {
-    _s_vault_bss = .;
-    *nvm_store.o(.bss .bss.* COMMON)
-    *wt_hsm_vault.o(.bss .bss.* COMMON)
-    *wt_hsm_seal.o(.bss .bss.* COMMON)
-    *wt_hsm_lock.o(.bss .bss.* COMMON)
-    *vault_service.o(.bss .bss.* COMMON)
-    *hsm_flash_ctx.o(.bss .bss.* COMMON)
-    *wh_sec_wh_nvm.o(.bss .bss.* COMMON)
-    *wh_sec_wh_nvm_flash.o(.bss .bss.* COMMON)
-    *wh_sec_wh_flash_unit.o(.bss .bss.* COMMON)
-    *wh_sec_wh_lock.o(.bss .bss.* COMMON)
-    . = ALIGN(32);
-    _e_vault = .;
-  } > VAULTDATA
-
-  .attest_data : {
-    . = ALIGN(32);
-    _s_attest = .;
-    *attestation_service.o(.data .data.*)
-    *initial_attestation.o(.data .data.*)
-    *attestation_cose.o(.data .data.*)
-    *wolfcose*.o(.data .data.*)
-    . = ALIGN(4);
-    _e_attest_data = .;
-  } > ATTESTDATA AT > FLASH
-  _si_attest = LOADADDR(.attest_data);
-
-  .attest_bss (NOLOAD) : {
-    _s_attest_bss = .;
-    *attestation_service.o(.bss .bss.* COMMON)
-    *initial_attestation.o(.bss .bss.* COMMON)
-    *attestation_cose.o(.bss .bss.* COMMON)
-    *wolfcose*.o(.bss .bss.* COMMON)
-    . = ALIGN(32);
-    _e_attest = .;
-  } > ATTESTDATA
-
-  .hsm_data : {
-    . = ALIGN(32);
-    _s_hsm = .;
-    *wt_hsm.o(.data .data.*)
-    *hsm_relay_service.o(.data .data.*)
-    *nvm_client.o(.data .data.*)
-    *crypto_native.o(.data .data.*)
-    *keyvault.o(.data .data.*)
-    *native_wire.o(.data .data.*)
-    *wh_sec_*.o(.data .data.*)
-    *wc_sec_cryptocb.o(.data .data.*)
-    . = ALIGN(4);
-    _e_hsm_data = .;
-  } > HSMDATA AT > FLASH
-  _si_hsm = LOADADDR(.hsm_data);
-
-  .hsm_bss (NOLOAD) : {
-    _s_hsm_bss = .;
-    *wt_hsm.o(.bss .bss.* COMMON)
-    *hsm_relay_service.o(.bss .bss.* COMMON)
-    *nvm_client.o(.bss .bss.* COMMON)
-    *crypto_native.o(.bss .bss.* COMMON)
-    *keyvault.o(.bss .bss.* COMMON)
-    *native_wire.o(.bss .bss.* COMMON)
-    *wh_sec_*.o(.bss .bss.* COMMON)
-    *wc_sec_cryptocb.o(.bss .bss.* COMMON)
-    . = ALIGN(32);
-    _e_hsm = .;
-    _e_keystore = .;
-  } > HSMDATA
-
-  /* SERVICE_VNET data band: first-claim the vnet dataplane, service, and
-   * relay objects' RAM out of shared SPM .data/.bss so the unprivileged
-   * partition's MPU grant covers exactly its own state. Empty (zero-length
-   * region) outside CONFIG_VNET builds. */
-  .vnet_data : {
-    . = ALIGN(32);
-    _s_vnet = .;
-    *wt_sec_vnet_*.o(.data .data.*)
-    . = ALIGN(4);
-    _e_vnet_data = .;
-  } > VNETDATA AT > FLASH
-  _si_vnet = LOADADDR(.vnet_data);
-
-  .vnet_bss (NOLOAD) : {
-    _s_vnet_bss = .;
-    *wt_sec_vnet_*.o(.bss .bss.* COMMON)
-    . = ALIGN(32);
-    _e_vnet = .;
-  } > VNETDATA
+  INCLUDE secure_l3_bands.ld
 
   /* Linker-synthesized SG veneers (--cmse-implib) open the RAM code band: the
    * first 1 KiB is the SAU NSC window (WT_NSC_* in memory_map.h), padded so
@@ -319,54 +157,5 @@ SECTIONS {
     _ebss = .;
   } > RAM
 
-  .sp_stacks (NOLOAD) : {
-    KEEP(*(.sp_stacks*))
-  } > SPSTACKS
-
-  ASSERT(ORIGIN(VNETDATA) == (ORIGIN(RAM) + LENGTH(RAM)),
-         "vnet data band must sit directly above the secure RAM window")
-  ASSERT(ORIGIN(VAULTDATA) == (ORIGIN(VNETDATA) + LENGTH(VNETDATA)),
-         "vault data band must sit directly above the vnet data band")
-  ASSERT(_e_vnet <= (ORIGIN(VNETDATA) + LENGTH(VNETDATA)),
-         "vnet data band overflow")
-  ASSERT(ORIGIN(ATTESTDATA) == (ORIGIN(VAULTDATA) + LENGTH(VAULTDATA)),
-         "attestation data band must sit directly above the vault data band")
-  ASSERT(ORIGIN(HSMDATA) == (ORIGIN(ATTESTDATA) + LENGTH(ATTESTDATA)),
-         "crypto data band must sit directly above the attestation data band")
-  ASSERT(ORIGIN(FWUSTACK) == (ORIGIN(HSMDATA) + LENGTH(HSMDATA)),
-         "FWU stack must sit directly above the crypto data band")
-  /* Full band extents: Reset_Handler clears each band end to end before
-   * loading it, so no retained byte outlives a warm reset or a layout change. */
-  _wt_band_vault_base = ORIGIN(VAULTDATA);
-  _wt_band_vault_limit = ORIGIN(VAULTDATA) + LENGTH(VAULTDATA);
-  _wt_band_attest_base = ORIGIN(ATTESTDATA);
-  _wt_band_attest_limit = ORIGIN(ATTESTDATA) + LENGTH(ATTESTDATA);
-  _wt_band_hsm_base = ORIGIN(HSMDATA);
-  _wt_band_hsm_limit = ORIGIN(HSMDATA) + LENGTH(HSMDATA);
-  _wt_band_vnet_base = ORIGIN(VNETDATA);
-  _wt_band_vnet_limit = ORIGIN(VNETDATA) + LENGTH(VNETDATA);
-
-  ASSERT(_e_vault <= (ORIGIN(VAULTDATA) + LENGTH(VAULTDATA)),
-         "vault data band overflow")
-  ASSERT(_e_attest <= (ORIGIN(ATTESTDATA) + LENGTH(ATTESTDATA)),
-         "attestation data band overflow")
-  ASSERT(_e_hsm <= (ORIGIN(HSMDATA) + LENGTH(HSMDATA)),
-         "crypto data band overflow")
-  ASSERT(ORIGIN(PSSTACK) == (ORIGIN(FWUSTACK) + LENGTH(FWUSTACK)),
-         "PS stack must sit directly above the FWU stack")
-  ASSERT(ORIGIN(ITSSTACK) == (ORIGIN(PSSTACK) + LENGTH(PSSTACK)),
-         "ITS stack must sit directly above the PS stack")
-  ASSERT(ORIGIN(VAULTSTACK) == (ORIGIN(ITSSTACK) + LENGTH(ITSSTACK)),
-         "vault stack must sit directly above the ITS stack")
-  ASSERT(ORIGIN(CONFDATA) == (ORIGIN(VAULTSTACK) + LENGTH(VAULTSTACK)),
-         "conformance SP data must sit directly above the vault stack")
-  /* The top 1 KiB of CONFDATA holds the per-partition pseudo-MMIO holes
-   * (WT_CONF_SERVER/DRV_MMIO in memory_map.h); real data crossing into them
-   * would be carved out of other partitions' domains and fault at runtime. */
-  ASSERT(_econfbss <= (ORIGIN(CONFDATA) + 0x2C00),
-         "conformance data/bss overflows into the reserved MMIO holes")
-  ASSERT(ORIGIN(SPSTACKS) == (ORIGIN(CONFDATA) + LENGTH(CONFDATA)),
-         "SP secure stacks must sit directly above the conformance data window")
-  ASSERT(_ebss <= _sstack,
-         "secure .bss reaches the SPM main stack (WT_SPM_STACK_SIZE)")
+  INCLUDE secure_l3_tail.ld
 }
