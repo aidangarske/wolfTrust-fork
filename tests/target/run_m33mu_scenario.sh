@@ -129,6 +129,10 @@ else
   cd "$repo"
 fi
 
+if [ "$scenario" = "restartidle" ]; then
+  M33MU="$M33MU" bash tests/target/test_systick_idle.sh
+fi
+
 # --- wolfTrust dependencies + a clean secure build (drop any stale build/
 #     whose generated wolfhsm_cfg.h bakes in a host-absolute path). The guest
 #     CMake cache must go too: scenarios configure guest0_psa with different

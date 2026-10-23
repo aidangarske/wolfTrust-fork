@@ -284,15 +284,6 @@ void wt_arch_return_to_idle_thread(
         "b      wt_arch_return_to_secure_thread \n");
 }
 
-void wt_arch_wait_for_interrupt(void)
-{
-    /* No Non-secure context owns the hardware timer while idle. */
-    WT_SYST_NS_CSR = 0U;
-    WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR;
-    g_active_guest = UINT32_MAX;
-    __asm volatile("dsb 0xF\n wfi\n isb 0xF" ::: "memory");
-}
-
 static void wt_exception_return_ns_msp(void) __attribute__((naked, noreturn));
 
 static void wt_exception_return_ns_msp(void)
@@ -506,6 +497,18 @@ static void wt_virtual_systick_save_departing(void)
 
     WT_SYST_NS_CSR = 0u;
     WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR;
+}
+
+void wt_arch_wait_for_interrupt(void)
+{
+    uint32_t primask;
+
+    /* Restart ticks must not interleave snapshot and ownership release. */
+    __asm volatile("mrs %0, primask\n cpsid i" : "=r"(primask) :: "memory");
+    wt_virtual_systick_save_departing();
+    g_active_guest = UINT32_MAX;
+    __asm volatile("dsb 0xF\n wfi\n msr primask, %0\n isb 0xF"
+                   :: "r"(primask) : "memory");
 }
 
 static void wt_virtual_systick_account_elapsed(wt_virtual_systick_t* systick)

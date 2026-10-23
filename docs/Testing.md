@@ -128,6 +128,10 @@ firmware update, manifest rejection, GTZC behavior, and VNET paths.
 `restartidle` runs the STM32H563 recovery check with `WT_MAX_GUESTS=1`. It
 requires every allowed relaunch and the final terminal verdict. The full tier
 runs it with both crypto engines.
+It also runs `tests/target/test_systick_idle.sh`, which executes the production
+Armv8-M timer code with modeled Non-secure timer registers and real Secure
+SysTick interrupts. The check covers timer configuration and pending-tick
+preservation across idle, repeated idle, resume, and interrupt ordering.
 
 Five scenarios cover processor-state isolation, and the emulator proves less
 than their names suggest:
