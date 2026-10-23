@@ -94,8 +94,8 @@ Every port of an architecture gets level 3 from `port/common/<arch>/`
 instead of writing it again. For Armv8-M that layer provides:
 
 - `l3_layout.h`: the per-partition keystore bands, partition stacks, the
-  conformance data window and the VNET band, all placed at fixed offsets
-  from `WT_RAM_S_BASE`;
+  conformance data window and the VNET band, stacked upward from
+  `WT_RAM_S_BASE`;
 - `secure_l3_memory.ld`, `secure_l3_symbols.ld`, `secure_l3_bands.ld` and
   `secure_l3_tail.ld`: the matching linker regions, stack symbols, band
   output sections and layout ASSERTs; and
@@ -105,10 +105,12 @@ instead of writing it again. For Armv8-M that layer provides:
 
 A port supplies:
 
-- in `memory_map.h`, a literal `WT_RAM_S_BASE` and `WT_RAM_S_SIZE` (at
-  least the 480 KiB the layout uses), then `#include
-  "../common/armv8m/l3_layout.h"`; define `WT_RAMFUNC_BASE` and
-  `WT_RAMFUNC_SIZE` if the SPM runs code from RAM;
+- in `memory_map.h`, a literal `WT_RAM_S_BASE` and `WT_RAM_S_SIZE`, then
+  `#include "../common/armv8m/l3_layout.h"`. The layout needs
+  `WT_L3_SPM_RAM_SIZE + WT_SP_HSM_DATA_SIZE + 102 KiB`; the defaults (308 KiB
+  of SPM RAM and a 70 KiB crypto band) total 480 KiB, and a part with less
+  SRAM defines smaller values before the include. Define `WT_RAMFUNC_BASE`
+  and `WT_RAMFUNC_SIZE` if the SPM runs code from RAM;
 - `l3_port.h`, naming a Secure peripheral only the SPM drives as
   `WT_L3_SPM_PERIPHERAL_BASE`;
 - a `secure.ld` that INCLUDEs the four fragments and keeps only its board
@@ -118,8 +120,9 @@ A port supplies:
   at boot on a mismatch; and
 - owner lines in `tools/secure_owners.txt` for every object it adds.
 
-The build reads `WT_RAM_S_BASE` for the linker and derives the post-link band
-check from `memory_map.h`, so no band address is written twice.
+The build reads `WT_RAM_S_BASE` and the band placement for the linker and
+derives the post-link band check from `memory_map.h`, so no band address is
+written twice.
 
 Level 3 is claimed for a port only when its full M33MU tier runs every
 scenario in `L3_REQUIRED` (`tests/target/lib/scenario_matrix.py`). A scenario

@@ -19,23 +19,25 @@
  */
 
 /* Isolation level 3 secure RAM regions, INCLUDEd inside a port's MEMORY
- * block. WT_RAM_S_ORIGIN is WT_RAM_S_BASE from the port's memory_map.h;
- * every offset mirrors port/common/armv8m/l3_layout.h. */
+ * block. WT_RAM_S_ORIGIN and the WT_L3_* symbols come from the port's
+ * memory_map.h through port/common/armv8m/l3_layout.h. */
 
   /* General SPM RAM up to the keystore bands, less the VNET band when built. */
-  RAM   (rwx): ORIGIN = WT_RAM_S_ORIGIN, LENGTH = 308K - WT_VNET_DATA_LENGTH
+  RAM   (rwx): ORIGIN = WT_RAM_S_ORIGIN,
+               LENGTH = WT_L3_KEYSTORE_ORIGIN - WT_RAM_S_ORIGIN - WT_VNET_DATA_LENGTH
   /* SERVICE_VNET data band; zero length outside CONFIG_VNET builds. */
-  VNETDATA (rw): ORIGIN = WT_RAM_S_ORIGIN + 308K - WT_VNET_DATA_LENGTH,
+  VNETDATA (rw): ORIGIN = WT_L3_KEYSTORE_ORIGIN - WT_VNET_DATA_LENGTH,
                  LENGTH = WT_VNET_DATA_LENGTH
   /* Keystore bands: the vault, attestation and crypto partitions each own one. */
-  VAULTDATA (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x4D000, LENGTH = 8K
-  ATTESTDATA (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x4F000, LENGTH = 2K
-  HSMDATA (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x4F800, LENGTH = 70K
+  VAULTDATA (rw): ORIGIN = WT_L3_KEYSTORE_ORIGIN, LENGTH = 8K
+  ATTESTDATA (rw): ORIGIN = WT_L3_KEYSTORE_ORIGIN + 8K, LENGTH = 2K
+  HSMDATA (rw): ORIGIN = WT_L3_KEYSTORE_ORIGIN + 10K,
+                LENGTH = WT_L3_HSM_DATA_LENGTH
   /* Partition execution stacks, each also the partition's MPU RW resource. */
-  FWUSTACK (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x61000, LENGTH = 8K
-  PSSTACK (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x63000, LENGTH = 8K
-  ITSSTACK (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x65000, LENGTH = 8K
-  VAULTSTACK (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x67000, LENGTH = 16K
+  FWUSTACK (rw): ORIGIN = WT_L3_STACKS_ORIGIN, LENGTH = 8K
+  PSSTACK (rw): ORIGIN = WT_L3_STACKS_ORIGIN + 8K, LENGTH = 8K
+  ITSSTACK (rw): ORIGIN = WT_L3_STACKS_ORIGIN + 16K, LENGTH = 8K
+  VAULTSTACK (rw): ORIGIN = WT_L3_STACKS_ORIGIN + 24K, LENGTH = 16K
   /* Conformance partition data; CONFIG_VNET builds use it as the VNET stack. */
-  CONFDATA (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x6B000, LENGTH = 12K
-  SPSTACKS (rw): ORIGIN = WT_RAM_S_ORIGIN + 0x6E000, LENGTH = 40K
+  CONFDATA (rw): ORIGIN = WT_L3_STACKS_ORIGIN + 40K, LENGTH = 12K
+  SPSTACKS (rw): ORIGIN = WT_L3_STACKS_ORIGIN + 52K, LENGTH = 40K

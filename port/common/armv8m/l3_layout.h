@@ -33,13 +33,24 @@
 #error "define WT_RAM_S_BASE and WT_RAM_S_SIZE before including l3_layout.h"
 #endif
 
+/* The bands are stacked upward from WT_RAM_S_BASE in the order below. A port
+ * short of SRAM overrides these two sizes in memory_map.h; the defaults give
+ * the H5 and RT700 placement. */
+#ifndef WT_L3_SPM_RAM_SIZE
+#define WT_L3_SPM_RAM_SIZE       0x0004D000u
+#endif
+#ifndef WT_SP_HSM_DATA_SIZE
+#define WT_SP_HSM_DATA_SIZE      0x00011800u
+#endif
+
 /* Per-partition secure stacks at the top of the window; slots 2-4 host the
  * Arm conformance partitions (SERVER/DRIVER/CLIENT). */
 #define WT_SP_SECURE_STACK_SIZE  0x00002000u
 #define WT_SP_SECURE_STACK_COUNT 5u
 #define WT_SP_SECURE_RAM_SIZE \
     (WT_SP_SECURE_STACK_SIZE * WT_SP_SECURE_STACK_COUNT)
-#define WT_SP_SECURE_RAM_BASE    (WT_RAM_S_BASE + 0x0006E000u)
+#define WT_SP_SECURE_RAM_BASE \
+    (WT_CONF_SP_DATA_BASE + WT_CONF_SP_DATA_SIZE)
 #define WT_SP_SECURE_RAM_END \
     (WT_SP_SECURE_RAM_BASE + WT_SP_SECURE_RAM_SIZE)
 #define WT_SP_CRYPTO_STACK_BASE \
@@ -54,26 +65,29 @@
     (WT_SP_SECURE_RAM_BASE + 4u * WT_SP_SECURE_STACK_SIZE)
 
 /* Conformance partition .data/.bss window, kept outside SPM RAM. */
-#define WT_CONF_SP_DATA_BASE     (WT_RAM_S_BASE + 0x0006B000u)
+#define WT_CONF_SP_DATA_BASE \
+    (WT_SP_VAULT_STACK_BASE + WT_SP_VAULT_STACK_SIZE)
 #define WT_CONF_SP_DATA_SIZE     0x00003000u
 
 /* 16 KiB: ECC verify's point table overflows an 8 KiB stack (PSPLIM STKOF). */
-#define WT_SP_VAULT_STACK_BASE   (WT_RAM_S_BASE + 0x00067000u)
+#define WT_SP_VAULT_STACK_BASE \
+    (WT_SP_ITS_STACK_BASE + WT_SP_ITS_STACK_SIZE)
 #define WT_SP_VAULT_STACK_SIZE   0x00004000u
 
-#define WT_SP_ITS_STACK_BASE     (WT_RAM_S_BASE + 0x00065000u)
+#define WT_SP_ITS_STACK_BASE     (WT_SP_PS_STACK_BASE + WT_SP_PS_STACK_SIZE)
 #define WT_SP_ITS_STACK_SIZE     WT_SP_SECURE_STACK_SIZE
 
-#define WT_SP_PS_STACK_BASE      (WT_RAM_S_BASE + 0x00063000u)
+#define WT_SP_PS_STACK_BASE      (WT_SP_FWU_STACK_BASE + WT_SP_FWU_STACK_SIZE)
 #define WT_SP_PS_STACK_SIZE      WT_SP_SECURE_STACK_SIZE
 
-#define WT_SP_FWU_STACK_BASE     (WT_RAM_S_BASE + 0x00061000u)
+#define WT_SP_FWU_STACK_BASE     (WT_KEYSTORE_BASE + WT_KEYSTORE_SIZE)
 #define WT_SP_FWU_STACK_SIZE     WT_SP_SECURE_STACK_SIZE
 
 /* Keystore envelope: the vault, attestation and crypto partitions each own
  * one private writable band, so no two partitions share a writable byte. */
-#define WT_KEYSTORE_BASE         (WT_RAM_S_BASE + 0x0004D000u)
-#define WT_KEYSTORE_SIZE         0x00014000u
+#define WT_KEYSTORE_BASE         (WT_RAM_S_BASE + WT_L3_SPM_RAM_SIZE)
+#define WT_KEYSTORE_SIZE \
+    (WT_SP_VAULT_DATA_SIZE + WT_SP_ATTEST_DATA_SIZE + WT_SP_HSM_DATA_SIZE)
 #define WT_SP_VAULT_DATA_BASE    WT_KEYSTORE_BASE
 #define WT_SP_VAULT_DATA_SIZE    0x00002000u
 #define WT_SP_ATTEST_DATA_BASE \
@@ -81,15 +95,15 @@
 #define WT_SP_ATTEST_DATA_SIZE   0x00000800u
 #define WT_SP_HSM_DATA_BASE \
     (WT_SP_ATTEST_DATA_BASE + WT_SP_ATTEST_DATA_SIZE)
-#define WT_SP_HSM_DATA_SIZE      0x00011800u
 
 /* CONFIG_VNET and WT_CONFORMANCE are exclusive, so the VNET stack reuses the
  * conformance data window. */
 #define WT_SP_VNET_STACK_BASE    WT_CONF_SP_DATA_BASE
 #define WT_SP_VNET_STACK_SIZE    WT_SP_SECURE_STACK_SIZE
 
-#define WT_VNET_DATA_BASE        (WT_RAM_S_BASE + 0x00048000u)
+/* The top of the SPM RAM window, directly below the keystore. */
 #define WT_VNET_DATA_SIZE        0x00005000u
+#define WT_VNET_DATA_BASE        (WT_KEYSTORE_BASE - WT_VNET_DATA_SIZE)
 
 /* Per-partition pseudo-MMIO holes at the top of the conformance window; must
  * match SERVER/DRIVER_PARTITION_MMIO_0_* in the port's pal_config.h. */

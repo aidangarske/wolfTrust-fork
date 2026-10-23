@@ -26,6 +26,9 @@ SHELL_MACROS = BAND_MACROS + (
     "WT_SP_VAULT_STACK_BASE", "WT_SP_VAULT_STACK_SIZE",
     "WT_L3_SPM_PERIPHERAL_BASE",
 )
+LINK_MACROS = (
+    "WT_KEYSTORE_BASE", "WT_SP_HSM_DATA_SIZE", "WT_SP_FWU_STACK_BASE",
+)
 INTEGER = re.compile(r"\b(0[xX][0-9a-fA-F]+|[0-9]+)[uUlL]*\b")
 EXPRESSION = re.compile(r"^[0-9a-fA-FxX+\-*() ]+$")
 
@@ -96,16 +99,30 @@ def shell_vars(v):
     return "\n".join("%s=0x%08x" % pair for pair in pairs)
 
 
+def link_args(v):
+    pairs = (
+        ("WT_L3_KEYSTORE_ORIGIN", v["WT_KEYSTORE_BASE"]),
+        ("WT_L3_HSM_DATA_LENGTH", v["WT_SP_HSM_DATA_SIZE"]),
+        ("WT_L3_STACKS_ORIGIN", v["WT_SP_FWU_STACK_BASE"]),
+    )
+    return " ".join("-Wl,--defsym=%s=0x%08X" % pair for pair in pairs)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cc", default="arm-none-eabi-gcc")
     parser.add_argument("-I", dest="includes", action="append", default=[])
     parser.add_argument("--shell", action="store_true",
                         help="print the scenario checks' layout variables")
+    parser.add_argument("--link", action="store_true",
+                        help="print the linker symbols placing the bands")
     parser.add_argument("memory_map")
     args = parser.parse_args()
 
-    if args.shell:
+    if args.link:
+        print(link_args(evaluate(args.cc, args.memory_map, LINK_MACROS,
+                                 args.includes)))
+    elif args.shell:
         print(shell_vars(evaluate(args.cc, args.memory_map, SHELL_MACROS,
                                   args.includes)))
     else:

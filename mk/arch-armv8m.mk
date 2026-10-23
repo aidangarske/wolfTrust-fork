@@ -82,6 +82,10 @@ $(error $(PORT_DIR)/memory_map.h has no literal WT_RAM_S_BASE)
 endif
 TARGET_LDFLAGS += -Wl,-L$(PORT_COMMON_DIR) \
     -Wl,--defsym=WT_RAM_S_ORIGIN=$(WT_RAM_S_ORIGIN)
+# Band placement for the linker fragments, read from memory_map.h at link time.
+WT_L3_LINK_ARGS = $(or $(strip $(shell python3 $(ROOT)/tools/l3_layout_args.py \
+    --link --cc $(TOOLPREFIX)gcc $(PORT_DIR)/memory_map.h)),$(error \
+    cannot read the level 3 band placement from $(PORT_DIR)/memory_map.h))
 # Post-link band check inputs, read from the port's memory_map.h at link time;
 # an unreadable layout stops the link rather than checking the default bands.
 WT_L3_BAND_ARGS = $(shell python3 $(ROOT)/tools/l3_layout_args.py \
@@ -94,7 +98,8 @@ endif
 # CMSE import library for the Non-secure guests, produced by the secure link.
 SECURE_CMSE_IMPLIB := $(BUILD_DIR)/secure_cmse_implib.o
 ARCH_LINK_OUTPUTS := $(SECURE_CMSE_IMPLIB)
-ARCH_LDFLAGS := -Wl,--cmse-implib -Wl,--out-implib=$(SECURE_CMSE_IMPLIB)
+ARCH_LDFLAGS = -Wl,--cmse-implib -Wl,--out-implib=$(SECURE_CMSE_IMPLIB) \
+    $(WT_L3_LINK_ARGS)
 
 # A changed post-link checker must relink so the image is checked again.
 $(BUILD_DIR)/wolftrust.elf $(ARCH_LINK_OUTPUTS): \
