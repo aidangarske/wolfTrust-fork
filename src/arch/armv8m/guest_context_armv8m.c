@@ -272,6 +272,27 @@ void wt_arch_return_to_secure_thread(
         "b      wt_platform_panic            \n");
 }
 
+/* Idle has no suspended Secure caller; reuse the sealed main stack. */
+__attribute__((naked, noreturn))
+void wt_arch_return_to_idle_thread(
+    void (*entry)(void) __attribute__((noreturn, unused)))
+{
+    __asm volatile(
+        "ldr    r1, =_estack                  \n"
+        "sub    r1, r1, #8                   \n"
+        "mov    sp, r1                       \n"
+        "b      wt_arch_return_to_secure_thread \n");
+}
+
+void wt_arch_wait_for_interrupt(void)
+{
+    /* No Non-secure context owns the hardware timer while idle. */
+    WT_SYST_NS_CSR = 0U;
+    WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR;
+    g_active_guest = UINT32_MAX;
+    __asm volatile("dsb 0xF\n wfi\n isb 0xF" ::: "memory");
+}
+
 static void wt_exception_return_ns_msp(void) __attribute__((naked, noreturn));
 
 static void wt_exception_return_ns_msp(void)

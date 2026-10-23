@@ -97,6 +97,10 @@ for restart and reconstructs the initial context. The image is verified again
 before the guest runs; failed verification or an exhausted restart budget leaves
 the guest quarantined.
 
+Pending recovery keeps the Secure timer running even when no peer is runnable.
+The monitor leaves the fault handler and waits in Secure Thread mode; a fully
+faulted or stopped guest set remains terminal.
+
 ## Secure Partition isolation
 
 Every shipped service loop runs as a scheduled unprivileged Secure coroutine.

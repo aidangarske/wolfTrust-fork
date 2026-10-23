@@ -64,6 +64,10 @@ bool wt_arch_trap_from_guest_thread(void);
 bool wt_arch_trap_from_secure_thread(void);
 void wt_arch_return_to_secure_thread(
     void (*entry)(void) __attribute__((noreturn)));
+/* Discard the departing handler stack before entering the idle scheduler. */
+void wt_arch_return_to_idle_thread(
+    void (*entry)(void) __attribute__((noreturn))) __attribute__((noreturn));
+void wt_arch_wait_for_interrupt(void);
 
 uintptr_t wt_arch_read_fault_address(void);
 

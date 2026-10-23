@@ -55,7 +55,7 @@ PORTS = {
             ("positive", "Positive lifecycle"),
             ("bothpsa", "Both-OS PSA parity (Zephyr + FreeRTOS)"),
             ("bothiso", "Both-OS FF-M isolation negatives"),
-            ("restart", "Guest restart recovery"),
+            ("restart restartidle", "Guest restart recovery and idle backoff"),
             ("crossdomain", "Cross-domain isolation (L3)"),
             ("keystoreneg", "Keystore-band isolation (L3)"),
             ("deputyneg", "Keystore-flash privileged-deputy refused (L3)"),
