@@ -272,6 +272,18 @@ void wt_arch_return_to_secure_thread(
         "b      wt_platform_panic            \n");
 }
 
+/* Idle has no suspended Secure caller; reuse the sealed main stack. */
+__attribute__((naked, noreturn))
+void wt_arch_return_to_idle_thread(
+    void (*entry)(void) __attribute__((noreturn, unused)))
+{
+    __asm volatile(
+        "ldr    r1, =_estack                  \n"
+        "sub    r1, r1, #8                   \n"
+        "mov    sp, r1                       \n"
+        "b      wt_arch_return_to_secure_thread \n");
+}
+
 static void wt_exception_return_ns_msp(void) __attribute__((naked, noreturn));
 
 static void wt_exception_return_ns_msp(void)
@@ -485,6 +497,18 @@ static void wt_virtual_systick_save_departing(void)
 
     WT_SYST_NS_CSR = 0u;
     WT_SCB_ICSR_NS = WT_SCB_ICSR_PENDSTCLR;
+}
+
+void wt_arch_wait_for_interrupt(void)
+{
+    uint32_t primask;
+
+    /* Restart ticks must not interleave snapshot and ownership release. */
+    __asm volatile("mrs %0, primask\n cpsid i" : "=r"(primask) :: "memory");
+    wt_virtual_systick_save_departing();
+    g_active_guest = UINT32_MAX;
+    __asm volatile("dsb 0xF\n wfi\n msr primask, %0\n isb 0xF"
+                   :: "r"(primask) : "memory");
 }
 
 static void wt_virtual_systick_account_elapsed(wt_virtual_systick_t* systick)

@@ -441,6 +441,19 @@ static void wt_restart_guest(wt_guest_id_t guest_id, wt_fault_reason_t reason)
 
 }
 
+static bool wt_all_guests_terminal(void)
+{
+    size_t i;
+
+    for (i = 0U; i < g_scheduler.guest_count; ++i) {
+        if (g_scheduler.runtime[i].state != WT_GUEST_FAULTED &&
+            g_scheduler.runtime[i].state != WT_GUEST_STOPPED) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void wt_schedule_next_guest(void)
 {
     wt_guest_id_t next_guest;
@@ -456,7 +469,15 @@ static void wt_schedule_next_guest(void)
                                            &rep);
 
         if (next_guest >= g_scheduler.guest_count) {
-            wt_platform_all_guests_faulted();
+            if (wt_all_guests_terminal()) {
+                wt_platform_all_guests_faulted();
+            }
+            /* Backoff must run after the fault handler has unwound. */
+            if (wt_arch_in_handler_mode()) {
+                wt_arch_return_to_idle_thread(wt_schedule_next_guest);
+            }
+            wt_arch_wait_for_interrupt();
+            continue;
         }
 
         wt_arch_quarantine_pending_irqs(&g_scheduler.configs[next_guest].irq_mask);

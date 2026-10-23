@@ -102,6 +102,9 @@ export WT_GUEST_RAM_SIZE=0x00010000
 export WT_GUEST1_RAM_BASE=0x20010000
 export WT_ZEPHYR_DTC_OVERLAY_FILE=boards/wolfboot-stm32h563.overlay
 export WT_MAX_GUESTS=2
+if [ "$scenario" = "restartidle" ]; then
+  export WT_MAX_GUESTS=1
+fi
 export ZEPHYR_BOARD=nucleo_h563zi/stm32h563xx/ns
 WOLFBOOT_REF=d85fa9dbdf6c36f47b7e96eba5c9df750ad3c963
 M33MU_REF=f3c03675260264cdec815adebe4b020bb6fe57b8
@@ -124,6 +127,10 @@ else
   cmake --build build --target m33mu -j"$(nproc)"
   M33MU=/tmp/m33mu_src/build/m33mu
   cd "$repo"
+fi
+
+if [ "$scenario" = "restartidle" ]; then
+  M33MU="$M33MU" bash tests/target/test_systick_idle.sh
 fi
 
 # --- wolfTrust dependencies + a clean secure build (drop any stale build/
@@ -169,7 +176,7 @@ cp "$repo/build/wolftrust.elf" "$repo/build/wolftrust-signed.elf"
 # --- Guests. The restart scenario injects a Non-secure fault probe in the PSA
 #     guest; the others build it unmodified. ---
 guest_flags=""
-if [ "$scenario" = "restart" ]; then
+if [ "$scenario" = "restart" ] || [ "$scenario" = "restartidle" ]; then
   guest_flags="WT_GUEST_FAULT_PROBE=1"
 elif [ "$scenario" = "confboot" ]; then
   guest_flags="WT_RUN_CONFORMANCE=1"
@@ -279,6 +286,10 @@ if [ "$scenario" = "vnet" ] || [ "$scenario" = "vnetneg" ]; then
 fi
 if [ "$scenario" = "restart" ]; then
   quit_flag=""
+  timeout_s=40
+elif [ "$scenario" = "restartidle" ]; then
+  quit_flag=""
+  expect_bkpt=0x7d
   timeout_s=40
 elif [ "$scenario" = "hsmfaultneg" ]; then
   quit_flag=""
@@ -798,12 +809,18 @@ case "$scenario" in
       "wolfTrust FF-M conformance: val_entry start"
     echo "PASS: target/vaultrecoversec"
     ;;
-  restart)
+  restart|restartidle)
     expected=$((RESTART_LIMIT + 1))
     banners=$(grep -c "guest0_psa alive" "$log" || true)
     if [ "$banners" -eq "$expected" ]; then
       check_pass "guest restarted $RESTART_LIMIT times then FAULTED (banners=$banners, expect $expected)"
-      echo "PASS: target/restart"
+      if [ "$scenario" = "restartidle" ]; then
+        if [ "$emu_status" -ne 0 ]; then
+          check_fail "terminal recovery verdict" "emulator status $emu_status"
+        fi
+        expect "terminal recovery verdict" "[EXPECT BKPT] Success"
+      fi
+      echo "PASS: target/$scenario"
       exit 0
     fi
     check_fail "guest restart count" "saw $banners banners, expected $expected"

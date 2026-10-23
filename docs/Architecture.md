@@ -153,6 +153,10 @@ clears restart-marked RAM and restores a clean context after a bounded delay; if
 the budget is exhausted, the guest remains faulted. Runtime remeasurement can
 also quarantine a guest without entering it.
 
+When no guest is runnable but recovery is pending, the monitor idles in
+Secure Thread mode so Secure SysTick can finish the backoff. It halts only
+when every guest is faulted or stopped.
+
 The PSA lifecycle value comes from the authenticated boot handoff. Scheduled
 Secure Partitions can read it through `psa_rot_lifecycle_state()`; there is no
 Non-secure client adapter or CMSE veneer for that function. The value also controls
