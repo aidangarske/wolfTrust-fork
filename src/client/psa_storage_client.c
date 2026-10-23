@@ -60,6 +60,10 @@ typedef struct {
  * dev_apis Storage suite stays well under this (UID_MAX_SIZE 512). */
 #define WT_NS_STORAGE_MAX 512U
 
+/* One psa_call copies at most this many bytes in and out together
+ * (WT_FFM_TRANSFER_BYTES on the Secure side). */
+#define WT_NS_STORAGE_TRANSFER 1024U
+
 /* Map the SERVICE reply (a PSA status) to the ITS/PS return type. Both PSA
  * storage APIs return psa_status_t, so the values pass through unchanged. */
 static psa_status_t wt_storage_ns_write(uint32_t sid, int32_t op, uint64_t uid,
@@ -119,6 +123,13 @@ static psa_status_t wt_storage_ns_read(uint32_t sid, int32_t op, uint64_t uid,
      * where the raw FF-M vector check would classify a programmer error). */
     if (out_len == NULL || (out == NULL && out_cap != 0U)) {
         return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    /* The transfer cap below hides the full range from the SPM write check. */
+    if (out_cap > (size_t)(SIZE_MAX - (uintptr_t)out)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (out_cap > WT_NS_STORAGE_TRANSFER - sizeof(hdr)) {
+        out_cap = WT_NS_STORAGE_TRANSFER - sizeof(hdr);
     }
     hdr.uid = uid;
     hdr.flags = 0U;

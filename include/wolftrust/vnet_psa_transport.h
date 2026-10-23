@@ -29,7 +29,10 @@
  * operation crosses to the secure side as one synchronous psa_call to
  * SERVICE_VNET - no direct-CMSE veneer. Returns 0 on success or the
  * secure side's WT_VNET_E_* refusal unchanged; RX_FETCH returns the
- * received frame length, WT_VNET_E_EMPTY when nothing is queued. */
+ * received frame length, WT_VNET_E_EMPTY when nothing is queued. After a
+ * SERVICE_VNET restart a context re-registers its port and MAC on its next
+ * TX or RX_FETCH; frames sent to a port before its guest re-registers are
+ * dropped, so a receiver must keep polling RX_FETCH. */
 
 typedef struct wt_vnet_psa_ctx {
     int32_t handle;
@@ -37,6 +40,7 @@ typedef struct wt_vnet_psa_ctx {
     uint32_t version;
     uint8_t mac[6];
     uint8_t mac_set;
+    uint8_t active;
 } wt_vnet_psa_ctx_t;
 
 int wt_vnet_psa_open(wt_vnet_psa_ctx_t* ctx, uint32_t sid, uint32_t version,

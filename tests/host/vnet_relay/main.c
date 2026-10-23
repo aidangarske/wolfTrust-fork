@@ -166,9 +166,23 @@ static vnet_rx_desc_t   g_ring_storage[TEST_NVM][8];
 static vnet_rx_desc_t*  g_rings[TEST_NVM];
 static vnet_switch_t    g_switch;
 
+static uint32_t g_test_tick = 42U;
+
 static uint32_t test_tick(void)
 {
-    return 42U;
+    return g_test_tick;
+}
+
+/* Stamps the scheduler tick on every gate return, as the target SVC gate
+ * does, so the relay ages frames on its production clock. */
+static int test_ticking_transport(wt_ffm_runtime_t* runtime,
+                                  wt_spm_call_t* call)
+{
+    int ret;
+
+    ret = wt_spm_transport_direct(runtime, call);
+    call->ret_tick = g_test_tick;
+    return ret;
 }
 
 /* ---- manifest fixture: the VNET partition as production declares it,
@@ -233,6 +247,19 @@ static void build_frame(uint8_t* f, const uint8_t* dst, const uint8_t* src,
     f[12] = 0x08U;
     f[13] = 0x00U;
     memcpy(&f[14], payload, payload_len);
+}
+
+/* A SERVICE_VNET restart as production performs it: every connection to the
+ * partition drops and the switch returns to its boot state. */
+static int test_vnet_restart(void)
+{
+    if (wt_ffm_partition_restarted(wt_ffm_boot_runtime_mut(),
+                                   PARTITION_VNET_ID,
+                                   PSA_ERROR_COMMUNICATION_FAILURE) < 0) {
+        return -1;
+    }
+    return vnet_switch_init(&g_switch, g_vnics, TEST_NVM, g_frames, 8U,
+                            g_fdb, 16U, g_rings, 8U, false);
 }
 
 int main(void)
@@ -480,9 +507,103 @@ int main(void)
     n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
     check(n == WT_VNET_E_EMPTY,
           "WT-FFM-0056 client transport surfaces EMPTY unchanged");
+
+    /* Idle client connections across a SERVICE_VNET restart, which clears
+     * every port and MAC: each endpoint re-registers on its next operation. */
+    g_active_client = TEST_GUEST0;
+    check(wt_vnet_psa_set_mac(&c0, mac0) == 0,
+          "WT-FFM-0056 client transport guest0 binds its MAC");
+    g_active_client = TEST_GUEST1;
+    check(wt_vnet_psa_set_mac(&c1, mac1) == 0,
+          "WT-FFM-0056 client transport guest1 binds its MAC");
+
+    check(test_vnet_restart() == WT_VNET_OK,
+          "WT-FFM-0056 SERVICE_VNET restarts with idle client connections");
+    g_active_client = TEST_GUEST0;
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) ==
+              WT_VNET_E_DROPPED_UNKNOWN,
+          "WT-FFM-0056 TX to a peer that has not re-registered is dropped");
+    g_active_client = TEST_GUEST1;
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == WT_VNET_E_EMPTY,
+          "WT-FFM-0056 RX_FETCH re-registers the receiver after a restart");
+    g_active_client = TEST_GUEST0;
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == 0,
+          "WT-FFM-0056 TX is delivered once both endpoints re-register");
+    g_active_client = TEST_GUEST1;
+    memset(rx_buf, 0, sizeof(rx_buf));
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == (int)sizeof(frame) &&
+              memcmp(rx_buf, frame, sizeof(frame)) == 0,
+          "WT-FFM-0056 client transport RX_FETCH recovers after a sender-first "
+          "restart");
+
+    check(test_vnet_restart() == WT_VNET_OK,
+          "WT-FFM-0056 SERVICE_VNET restarts again");
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == WT_VNET_E_EMPTY,
+          "WT-FFM-0056 the receiver re-registers first");
+    g_active_client = TEST_GUEST0;
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == 0,
+          "WT-FFM-0056 TX re-registers the sender and is delivered");
+    g_active_client = TEST_GUEST1;
+    memset(rx_buf, 0, sizeof(rx_buf));
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == (int)sizeof(frame) &&
+              memcmp(rx_buf, frame, sizeof(frame)) == 0,
+          "WT-FFM-0056 client transport RX_FETCH recovers after a "
+          "receiver-first restart");
+
+    /* A receiver that stops draining holds the shared frame pool only until
+     * its queued frames age out. */
+    wt_vnet_relay_set_tick(NULL);
+    wt_vnet_relay_set_transport(test_ticking_transport);
+    g_active_client = TEST_GUEST0;
+    for (i = 0U; i < 8U; i++) {
+        frame[14] = (uint8_t)i;
+        check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == 0,
+              "SEC TX to a non-draining receiver is queued");
+    }
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == WT_VNET_E_POOL_FULL,
+          "SEC TX beyond the frame pool is refused while frames are fresh");
+    g_test_tick += WT_VNET_TIMEOUT_TICKS;
+    frame[14] = 0xA5U;
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == 0,
+          "SEC TX succeeds once the undrained frames have expired");
+    g_active_client = TEST_GUEST1;
+    memset(rx_buf, 0, sizeof(rx_buf));
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == (int)sizeof(frame) &&
+              memcmp(rx_buf, frame, sizeof(frame)) == 0,
+          "SEC the receiver sees only the frame queued after expiry");
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == WT_VNET_E_EMPTY,
+          "SEC expired frames are gone from the receive queue");
+
+    /* Below pool pressure an aged frame still reaches a slow receiver. */
+    g_active_client = TEST_GUEST0;
+    frame[14] = 0x11U;
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == 0,
+          "SEC TX queues a frame for a slow receiver");
+    g_test_tick += WT_VNET_TIMEOUT_TICKS;
+    frame[14] = 0x22U;
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) == 0,
+          "SEC TX past the timeout with free pool slots is queued");
+    g_active_client = TEST_GUEST1;
+    memset(rx_buf, 0, sizeof(rx_buf));
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == (int)sizeof(frame) && rx_buf[14] == 0x11U,
+          "SEC an aged frame is kept while the pool has free slots");
+    memset(rx_buf, 0, sizeof(rx_buf));
+    n = wt_vnet_psa_rx_fetch(&c1, &meta, rx_buf, sizeof(rx_buf));
+    check(n == (int)sizeof(frame) && rx_buf[14] == 0x22U,
+          "SEC the newer frame follows the aged one");
     wt_vnet_psa_close(&c1);
     g_active_client = TEST_GUEST0;
     wt_vnet_psa_close(&c0);
+    check(wt_vnet_psa_tx(&c0, frame, sizeof(frame)) != 0 &&
+              c0.handle == (int32_t)PSA_NULL_HANDLE,
+          "WT-FFM-0056 client transport stays closed after close");
 
     if (g_failures == 0) {
         printf("PASS: vnet_relay (SERVICE_VNET mediated switch dispatch)\n");
