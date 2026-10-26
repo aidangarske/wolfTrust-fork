@@ -86,10 +86,14 @@ _wt_part_stacks_base = ORIGIN(FWUSTACK);
 _wt_part_stacks_limit = ORIGIN(VAULTSTACK) + LENGTH(VAULTSTACK);
 _wt_sp_stacks_base = ORIGIN(SPSTACKS);
 _wt_sp_stacks_limit = ORIGIN(SPSTACKS) + LENGTH(SPSTACKS);
-_wt_tpm_stack_base = ORIGIN(CONFDATA);
-_wt_tpm_stack_limit = ORIGIN(TPMDATA);
-_wt_pkcs11_stack_base = ORIGIN(CONFDATA);
-_wt_pkcs11_stack_limit = ORIGIN(TPMDATA);
+_wt_tpm_stack_base = ORIGIN(VNETDATA) +
+    ((SIZEOF(.tpm_data) + SIZEOF(.tpm_bss)) != 0 ? 48K : 0);
+_wt_tpm_stack_limit = ORIGIN(VNETDATA) +
+    ((SIZEOF(.tpm_data) + SIZEOF(.tpm_bss)) != 0 ? 64K : 0);
+_wt_pkcs11_stack_base = ORIGIN(VNETDATA) +
+    ((SIZEOF(.pkcs11_data) + SIZEOF(.pkcs11_bss)) != 0 ? 48K : 0);
+_wt_pkcs11_stack_limit = ORIGIN(VNETDATA) +
+    ((SIZEOF(.pkcs11_data) + SIZEOF(.pkcs11_bss)) != 0 ? 64K : 0);
 _sidata = LOADADDR(.data);
 
 SECTIONS {
@@ -281,7 +285,10 @@ SECTIONS {
   .pkcs11_data : {
     . = ALIGN(32);
     _s_pkcs11 = .;
-    *wt_sec_pkcs11_relay_service.o(.data .data.*)
+    *wt_sec_pkcs11*.o(.data .data.*)
+    *p11_sec_*.o(.data .data.*)
+    *p11_wc_*.o(.data .data.*)
+    *p11_wh_*.o(.data .data.*)
     . = ALIGN(4);
     _e_pkcs11_data = .;
   } > VNETDATA AT > FLASH
@@ -289,7 +296,10 @@ SECTIONS {
 
   .pkcs11_bss (NOLOAD) : {
     _s_pkcs11_bss = .;
-    *wt_sec_pkcs11_relay_service.o(.bss .bss.* COMMON)
+    *wt_sec_pkcs11*.o(.bss .bss.* COMMON)
+    *p11_sec_*.o(.bss .bss.* COMMON)
+    *p11_wc_*.o(.bss .bss.* COMMON)
+    *p11_wh_*.o(.bss .bss.* COMMON)
     . = ALIGN(32);
     _e_pkcs11 = .;
   } > VNETDATA
@@ -300,18 +310,24 @@ SECTIONS {
   .tpm_data : {
     . = ALIGN(32);
     _s_tpm = .;
-    *wt_sec_tpm_relay_service.o(.data .data.*)
+    *wt_sec_tpm*.o(.data .data.*)
+    *tpm_sec_*.o(.data .data.*)
+    *tpm_wc_*.o(.data .data.*)
+    *tpm_wh_*.o(.data .data.*)
     . = ALIGN(4);
     _e_tpm_data = .;
-  } > TPMDATA AT > FLASH
+  } > VNETDATA AT > FLASH
   _si_tpm = LOADADDR(.tpm_data);
 
   .tpm_bss (NOLOAD) : {
     _s_tpm_bss = .;
-    *wt_sec_tpm_relay_service.o(.bss .bss.* COMMON)
+    *wt_sec_tpm*.o(.bss .bss.* COMMON)
+    *tpm_sec_*.o(.bss .bss.* COMMON)
+    *tpm_wc_*.o(.bss .bss.* COMMON)
+    *tpm_wh_*.o(.bss .bss.* COMMON)
     . = ALIGN(32);
     _e_tpm = .;
-  } > TPMDATA
+  } > VNETDATA
 
   /* Linker-synthesized SG veneers (--cmse-implib) open the RAM code band: the
    * first 1 KiB is the SAU NSC window (WT_NSC_* in memory_map.h), padded so
@@ -373,7 +389,7 @@ SECTIONS {
          "vault data band must sit directly above the vnet data band")
   ASSERT(_e_vnet <= (ORIGIN(VNETDATA) + LENGTH(VNETDATA)),
          "vnet data band overflow")
-  ASSERT(_e_pkcs11 <= (ORIGIN(VNETDATA) + LENGTH(VNETDATA)),
+  ASSERT(_e_pkcs11 <= (ORIGIN(VNETDATA) + 48K),
          "pkcs11 data band overflow")
   ASSERT(ORIGIN(ATTESTDATA) == (ORIGIN(VAULTDATA) + LENGTH(VAULTDATA)),
          "attestation data band must sit directly above the vault data band")
@@ -392,9 +408,11 @@ SECTIONS {
   _wt_band_vnet_base = ORIGIN(VNETDATA);
   _wt_band_vnet_limit = ORIGIN(VNETDATA) + LENGTH(VNETDATA);
   _wt_band_pkcs11_base = ORIGIN(VNETDATA);
-  _wt_band_pkcs11_limit = ORIGIN(VNETDATA) + LENGTH(VNETDATA);
-  _wt_band_tpm_base = ORIGIN(TPMDATA);
-  _wt_band_tpm_limit = ORIGIN(TPMDATA) + LENGTH(TPMDATA);
+  _wt_band_pkcs11_limit = ORIGIN(VNETDATA) +
+    ((SIZEOF(.pkcs11_data) + SIZEOF(.pkcs11_bss)) != 0 ? 48K : 0);
+  _wt_band_tpm_base = ORIGIN(VNETDATA);
+  _wt_band_tpm_limit = ORIGIN(VNETDATA) +
+    ((SIZEOF(.tpm_data) + SIZEOF(.tpm_bss)) != 0 ? 48K : 0);
 
   ASSERT(_e_vault <= (ORIGIN(VAULTDATA) + LENGTH(VAULTDATA)),
          "vault data band overflow")

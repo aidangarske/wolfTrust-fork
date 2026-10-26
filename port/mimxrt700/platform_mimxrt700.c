@@ -148,7 +148,7 @@ int wt_platform_priv_stack_ok(const void *stack, size_t size)
     /* Only a coroutine that stays privileged reaches here, so require the stack
      * wholly inside SPM-private RAM: the secure SRAM below the lowest
      * partition-writable band (WT-FFM-0011). */
-#if defined(CONFIG_VNET) || defined(CONFIG_PKCS11)
+#if defined(CONFIG_VNET) || defined(CONFIG_PKCS11) || defined(CONFIG_TPM)
     uintptr_t priv_end = WT_VNET_DATA_BASE;
 #else
     uintptr_t priv_end = WT_KEYSTORE_BASE;
@@ -375,7 +375,7 @@ size_t wt_platform_spm_private_regions(wt_memory_region_t* regions,
     if (max < 2u) {
         return 0u;
     }
-#if defined(CONFIG_VNET) || defined(CONFIG_PKCS11)
+#if defined(CONFIG_VNET) || defined(CONFIG_PKCS11) || defined(CONFIG_TPM)
     first_band = WT_VNET_DATA_BASE;
 #endif
     regions[0].base = WT_RAM_S_BASE;

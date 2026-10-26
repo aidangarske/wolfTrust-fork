@@ -184,26 +184,23 @@
  * so the unprivileged coroutine reaches only its own state. MUST match the
  * VNETDATA region in src/services/wolfhsm/runner/secure.ld and the
  * manifest-vnet.json domain resource. */
-#define WT_VNET_DATA_BASE        (WT_RAM_S_BASE + 0x00048000u)  /* 0x30070000 */
-#define WT_VNET_DATA_SIZE        0x00005000u                    /* 20 KiB */
+#if defined(CONFIG_TPM) || defined(CONFIG_PKCS11)
+#define WT_VNET_DATA_BASE        0x30065000u
+#define WT_VNET_DATA_SIZE        0x00010000u
+#else
+#define WT_VNET_DATA_BASE        (WT_RAM_S_BASE + 0x00048000u)
+#define WT_VNET_DATA_SIZE        0x00005000u
+#endif
 
-/* SERVICE_PKCS11 uses the auxiliary data window in CONFIG_PKCS11 builds.
- * PKCS#11 and VNET images are mutually exclusive, so each service owns the
- * whole band when selected. */
-#define WT_PKCS11_DATA_BASE      WT_VNET_DATA_BASE
-#define WT_PKCS11_DATA_SIZE      WT_VNET_DATA_SIZE
-#define WT_SP_PKCS11_STACK_BASE  WT_CONF_SP_DATA_BASE
-#define WT_SP_PKCS11_STACK_SIZE  WT_SP_SECURE_STACK_SIZE
-
-/* SERVICE_TPM bands (CONFIG_TPM builds): the fwTPM-relay partition's execution
- * stack and its command/response mailbox, carved from the otherwise-empty
- * CONFDATA window (CONFIG_TPM, CONFIG_VNET, and WT_CONFORMANCE are mutually
- * exclusive). MUST match the TPMDATA region in
- * src/services/wolfhsm/runner/secure.ld and the manifest-tpm.json domain. */
-#define WT_SP_TPM_STACK_BASE     WT_CONF_SP_DATA_BASE               /* 0x30093000 */
-#define WT_SP_TPM_STACK_SIZE     WT_SP_SECURE_STACK_SIZE            /* 8 KiB */
-#define WT_TPM_DATA_BASE         (WT_CONF_SP_DATA_BASE + 0x2000u)   /* 0x30095000 */
-#define WT_TPM_DATA_SIZE         0x00000800u                        /* 2 KiB */
+/* Interface state and stacks share the auxiliary window, with disjoint MPU grants. */
+#define WT_PKCS11_DATA_BASE      (WT_KEYSTORE_BASE - 0x00010000u)
+#define WT_PKCS11_DATA_SIZE      0x0000C000u
+#define WT_SP_PKCS11_STACK_BASE  (WT_PKCS11_DATA_BASE + WT_PKCS11_DATA_SIZE)
+#define WT_SP_PKCS11_STACK_SIZE  0x00004000u
+#define WT_TPM_DATA_BASE         WT_PKCS11_DATA_BASE
+#define WT_TPM_DATA_SIZE         0x0000C000u
+#define WT_SP_TPM_STACK_BASE     (WT_TPM_DATA_BASE + WT_TPM_DATA_SIZE)
+#define WT_SP_TPM_STACK_SIZE     0x00004000u
 
 /* wolfBoot update partition (WOLFBOOT_PARTITION_UPDATE_ADDRESS): the secure
  * flash window SERVICE_FWU stages a candidate image into (WT-FWU-0002). Secure
