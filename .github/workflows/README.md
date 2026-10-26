@@ -21,7 +21,7 @@ An accepted upload queues analysis; results appear after Coverity processes it.
 | Tier | Trigger | Purpose |
 |------|---------|---------|
 | **Fast (per-PR)** | every PR; push to main | host unit suites, ISO C99, house style, bare-scope scan, Arm PSA-FF conformance, cross-compile, compiler matrix, sanitizers, valgrind, integrations, core/port split guard |
-| **M33MU smoke** | every PR | per port, on both crypto engines: STM32H563 `positive gtzcneg crossdomain bothpsa confboot devcrypto`; MIMXRT700 `positive ahbscneg crossdomain bothpsa confboot devcrypto`; MCXN947 `positive sauneg crossdomain bothpsa devcrypto` (no `confboot`, see `docs/MCXN947-Guide.md`) |
+| **M33MU smoke** | every PR | per port, on both crypto engines: STM32H563 `positive gtzcneg crossdomain bothpsa confboot devcrypto`; MIMXRT700 `positive ahbscneg crossdomain bothpsa confboot devcrypto`; MCXN947 `positive sauneg crossdomain bothpsa confboot devcrypto` |
 | **M33MU full** | PR labels `ci:all`, `ci:h5`, `ci:rt700`, `ci:mcxn947`; push to main; `cron: 0 8 * * *`; `workflow_dispatch` (port input) | every scenario of that port on both engines (see below) |
 
 The M33MU workflow (`m33mu.yml`) is label-selected the way wolfProvider's

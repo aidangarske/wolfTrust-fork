@@ -397,8 +397,9 @@ recorded separately.
 M33MU also models the MCXN947 (`--cpu mcxn947`: internal flash, the boot ROM
 flash API tree, and, with `tests/target/m33mu-mcxn947.patch`, the ELS
 `RND_REQ` register model behind its real clock gate, the ROM's page-based
-bit-clearing flash program, an executable ROM, and the OEM_OPEN life cycle
-in SYSCON), so the MCXN947 port has the same emulator gate as the MIMXRT700,
+bit-clearing flash program, an executable ROM, the OEM_OPEN life cycle in
+SYSCON, and the post-indexed `LDRSH` (immediate) decode the conformance
+client needs), so the MCXN947 port has the same emulator gate as the MIMXRT700,
 with the same scenario names:
 
 ```sh
@@ -577,8 +578,8 @@ groups) is tiered. Every pull request runs
 each port's smoke tier on both crypto engines (STM32H563: `positive`,
 `gtzcneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`; MIMXRT700:
 `positive`, `ahbscneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`;
-MCXN947: `positive`, `sauneg`, `crossdomain`, `bothpsa`, `devcrypto`; its
-`confboot` is not claimed on M33MU, see the MCXN947 Guide).
+MCXN947: `positive`, `sauneg`, `crossdomain`, `bothpsa`, `confboot`,
+`devcrypto`).
 The full matrix runs on a
 push to `main`, on the nightly schedule, on
 manual dispatch (with a `port` input), and on a pull request that carries the
