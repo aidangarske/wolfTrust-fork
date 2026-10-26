@@ -126,6 +126,20 @@ bytes first as described in [STM32H5 Guide](STM32H5-Guide.md). The current
 build, so its shorter `make test-hardware` form must not be used for this
 hardened build until the runner is fixed.
 
+## Run on MIMXRT700
+
+Pass `TARGET=mimxrt700` to build and test the second port:
+
+```sh
+make TARGET=mimxrt700 secure-image
+make test-target TARGET=mimxrt700
+make test-hardware TARGET=mimxrt700
+```
+
+`test-target` runs the RT700 emulator scenarios and `test-hardware` runs the
+EVK suite on the host that owns the probe. See the
+[MIMXRT700 Guide](MIMXRT700-Guide.md) for the rig and flash layout.
+
 ## Next steps
 
 - Read [Architecture](Architecture.md) for the request path and isolation model.

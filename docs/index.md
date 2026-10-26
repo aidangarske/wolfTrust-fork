@@ -60,7 +60,7 @@ port's five CMSE gateway veneers.
 | [Macros](Macros.md) | Supported build and manifest configuration |
 | [Porting](Porting.md) | Architecture and target port contracts |
 | [Building](Building.md) | Build targets, outputs, and cross-build options |
-| [Testing](Testing.md) | Host, M33MU, and STM32H563 validation |
+| [Testing](Testing.md) | Host, M33MU, STM32H563, and MIMXRT700 validation |
 | [Provisioning](Provisioning.md) | Rehearse, validate, then lock: the production life cycle flow for every port |
 | [Project Structure](Project-Structure.md) | Repository layout |
 | [STM32H5 Guide](STM32H5-Guide.md) | STM32H563 provisioning, flashing, WRP, and recovery safety |
