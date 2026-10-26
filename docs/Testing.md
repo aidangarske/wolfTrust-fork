@@ -577,8 +577,8 @@ groups) is tiered. Every pull request runs
 each port's smoke tier on both crypto engines (STM32H563: `positive`,
 `gtzcneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`; MIMXRT700:
 `positive`, `ahbscneg`, `crossdomain`, `bothpsa`, `confboot`, `devcrypto`;
-MCXN947: `positive`, `sauneg`, `crossdomain`, `bothpsa`, `confboot`,
-`devcrypto`).
+MCXN947: `positive`, `sauneg`, `crossdomain`, `bothpsa`, `devcrypto`; its
+`confboot` is not claimed on M33MU, see the MCXN947 Guide).
 The full matrix runs on a
 push to `main`, on the nightly schedule, on
 manual dispatch (with a `port` input), and on a pull request that carries the
