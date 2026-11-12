@@ -84,8 +84,6 @@ WT_DEPUTY_NEG_PROBE ?= 0
 WT_HSM_PIN_NEG_PROBE ?= 0
 WT_LAUNCH_DEBUG ?= 0
 WT_ROLLBACK_PROBE ?= 0
-# A probe that faults a partition on its first entry must also join the
-# WT_SP_LAZY_FIRST_ENTRY list in include/wolftrust/spm_sched.h.
 WT_SP_FAULT_PROBE ?= 0
 WT_HSM_FAULT_PROBE ?= 0
 WT_SP_FAULT_ALWAYS_PROBE ?= 0
@@ -227,6 +225,18 @@ SECURE_CFLAGS += -DWT_REMEASURE_PROBE=1
 endif
 ifeq ($(WT_BOOTUPDATE_PROBE),1)
 SECURE_CFLAGS += -DWT_BOOTUPDATE_PROBE=1
+endif
+# A probe that faults a partition on its first entry keeps that entry lazy
+# (src/ffm_boot.c), so the fault lands on a client's in-flight request. Only
+# the values that emit a probe macro above count.
+ifneq ($(strip \
+    $(filter 1,$(WT_SP_FAULT_PROBE) $(WT_SP_FAULT_ALWAYS_PROBE) \
+        $(WT_BUSFAULT_NEG_PROBE) $(WT_PANIC_NEG_PROBE) $(WT_SVC_NEG_PROBE) \
+        $(WT_FFM_NEGATIVE_PROBE) $(WT_KEYSTORE_NEG_PROBE) \
+        $(WT_PERIPH_SP_NEG_PROBE) $(WT_VNET_NEG_PROBE) $(WT_XN_NEG_PROBE) \
+        $(WT_FP_NEG_PROBE)) \
+    $(filter 1 2 3 4,$(WT_SEAL_NEG_PROBE))),)
+SECURE_CFLAGS += -DWT_SP_LAZY_FIRST_ENTRY=1
 endif
 # Hardware guest-flash write protection: refuse to launch a guest whose image
 # sectors are not WRP-protected, so a peer Non-secure guest cannot reprogram a
