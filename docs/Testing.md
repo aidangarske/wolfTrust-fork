@@ -466,8 +466,9 @@ and reset the board.
 
 `make test-hardware TARGET=mimxrt700` runs `tests/target/run_rt700_suite.sh`
 on the host that owns the EVK's probe: `positive`, `ahbscneg`, `nsentrymask`,
-`handlerirqneg`, `wrpfence`, `wrpoff`, and `wrpneg` by default (`WT_RT700_SCENARIOS` overrides
-the list), each built, flashed, read back, and asserted over the debug port. `wrpneg`
+`handlerirqneg`, `wrpfence`, `wrpoff`, and `wrpneg` by default
+(`WT_RT700_SCENARIOS` overrides the list), each built, flashed, read back, and
+asserted over the debug port. `wrpneg`
 builds wolfBoot's flash-protect selftest, which must see the silicon refuse an
 erase inside the guest fence with the block left unchanged. `nsentrymask`
 arms a short Non-secure SysTick before each of guest 0's FF-M connects so it
