@@ -177,11 +177,21 @@ static void wt_nvs_supersede(wt_nvs_context_t* ctx, whNvmId id)
 static void wt_nvs_append(wt_nvs_context_t* ctx, whNvmId id, whNvmSize len)
 {
     wt_nvs_supersede(ctx, id);
-    ctx->slot[ctx->used].start = ctx->next_data;
     ctx->slot[ctx->used].id = id;
     ctx->slot[ctx->used].len = len;
     ctx->used++;
     ctx->next_data += wt_nvs_pad(len);
+}
+
+static uint32_t wt_nvs_start(const wt_nvs_context_t* ctx, uint32_t slot)
+{
+    uint32_t i;
+    uint32_t start = 0u;
+
+    for (i = 0u; i < slot; i++) {
+        start += wt_nvs_pad(ctx->slot[i].len);
+    }
+    return start;
 }
 
 /* Rebuild the index from a partition. Committed slots must be contiguous,
@@ -198,8 +208,8 @@ static int wt_nvs_scan(wt_nvs_context_t* ctx, uint32_t part)
     uint32_t start = 0u;
     whNvmId id;
     whNvmSize len;
+    uint32_t rest;
     int rc = WH_ERROR_OK;
-    int blank;
 
     ctx->used = 0u;
     ctx->dead = 0u;
@@ -208,18 +218,17 @@ static int wt_nvs_scan(wt_nvs_context_t* ctx, uint32_t part)
     ctx->torn = 0u;
     for (i = 0u; i < WT_NVS_SLOTS && rc == WH_ERROR_OK; i++) {
         off = wt_nvs_slot_off(ctx, part, i);
-        blank = ctx->cb->BlankCheck(ctx->flash, off, slot_bytes);
-        if (blank != WH_ERROR_OK &&
-                wt_nvs_rec_read(ctx, off + WT_NVS_UNIT * WT_NVS_META_UNITS,
-                                &key, &start) != WH_ERROR_OK) {
-            ctx->torn = 1u;
-        }
-        if (blank == WH_ERROR_OK || ctx->torn != 0u) {
-            if (i + 1u < WT_NVS_SLOTS &&
-                    ctx->cb->BlankCheck(ctx->flash, off + slot_bytes,
-                        slot_bytes * (WT_NVS_SLOTS - i - 1u)) !=
-                    WH_ERROR_OK) {
-                rc = WH_ERROR_ABORTED;
+        if (wt_nvs_rec_read(ctx, off + WT_NVS_UNIT * WT_NVS_META_UNITS,
+                            &key, &start) != WH_ERROR_OK) {
+            /* The directory ends here: this slot is blank or torn, and every
+             * later one must be blank. */
+            rest = slot_bytes * (WT_NVS_SLOTS - i);
+            if (ctx->cb->BlankCheck(ctx->flash, off, rest) != WH_ERROR_OK) {
+                ctx->torn = 1u;
+                if (ctx->cb->BlankCheck(ctx->flash, off + slot_bytes,
+                                        rest - slot_bytes) != WH_ERROR_OK) {
+                    rc = WH_ERROR_ABORTED;
+                }
             }
             break;
         }
@@ -272,8 +281,8 @@ static int wt_nvs_listed(whNvmId count, const whNvmId* list, whNvmId id)
     return 0;
 }
 
-static int wt_nvs_copy(wt_nvs_context_t* ctx, uint32_t slot, uint32_t dst,
-                       uint32_t pos, uint32_t next)
+static int wt_nvs_copy(wt_nvs_context_t* ctx, uint32_t slot, uint32_t src,
+                       uint32_t dst, uint32_t pos, uint32_t next)
 {
     uint32_t buf[WT_NVS_COPY_LEN / sizeof(uint32_t)];
     whNvmMetadata meta;
@@ -296,9 +305,8 @@ static int wt_nvs_copy(wt_nvs_context_t* ctx, uint32_t slot, uint32_t dst,
             n = WT_NVS_COPY_LEN;
         }
         (void)memset(buf, 0, sizeof(buf));
-        rc = ctx->cb->Read(ctx->flash,
-                           wt_nvs_data_off(ctx, ctx->active) + s->start + done,
-                           n, (uint8_t*)buf);
+        rc = ctx->cb->Read(ctx->flash, wt_nvs_data_off(ctx, ctx->active) +
+                           src + done, n, (uint8_t*)buf);
         if (rc == WH_ERROR_OK) {
             rc = wt_nvs_program(ctx, wt_nvs_data_off(ctx, dst) + next + done,
                                 wt_nvs_pad(n), (const uint8_t*)buf);
@@ -321,16 +329,18 @@ static int wt_nvs_compact(wt_nvs_context_t* ctx, whNvmId count,
     uint32_t dst = src ^ 1u;
     uint32_t i;
     uint32_t pos = 0u;
+    uint32_t from = 0u;
     uint32_t next = 0u;
     int rc = wt_nvs_erase(ctx, dst);
 
     for (i = 0u; i < ctx->used && rc == WH_ERROR_OK; i++) {
         if (ctx->slot[i].id != WH_NVM_ID_INVALID &&
                 wt_nvs_listed(count, list, ctx->slot[i].id) == 0) {
-            rc = wt_nvs_copy(ctx, i, dst, pos, next);
+            rc = wt_nvs_copy(ctx, i, from, dst, pos, next);
             pos++;
             next += wt_nvs_pad(ctx->slot[i].len);
         }
+        from += wt_nvs_pad(ctx->slot[i].len);
     }
     if (rc == WH_ERROR_OK) {
         rc = wt_nvs_rec_write(ctx, wt_nvs_base(ctx, dst), WT_NVS_MAGIC,
@@ -339,11 +349,11 @@ static int wt_nvs_compact(wt_nvs_context_t* ctx, whNvmId count,
     if (rc != WH_ERROR_OK) {
         return rc;
     }
+    /* The new copy is now the newest, so boot would pick it too: a copy that
+     * does not read back leaves the store unusable rather than stale. */
     rc = wt_nvs_scan(ctx, dst);
     if (rc != WH_ERROR_OK) {
-        if (wt_nvs_scan(ctx, src) != WH_ERROR_OK) {
-            ctx->bad = 1u;
-        }
+        ctx->bad = 1u;
         return rc;
     }
     ctx->active = (uint8_t)dst;
@@ -518,11 +528,12 @@ int wt_nvs_add_object(void* c, whNvmMetadata* meta, whNvmSize data_len,
     uint32_t full = (uint32_t)data_len & ~(WT_NVS_UNIT - 1u);
     int rc;
 
-    if (ctx == NULL || meta == NULL || (data_len > 0u && data == NULL) ||
-            meta->id == WH_NVM_ID_INVALID) {
+    rc = wt_nvs_usable(ctx);
+    if (rc == WH_ERROR_OK && (meta == NULL ||
+            (data_len > 0u && data == NULL) ||
+            meta->id == WH_NVM_ID_INVALID)) {
         return WH_ERROR_BADARGS;
     }
-    rc = wt_nvs_usable(ctx);
     if (rc == WH_ERROR_OK && ctx->torn != 0u) {
         rc = wt_nvs_compact(ctx, 0u, NULL);
     }
@@ -595,10 +606,10 @@ int wt_nvs_destroy_objects(void* c, whNvmId list_count,
     int matched = 0;
     int rc;
 
-    if (ctx == NULL || (list_count > 0u && id_list == NULL)) {
-        return WH_ERROR_BADARGS;
-    }
     rc = wt_nvs_usable(ctx);
+    if (rc == WH_ERROR_OK && list_count > 0u && id_list == NULL) {
+        rc = WH_ERROR_BADARGS;
+    }
     if (rc != WH_ERROR_OK) {
         return rc;
     }
@@ -617,14 +628,14 @@ int wt_nvs_read(void* c, whNvmId id, whNvmSize offset, whNvmSize data_len,
                 uint8_t* data)
 {
     wt_nvs_context_t* ctx = (wt_nvs_context_t*)c;
-    const wt_nvs_slot_t* s;
+    whNvmSize len;
+    uint32_t start;
     int slot;
-    int rc;
+    int rc = wt_nvs_usable(ctx);
 
-    if (ctx == NULL || (data_len > 0u && data == NULL)) {
-        return WH_ERROR_BADARGS;
+    if (rc == WH_ERROR_OK && data_len > 0u && data == NULL) {
+        rc = WH_ERROR_BADARGS;
     }
-    rc = wt_nvs_usable(ctx);
     if (rc != WH_ERROR_OK) {
         return rc;
     }
@@ -632,15 +643,15 @@ int wt_nvs_read(void* c, whNvmId id, whNvmSize offset, whNvmSize data_len,
     if (slot < 0) {
         return WH_ERROR_NOTFOUND;
     }
-    s = &ctx->slot[slot];
-    if (offset >= s->len || data_len > (whNvmSize)(s->len - offset)) {
+    len = ctx->slot[slot].len;
+    if (offset >= len || data_len > (whNvmSize)(len - offset)) {
         return WH_ERROR_BADARGS;
     }
-    if (s->start > wt_nvs_data_size(ctx) ||
-            s->len > wt_nvs_data_size(ctx) - s->start) {
+    start = wt_nvs_start(ctx, (uint32_t)slot);
+    if (start > wt_nvs_data_size(ctx) ||
+            len > wt_nvs_data_size(ctx) - start) {
         return WH_ERROR_ABORTED;
     }
-    return ctx->cb->Read(ctx->flash,
-                         wt_nvs_data_off(ctx, ctx->active) + s->start + offset,
-                         data_len, data);
+    return ctx->cb->Read(ctx->flash, wt_nvs_data_off(ctx, ctx->active) +
+                         start + offset, data_len, data);
 }

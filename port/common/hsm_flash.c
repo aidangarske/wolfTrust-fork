@@ -243,109 +243,17 @@ static int wt_hsm_flash_write_unlock(void *context, uint32_t offset,
     return WH_ERROR_OK;
 }
 
-static int wt_hsm_flash_read(void *context, uint32_t offset, uint32_t size,
-                             uint8_t *data)
-{
-    const wt_hsm_flash_config_t *cfg = wt_hsm_flash_cfg_of(context);
-
-    if (data == NULL && size != 0u) {
-        return WH_ERROR_BADARGS;
-    }
-    if (wt_arch_thread_unprivileged()) {
-        return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_READ, offset, size,
-                                 data);
-    }
-    if (!wt_flash_range_ok(cfg, offset, size)) {
-        return wt_hsm_flash_refuse(WH_ERROR_BADARGS, 0x01u, offset);
-    }
-    if (size == 0u) {
-        return WH_ERROR_OK;
-    }
-    return wt_hsm_flash_result(wt_port_flash_read(cfg->base + offset, data,
-                                                  size), 0x06u, offset);
-}
-
-static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
+static int wt_hsm_flash_compare(const wt_hsm_flash_config_t *cfg,
+                                uint32_t offset, uint32_t size,
                                 const uint8_t *data)
 {
-    const wt_hsm_flash_config_t *cfg = wt_hsm_flash_cfg_of(context);
-    const wt_hsm_flash_context_t *ctx =
-        (const wt_hsm_flash_context_t *)context;
-
-    if (data == NULL && size != 0u) {
-        return WH_ERROR_BADARGS;
-    }
-    if (wt_arch_thread_unprivileged()) {
-        return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_PROGRAM, offset,
-                                 size, (void *)(uintptr_t)data);
-    }
-    if (!wt_flash_range_ok(cfg, offset, size)) {
-        return wt_hsm_flash_refuse(WH_ERROR_BADARGS, 0x01u, offset);
-    }
-    if ((offset % cfg->program_unit) != 0u ||
-            (size % cfg->program_unit) != 0u) {
-        return wt_hsm_flash_refuse(WH_ERROR_BADARGS, 0x02u, offset);
-    }
-    if (size != 0u && ctx->write_locked) {
-        return wt_hsm_flash_refuse(WH_ERROR_LOCKED, 0x03u, offset);
-    }
-    if (size == 0u) {
-        return WH_ERROR_OK;
-    }
-    return wt_hsm_flash_result(wt_port_flash_program(cfg->base + offset, data,
-                                                     size), 0x04u, offset);
-}
-
-static int wt_hsm_flash_erase(void *context, uint32_t offset, uint32_t size)
-{
-    const wt_hsm_flash_config_t *cfg = wt_hsm_flash_cfg_of(context);
-    const wt_hsm_flash_context_t *ctx =
-        (const wt_hsm_flash_context_t *)context;
-
-    if (wt_arch_thread_unprivileged()) {
-        return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_ERASE, offset, size,
-                                 NULL);
-    }
-    if (!wt_flash_range_ok(cfg, offset, size)) {
-        return wt_hsm_flash_refuse(WH_ERROR_BADARGS, 0x01u, offset);
-    }
-    if ((offset % cfg->sector_size) != 0u ||
-            (size % cfg->sector_size) != 0u) {
-        return wt_hsm_flash_refuse(WH_ERROR_BADARGS, 0x02u, offset);
-    }
-    if (size != 0u && ctx->write_locked) {
-        return wt_hsm_flash_refuse(WH_ERROR_LOCKED, 0x03u, offset);
-    }
-    if (size == 0u) {
-        return WH_ERROR_OK;
-    }
-    return wt_hsm_flash_result(wt_port_flash_erase(cfg->base + offset, size),
-                               0x05u, offset);
-}
-
-/* Compare through the checked read, one program unit at a time, so a device
- * fault in the store is a refusal rather than a false mismatch or match. */
-static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
-                               const uint8_t *data)
-{
-    const wt_hsm_flash_config_t *cfg = wt_hsm_flash_cfg_of(context);
     uint8_t flash_data[WT_FLASH_PROGRAM_UNIT];
     uint32_t checked = 0u;
+    uint32_t chunk;
     int ret = WH_ERROR_OK;
 
-    if (data == NULL && size != 0u) {
-        return WH_ERROR_BADARGS;
-    }
-    if (wt_arch_thread_unprivileged()) {
-        return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_VERIFY, offset,
-                                 size, (void *)(uintptr_t)data);
-    }
-    if (!wt_flash_range_ok(cfg, offset, size)) {
-        return wt_hsm_flash_refuse(WH_ERROR_BADARGS, 0x01u, offset);
-    }
     while (checked < size && ret == WH_ERROR_OK) {
-        uint32_t chunk = size - checked;
-
+        chunk = size - checked;
         if (chunk > (uint32_t)sizeof(flash_data)) {
             chunk = (uint32_t)sizeof(flash_data);
         }
@@ -366,27 +274,108 @@ static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
     return ret;
 }
 
-static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
-                                    uint32_t size)
+/* One checked path for every data operation: the gate for a partition
+ * caller, then range, alignment and write-lock checks in SPM context. */
+static int wt_hsm_flash_op(void *context, int op, uint32_t offset,
+                           uint32_t size, const uint8_t *data)
 {
     const wt_hsm_flash_config_t *cfg = wt_hsm_flash_cfg_of(context);
-    int ret;
+    const wt_hsm_flash_context_t *ctx =
+        (const wt_hsm_flash_context_t *)context;
+    uint32_t align = 1u;
+    uint32_t stage;
+    int rc;
 
+    if (data == NULL && size != 0u &&
+            (op == WT_SPM_KS_FLASH_READ || op == WT_SPM_KS_FLASH_PROGRAM ||
+             op == WT_SPM_KS_FLASH_VERIFY)) {
+        return WH_ERROR_BADARGS;
+    }
     if (wt_arch_thread_unprivileged()) {
-        return wt_hsm_flash_gate(context, WT_SPM_KS_FLASH_BLANKCHECK, offset,
-                                 size, NULL);
+        return wt_hsm_flash_gate(context, op, offset, size,
+                                 (void *)(uintptr_t)data);
     }
     if (!wt_flash_range_ok(cfg, offset, size)) {
         return wt_hsm_flash_refuse(WH_ERROR_BADARGS, 0x01u, offset);
     }
+    if (op == WT_SPM_KS_FLASH_VERIFY) {
+        return wt_hsm_flash_compare(cfg, offset, size, data);
+    }
+    if (op == WT_SPM_KS_FLASH_PROGRAM) {
+        align = cfg->program_unit;
+    }
+    else if (op == WT_SPM_KS_FLASH_ERASE) {
+        align = cfg->sector_size;
+    }
+    if ((offset % align) != 0u || (size % align) != 0u) {
+        return wt_hsm_flash_refuse(WH_ERROR_BADARGS, 0x02u, offset);
+    }
+    if (size != 0u && ctx->write_locked &&
+            (op == WT_SPM_KS_FLASH_PROGRAM || op == WT_SPM_KS_FLASH_ERASE)) {
+        return wt_hsm_flash_refuse(WH_ERROR_LOCKED, 0x03u, offset);
+    }
     if (size == 0u) {
         return WH_ERROR_OK;
     }
-    ret = wt_port_flash_blank_check(cfg->base + offset, size);
-    if (ret != WH_ERROR_NOTBLANK) {
-        ret = wt_hsm_flash_result(ret, 0x07u, offset);
+    if (op == WT_SPM_KS_FLASH_READ) {
+        rc = wt_port_flash_read(cfg->base + offset, (uint8_t *)(uintptr_t)data,
+                                size);
+        stage = 0x06u;
     }
-    return ret;
+    else if (op == WT_SPM_KS_FLASH_PROGRAM) {
+        rc = wt_port_flash_program(cfg->base + offset, data, size);
+        stage = 0x04u;
+    }
+    else if (op == WT_SPM_KS_FLASH_ERASE) {
+        rc = wt_port_flash_erase(cfg->base + offset, size);
+        stage = 0x05u;
+    }
+    else {
+        rc = wt_port_flash_blank_check(cfg->base + offset, size);
+        if (rc == WH_ERROR_NOTBLANK) {
+            return rc;
+        }
+        stage = 0x07u;
+    }
+    rc = wt_hsm_flash_result(rc, stage, offset);
+    if (rc == WH_ERROR_OK && op == WT_SPM_KS_FLASH_PROGRAM) {
+        rc = wt_hsm_flash_compare(cfg, offset, size, data);
+    }
+    return rc;
+}
+
+static int wt_hsm_flash_read(void *context, uint32_t offset, uint32_t size,
+                             uint8_t *data)
+{
+    return wt_hsm_flash_op(context, WT_SPM_KS_FLASH_READ, offset, size, data);
+}
+
+static int wt_hsm_flash_program(void *context, uint32_t offset, uint32_t size,
+                                const uint8_t *data)
+{
+    return wt_hsm_flash_op(context, WT_SPM_KS_FLASH_PROGRAM, offset, size,
+                           data);
+}
+
+static int wt_hsm_flash_erase(void *context, uint32_t offset, uint32_t size)
+{
+    return wt_hsm_flash_op(context, WT_SPM_KS_FLASH_ERASE, offset, size, NULL);
+}
+
+#if !defined(WT_NVM_STORE_NATIVE)
+static int wt_hsm_flash_verify(void *context, uint32_t offset, uint32_t size,
+                               const uint8_t *data)
+{
+    return wt_hsm_flash_op(context, WT_SPM_KS_FLASH_VERIFY, offset, size,
+                           data);
+}
+#endif
+
+static int wt_hsm_flash_blank_check(void *context, uint32_t offset,
+                                    uint32_t size)
+{
+    return wt_hsm_flash_op(context, WT_SPM_KS_FLASH_BLANKCHECK, offset, size,
+                           NULL);
 }
 
 const whFlashCb g_wt_hsm_flash_cb = {
@@ -398,7 +387,11 @@ const whFlashCb g_wt_hsm_flash_cb = {
     .Read = wt_hsm_flash_read,
     .Program = wt_hsm_flash_program,
     .Erase = wt_hsm_flash_erase,
+#if defined(WT_NVM_STORE_NATIVE)
+    .Verify = NULL,
+#else
     .Verify = wt_hsm_flash_verify,
+#endif
     .BlankCheck = wt_hsm_flash_blank_check,
 };
 
@@ -727,7 +720,12 @@ int wt_platform_deputy_flash_probe(void)
     ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_PROGRAM, oor, 16u, leak);
     ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_ERASE, oor,
                                    g_hsm_flash_cfg.sector_size, NULL);
+#if defined(WT_NVM_STORE_NATIVE)
+    /* Program verifies itself here, so the gate serves no verify at all. */
+    ok &= (wt_deputy_read_ok(WT_SPM_KS_FLASH_VERIFY, leak, 16u) == 0);
+#else
     ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_VERIFY, oor, 16u, leak);
+#endif
     ok &= wt_deputy_expect_badargs(WT_SPM_KS_FLASH_BLANKCHECK, oor, 16u,
                                    NULL);
     /* A length running past the store from an in-range offset. */
@@ -751,9 +749,11 @@ int wt_platform_deputy_flash_probe(void)
             memcmp(leak, ref, sizeof(ref)) != 0) {
         ok = 0;
     }
+#if !defined(WT_NVM_STORE_NATIVE)
     if (wt_deputy_read_ok(WT_SPM_KS_FLASH_VERIFY, ref, sizeof(ref)) == 0) {
         ok = 0;
     }
+#endif
     return ok;
 }
 #endif

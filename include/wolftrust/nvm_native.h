@@ -37,6 +37,7 @@
 #define WT_NVS_UNIT 16u
 
 typedef struct wt_nvs_config {
+    /* With no Verify callback, Program must verify what it wrote. */
     const whFlashCb* cb;
     void*            context;
     const void*      config;
@@ -45,8 +46,9 @@ typedef struct wt_nvs_config {
     int (*may_format)(void);
 } wt_nvs_config_t;
 
+/* Data is allocated in slot order, so a slot's data offset is the padded
+ * length of the slots before it. */
 typedef struct wt_nvs_slot {
-    uint32_t start;   /* data offset in bytes from the data area */
     whNvmId  id;      /* WH_NVM_ID_INVALID once superseded */
     whNvmSize len;
 } wt_nvs_slot_t;

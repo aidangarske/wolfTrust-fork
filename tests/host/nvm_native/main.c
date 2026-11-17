@@ -410,7 +410,7 @@ static void test_corruption(void)
     sim_reset();
     check(store_open() == WH_ERROR_OK && put(1u, 8u, 0xB1u) == WH_ERROR_OK,
           "slot bounds store seeded");
-    g_nvs.slot[0].start = 0xFFFF0000u;
+    g_nvs.slot[0].len = 0xFFF0u;
     check(wh_Nvm_Read(&g_nvm, 1u, 0u, 8u, (uint8_t[8]){0}) ==
           WH_ERROR_ABORTED, "a forged index entry never reads out of range");
 }

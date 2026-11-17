@@ -610,12 +610,14 @@ static int wt_spm_dispatch_held(wt_spm_sp_t* slot, wt_spm_call_t* call,
                 ks_ret = g_wt_hsm_flash_cb.Erase(flash_ctx, call->vec_idx,
                     (uint32_t)call->num_bytes);
             }
+#if !defined(WT_NVM_STORE_NATIVE)
             else if (call->call_type == WT_SPM_KS_FLASH_VERIFY &&
                     wt_secure_domain_contains(&slot->table,
                         (uintptr_t)call->buffer, call->num_bytes, 0) != 0) {
                 ks_ret = g_wt_hsm_flash_cb.Verify(flash_ctx, call->vec_idx,
                     (uint32_t)call->num_bytes, (const uint8_t*)call->buffer);
             }
+#endif
             else if (call->call_type == WT_SPM_KS_FLASH_BLANKCHECK) {
                 ks_ret = g_wt_hsm_flash_cb.BlankCheck(flash_ctx,
                     call->vec_idx, (uint32_t)call->num_bytes);

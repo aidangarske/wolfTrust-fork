@@ -80,8 +80,9 @@ static whNvmContext* g_vault_nvm;
 static const wt_vault_sealer_t* g_vault_sealer;
 
 /* Sealed-object staging in the shared keystore trust band. */
+/* Sealed objects are unsealed in place; a path that writes the ciphertext
+ * back re-reads it from flash first. */
 static uint8_t g_vault_ct[WT_VAULT_OBJECT_MAX + WT_VAULT_SEAL_TAG_LEN];
-static uint8_t g_vault_pt[WT_VAULT_OBJECT_MAX];
 
 int wt_hsm_vault_init(whNvmContext* nvm)
 {
@@ -307,9 +308,9 @@ static psa_status_t wt_hsm_vault_read_sealed(whNvmId id,
     }
     pt_len = (size_t)meta->len - WT_VAULT_SEAL_TAG_LEN;
     status = g_vault_sealer->unseal(meta->label, WH_NVM_LABEL_LEN, counter,
-                                    g_vault_ct, meta->len, g_vault_pt);
+                                    g_vault_ct, meta->len, g_vault_ct);
     if (status != PSA_SUCCESS) {
-        wt_hsm_vault_zeroize(g_vault_pt, pt_len);
+        wt_hsm_vault_zeroize(g_vault_ct, pt_len);
     }
     return status;
 }
@@ -347,7 +348,7 @@ static psa_status_t wt_hsm_vault_recover_live(wt_hsm_vault_table_t* table)
         return PSA_ERROR_STORAGE_FAILURE;
     }
     if (status == PSA_SUCCESS) {
-        wt_hsm_vault_zeroize(g_vault_pt,
+        wt_hsm_vault_zeroize(g_vault_ct,
                             (size_t)meta.len - WT_VAULT_SEAL_TAG_LEN);
     }
     else if (status == PSA_ERROR_INVALID_SIGNATURE ||
@@ -437,7 +438,7 @@ static psa_status_t wt_hsm_vault_recover(wt_hsm_vault_table_t* table)
         return status;
     }
     pt_len = (size_t)stage_meta.len - WT_VAULT_SEAL_TAG_LEN;
-    wt_hsm_vault_zeroize(g_vault_pt, pt_len);
+    wt_hsm_vault_zeroize(g_vault_ct, pt_len);
     meta = stage_meta;
     meta.id = id;
     meta.flags = WH_NVM_FLAGS_SENSITIVE;
@@ -445,6 +446,12 @@ static psa_status_t wt_hsm_vault_recover(wt_hsm_vault_table_t* table)
         wt_hsm_vault_storage_size(meta.len) +
             wt_hsm_vault_storage_size(sizeof(*table)),
         2U);
+    if (status != PSA_SUCCESS) {
+        return status;
+    }
+    status = wt_hsm_vault_map_err(
+        wh_Nvm_ReadChecked(g_vault_nvm, WT_HSM_VAULT_STAGE_ID, 0U, meta.len,
+                           g_vault_ct));
     if (status != PSA_SUCCESS) {
         return status;
     }
@@ -616,7 +623,7 @@ static psa_status_t wt_hsm_vault_set(int32_t owner, int32_t sub,
         }
         else {
             wt_hsm_vault_zeroize(
-                g_vault_pt, (size_t)meta.len - WT_VAULT_SEAL_TAG_LEN);
+                g_vault_ct, (size_t)meta.len - WT_VAULT_SEAL_TAG_LEN);
         }
     }
     need_size = wt_hsm_vault_storage_size(store_len) +
@@ -673,8 +680,13 @@ static psa_status_t wt_hsm_vault_set(int32_t owner, int32_t sub,
     }
     if (replacement != 0) {
         status = wt_hsm_vault_map_err(
-            wh_Nvm_AddObject(g_vault_nvm, &stage_meta, stage_meta.len,
-                             g_vault_ct));
+            wh_Nvm_ReadChecked(g_vault_nvm, id, 0U, stage_meta.len,
+                               g_vault_ct));
+        if (status == PSA_SUCCESS) {
+            status = wt_hsm_vault_map_err(
+                wh_Nvm_AddObject(g_vault_nvm, &stage_meta, stage_meta.len,
+                                 g_vault_ct));
+        }
         if (status != PSA_SUCCESS) {
             return status;
         }
@@ -744,7 +756,7 @@ static psa_status_t wt_hsm_vault_get(int32_t owner, int32_t sub,
         }
         pt_len = (size_t)meta.len - WT_VAULT_SEAL_TAG_LEN;
         if (offset > pt_len) {
-            wt_hsm_vault_zeroize(g_vault_pt, pt_len);
+            wt_hsm_vault_zeroize(g_vault_ct, pt_len);
             return PSA_ERROR_INVALID_ARGUMENT;
         }
         n = pt_len - offset;
@@ -752,9 +764,9 @@ static psa_status_t wt_hsm_vault_get(int32_t owner, int32_t sub,
             n = size;
         }
         if (n > 0U) {
-            (void)memcpy(data, g_vault_pt + offset, n);
+            (void)memcpy(data, g_vault_ct + offset, n);
         }
-        wt_hsm_vault_zeroize(g_vault_pt, pt_len);
+        wt_hsm_vault_zeroize(g_vault_ct, pt_len);
         *out_len = n;
         return PSA_SUCCESS;
     }
@@ -855,7 +867,7 @@ static psa_status_t wt_hsm_vault_remove(int32_t owner, int32_t sub,
                     PSA_SUCCESS) {
             /* The original object survived intact, so cancel the deletion. */
             wt_hsm_vault_zeroize(
-                g_vault_pt, (size_t)meta.len - WT_VAULT_SEAL_TAG_LEN);
+                g_vault_ct, (size_t)meta.len - WT_VAULT_SEAL_TAG_LEN);
             table.reserved = 0U;
             if (wt_hsm_vault_table_store(&table) != PSA_SUCCESS) {
                 return PSA_ERROR_STORAGE_FAILURE;
