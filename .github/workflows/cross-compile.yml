@@ -142,6 +142,27 @@ jobs:
             python3 tools/secure_ram.py --base-max 45728 \
               build_budget_$target/wolftrust.map
           done
+      # Ratchet on the Secure PSA default, which is still above TF-M level 3:
+      # lower these as size work lands, and never raise them.
+      - name: Hold the Secure PSA default image under its current footprint
+        run: |
+          for target in $(python3 tests/target/lib/scenario_matrix.py --list-ports); do
+            case $target in
+              stm32h563) flash_max=101120; ram_max=51712 ;;
+              mimxrt700) flash_max=101376; ram_max=56064 ;;
+              mcxn947) flash_max=100096; ram_max=51968 ;;
+              *) echo "FAIL: no default footprint ceiling for $target" >&2; exit 1 ;;
+            esac
+            make TARGET=$target WT_ENGINE=native WT_ATTEST_COSE=1 secure-image \
+              TOOLPREFIX=arm-none-eabi- BUILD_DIR=build_default_$target
+            flash=$(arm-none-eabi-size build_default_$target/wolftrust.elf \
+              | awk 'NR == 2 { print $1 + $2 }')
+            echo "$target Secure PSA default flash: $flash bytes (ceiling $flash_max)"
+            test "$flash" -le "$flash_max" || \
+              { echo "FAIL: $target Secure PSA default grew past its ceiling" >&2; exit 1; }
+            python3 tools/secure_ram.py --max $ram_max \
+              build_default_$target/wolftrust.map
+          done
       - name: Build every port's full-profile secure image (every engine)
         run: |
           flags="$(. tests/target/lib/profile.sh; scenario_profile_flags full)"
