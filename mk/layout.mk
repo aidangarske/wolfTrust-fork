@@ -62,10 +62,12 @@ WT_SP_HSM_DATA_SIZE ?= $(shell echo $$(( ($(or $(WT_PSA_POOL_BYTES),6144) + \
     2048 + 31) / 32 * 32 )) 2>/dev/null)
 WT_SP_CRYPTO_STACK_SIZE ?= 0x2000
 endif
-# The native NVM store keeps a small index and the vault unseals in place.
+# The native NVM store keeps a small index and the vault unseals in place;
+# its measured vault stack peak is 2,728 B.
 WT_NVM_STORE ?= $(if $(or $(filter hsm,$(WT_ENGINE)),$(filter 1,$(WT_ENGINE_HSM))),wolfhsm,native)
 ifeq ($(WT_NVM_STORE),native)
 WT_SP_VAULT_DATA_SIZE ?= 0x700
+WT_SP_VAULT_STACK_SIZE ?= 0x1000
 endif
 WT_LAYOUT_DEFS += $(foreach v,$(WT_LAYOUT_OPTIONAL_INPUTS),\
     $(if $(strip $($(v))),-D$(v)=$($(v))))
