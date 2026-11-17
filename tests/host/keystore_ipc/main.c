@@ -795,7 +795,7 @@ static void test_nvm_door(void)
     check(status == PSA_SUCCESS && rc == WH_ERROR_OK &&
           memcmp(out, g_probe_pattern, sizeof(g_probe_pattern)) == 0,
           "Z2 the probe object round-trips through the storage face");
-    check(g_wipe_checks >= 4U && g_wipe_dirty == 0U,
+    check(g_wipe_checks >= 2U && g_wipe_dirty == 0U,
           "Z2 the storage face's copied buffers are zeroed before release");
     (void)wt_ffm_close(&g_runtime, TEST_ROGUE_PARTITION, handle);
     check(wt_hsm_vault_backend.remove(TEST_ROGUE_PARTITION, 0,

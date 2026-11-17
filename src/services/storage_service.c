@@ -18,6 +18,7 @@
  * along with this program; if not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "wolftrust/services/service_ipc.h"
 #include "wolftrust/services/storage_service.h"
 #include "wolftrust/zeroize.h"
 
@@ -27,10 +28,10 @@
  * before returning (the SVC transport re-issues around the coroutine block;
  * the direct transport dispatches the pending message inline). A residual
  * NOT_READY is therefore a failure, never a reason to spin. */
-static int wt_storage_xfer(wt_storage_service_ctx_t* ctx,
-                           wt_ffm_runtime_t* runtime, wt_spm_call_t* call)
+static int wt_storage_xfer(const wt_svc_t* svc, wt_spm_call_t* call)
 {
-    if (ctx->transport(runtime, call) != WT_FFM_SUCCESS ||
+    call->partition_id = svc->partition_id;
+    if (svc->transport(svc->runtime, call) != WT_FFM_SUCCESS ||
             call->ret_int == WT_FFM_ERROR_NOT_READY) {
         return WT_FFM_ERROR_STATE;
     }
@@ -40,8 +41,7 @@ static int wt_storage_xfer(wt_storage_service_ctx_t* ctx,
 /* SP-to-SP connection to the vault, held for one request: the vault may
  * restart between requests, and a handle kept across that is unusable. */
 static psa_status_t wt_storage_vault_handle(wt_storage_service_ctx_t* ctx,
-                                            wt_ffm_runtime_t* runtime,
-                                            int32_t partition_id)
+                                            const wt_svc_t* svc)
 {
     wt_spm_call_t call;
 
@@ -50,10 +50,9 @@ static psa_status_t wt_storage_vault_handle(wt_storage_service_ctx_t* ctx,
     }
     (void)memset(&call, 0, sizeof(call));
     call.op = WT_SPM_OP_CONNECT;
-    call.partition_id = partition_id;
     call.sid = ctx->vault_sid;
     call.version = 1U;
-    if (wt_storage_xfer(ctx, runtime, &call) != WT_FFM_SUCCESS ||
+    if (wt_storage_xfer(svc, &call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS || call.ret_handle <= 0) {
         return PSA_ERROR_GENERIC_ERROR;
     }
@@ -62,25 +61,21 @@ static psa_status_t wt_storage_vault_handle(wt_storage_service_ctx_t* ctx,
 }
 
 static void wt_storage_vault_close(wt_storage_service_ctx_t* ctx,
-                                   wt_ffm_runtime_t* runtime,
-                                   int32_t partition_id)
+                                   const wt_svc_t* svc)
 {
     wt_spm_call_t call;
 
     if (ctx->vault_handle > 0) {
         (void)memset(&call, 0, sizeof(call));
         call.op = WT_SPM_OP_CLOSE;
-        call.partition_id = partition_id;
         call.msg_handle = ctx->vault_handle;
-        (void)wt_storage_xfer(ctx, runtime, &call);
+        (void)wt_storage_xfer(svc, &call);
     }
     ctx->vault_handle = 0;
 }
 
 static psa_status_t wt_storage_vault_call(wt_storage_service_ctx_t* ctx,
-                                          wt_ffm_runtime_t* runtime,
-                                          int32_t partition_id,
-                                          int32_t type,
+                                          const wt_svc_t* svc, int32_t type,
                                           const wt_vault_req_t* vreq,
                                           const uint8_t* set_data,
                                           size_t set_len,
@@ -91,7 +86,6 @@ static psa_status_t wt_storage_vault_call(wt_storage_service_ctx_t* ctx,
 
     (void)memset(&call, 0, sizeof(call));
     call.op = WT_SPM_OP_CALL;
-    call.partition_id = partition_id;
     call.msg_handle = ctx->vault_handle;
     call.call_type = type;
     call.sp_in[0].base = vreq;
@@ -107,7 +101,7 @@ static psa_status_t wt_storage_vault_call(wt_storage_service_ctx_t* ctx,
         call.sp_out[0].len = out_cap;
         call.sp_out_len = 1U;
     }
-    if (wt_storage_xfer(ctx, runtime, &call) != WT_FFM_SUCCESS ||
+    if (wt_storage_xfer(svc, &call) != WT_FFM_SUCCESS ||
             call.ret_int != WT_FFM_SUCCESS) {
         return PSA_ERROR_GENERIC_ERROR;
     }
@@ -117,65 +111,8 @@ static psa_status_t wt_storage_vault_call(wt_storage_service_ctx_t* ctx,
     return call.ret_status;
 }
 
-/* Drain invec[0] — [wt_its_req_t][data] — into a bounded private buffer
- * (WT-FFM-0041 copied transfers). */
-static int wt_storage_read_req(wt_storage_service_ctx_t* ctx,
-                               wt_ffm_runtime_t* runtime,
-                               int32_t partition_id, psa_handle_t msg_handle,
-                               uint8_t* buffer, size_t capacity,
-                               size_t* out_len)
-{
-    wt_spm_call_t call;
-    size_t len = 0U;
-
-    for (;;) {
-        (void)memset(&call, 0, sizeof(call));
-        call.op = WT_SPM_OP_READ;
-        call.partition_id = partition_id;
-        call.msg_handle = msg_handle;
-        call.vec_idx = 0U;
-        call.buffer = buffer + len;
-        call.num_bytes = capacity - len;
-        if (ctx->transport(runtime, &call) != WT_FFM_SUCCESS) {
-            return WT_FFM_ERROR_STATE;
-        }
-        if (call.ret_size == 0U) {
-            break;
-        }
-        len += call.ret_size;
-        if (len >= capacity) {
-            break;
-        }
-    }
-    *out_len = len;
-    return WT_FFM_SUCCESS;
-}
-
-static int wt_storage_write_reply(wt_storage_service_ctx_t* ctx,
-                                  wt_ffm_runtime_t* runtime,
-                                  int32_t partition_id,
-                                  psa_handle_t msg_handle, const void* data,
-                                  size_t len)
-{
-    wt_spm_call_t call;
-
-    (void)memset(&call, 0, sizeof(call));
-    call.op = WT_SPM_OP_WRITE;
-    call.partition_id = partition_id;
-    call.msg_handle = msg_handle;
-    call.vec_idx = 0U;
-    call.buffer = (void*)(uintptr_t)data;
-    call.num_bytes = len;
-    if (ctx->transport(runtime, &call) != WT_FFM_SUCCESS ||
-            call.ret_int != WT_FFM_SUCCESS) {
-        return WT_FFM_ERROR_STATE;
-    }
-    return WT_FFM_SUCCESS;
-}
-
 static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
-                                            wt_ffm_runtime_t* runtime,
-                                            int32_t partition_id,
+                                            const wt_svc_t* svc,
                                             const psa_msg_t* msg)
 {
     uint8_t buffer[sizeof(wt_its_req_t) + WT_VAULT_OBJECT_MAX];
@@ -192,8 +129,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
         if (msg->in_size[0] > sizeof(buffer)) {
             status = PSA_ERROR_INSUFFICIENT_STORAGE;
         }
-        else if (wt_storage_read_req(ctx, runtime, partition_id, msg->handle,
-                                     buffer, sizeof(buffer), &in_len) !=
+        else if (wt_svc_read(svc, 0U, buffer, sizeof(buffer), &in_len) !=
                     WT_FFM_SUCCESS || in_len < sizeof(req)) {
             status = PSA_ERROR_INVALID_ARGUMENT;
         }
@@ -210,7 +146,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
                 status = PSA_ERROR_NOT_SUPPORTED;
             }
             else {
-                status = wt_storage_vault_handle(ctx, runtime, partition_id);
+                status = wt_storage_vault_handle(ctx, svc);
             }
         }
     }
@@ -236,8 +172,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
                 break;
             }
             vreq.flags = req.flags | ctx->vault_flags;
-            status = wt_storage_vault_call(ctx, runtime, partition_id,
-                                           WT_VAULT_OP_SET, &vreq,
+            status = wt_storage_vault_call(ctx, svc, WT_VAULT_OP_SET, &vreq,
                                            buffer + sizeof(req),
                                            in_len - sizeof(req), NULL, 0U,
                                            NULL);
@@ -251,12 +186,10 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
             if (cap > WT_FFM_TRANSFER_BYTES - sizeof(vreq)) {
                 cap = WT_FFM_TRANSFER_BYTES - sizeof(vreq);
             }
-            status = wt_storage_vault_call(ctx, runtime, partition_id,
-                                           WT_VAULT_OP_GET, &vreq, NULL, 0U,
-                                           buffer, cap, &out_len);
+            status = wt_storage_vault_call(ctx, svc, WT_VAULT_OP_GET, &vreq,
+                                           NULL, 0U, buffer, cap, &out_len);
             if (status == PSA_SUCCESS &&
-                    wt_storage_write_reply(ctx, runtime, partition_id,
-                                           msg->handle, buffer, out_len) !=
+                    wt_svc_write(svc, 0U, buffer, out_len) !=
                         WT_FFM_SUCCESS) {
                 status = PSA_ERROR_GENERIC_ERROR;
             }
@@ -266,35 +199,59 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
                 status = PSA_ERROR_INVALID_ARGUMENT;
             }
             else {
-                status = wt_storage_vault_call(ctx, runtime, partition_id,
-                                               WT_VAULT_OP_GET_INFO, &vreq,
-                                               NULL, 0U, &info, sizeof(info),
-                                               NULL);
+                status = wt_storage_vault_call(ctx, svc, WT_VAULT_OP_GET_INFO,
+                                               &vreq, NULL, 0U, &info,
+                                               sizeof(info), NULL);
                 if (status == PSA_SUCCESS) {
                     /* Hide the frontend's internal sealing flag. */
                     info.flags &= ~ctx->vault_flags;
                 }
                 if (status == PSA_SUCCESS &&
-                        wt_storage_write_reply(ctx, runtime, partition_id,
-                                               msg->handle, &info,
-                                               sizeof(info)) !=
+                        wt_svc_write(svc, 0U, &info, sizeof(info)) !=
                             WT_FFM_SUCCESS) {
                     status = PSA_ERROR_GENERIC_ERROR;
                 }
             }
             break;
         case WT_ITS_OP_REMOVE:
-            status = wt_storage_vault_call(ctx, runtime, partition_id,
-                                           WT_VAULT_OP_REMOVE, &vreq, NULL,
-                                           0U, NULL, 0U, NULL);
+            status = wt_storage_vault_call(ctx, svc, WT_VAULT_OP_REMOVE,
+                                           &vreq, NULL, 0U, NULL, 0U, NULL);
             break;
         default:
             status = PSA_ERROR_NOT_SUPPORTED;
             break;
         }
     }
-    wt_storage_vault_close(ctx, runtime, partition_id);
+    wt_storage_vault_close(ctx, svc);
     wt_forceZero(buffer, sizeof(buffer));
+    return status;
+}
+
+static psa_status_t wt_storage_handle(void* context, const wt_svc_t* svc,
+                                      const psa_msg_t* msg)
+{
+    wt_storage_service_ctx_t* ctx = (wt_storage_service_ctx_t*)context;
+    psa_status_t status;
+    uint32_t caps;
+
+    if (msg->type == PSA_IPC_CONNECT || msg->type == PSA_IPC_DISCONNECT) {
+        status = PSA_SUCCESS;
+    } else if (msg->type == WT_PS_OP_GET_SUPPORT) {
+        caps = ctx->caps;
+        if (msg->out_size[0] < sizeof(caps)) {
+            status = PSA_ERROR_INVALID_ARGUMENT;
+        } else if (wt_svc_write(svc, 0U, &caps, sizeof(caps)) !=
+                       WT_FFM_SUCCESS) {
+            status = PSA_ERROR_GENERIC_ERROR;
+        } else {
+            status = PSA_SUCCESS;
+        }
+    } else if (msg->type >= WT_ITS_OP_SET &&
+               msg->type <= WT_PS_OP_SET_EXTENDED) {
+        status = wt_storage_service_call(ctx, svc, msg);
+    } else {
+        status = PSA_ERROR_NOT_SUPPORTED;
+    }
     return status;
 }
 
@@ -302,62 +259,10 @@ int wt_storage_service_dispatch(void* context, wt_ffm_runtime_t* runtime,
                                 int32_t partition_id)
 {
     wt_storage_service_ctx_t* ctx = (wt_storage_service_ctx_t*)context;
-    psa_signal_t asserted = 0U;
-    psa_msg_t msg;
-    psa_status_t reply_status;
-    wt_spm_call_t call;
-    uint32_t caps;
 
     if (ctx == NULL || ctx->transport == NULL) {
         return WT_FFM_ERROR_STATE;
     }
-    if (wt_spm_wait_service_signal(ctx->transport, runtime, partition_id,
-                                   &asserted, NULL) != WT_FFM_SUCCESS) {
-        return WT_FFM_ERROR_STATE;
-    }
-    if (asserted == 0U) {
-        return WT_FFM_SUCCESS;
-    }
-
-    (void)memset(&call, 0, sizeof(call));
-    call.op = WT_SPM_OP_GET;
-    call.partition_id = partition_id;
-    call.signal = asserted;
-    call.msg = &msg;
-    if (ctx->transport(runtime, &call) != WT_FFM_SUCCESS ||
-            call.ret_status != PSA_SUCCESS) {
-        return WT_FFM_ERROR_STATE;
-    }
-
-    if (msg.type == PSA_IPC_CONNECT || msg.type == PSA_IPC_DISCONNECT) {
-        reply_status = PSA_SUCCESS;
-    } else if (msg.type == WT_PS_OP_GET_SUPPORT) {
-        caps = ctx->caps;
-        if (msg.out_size[0] < sizeof(caps)) {
-            reply_status = PSA_ERROR_INVALID_ARGUMENT;
-        } else if (wt_storage_write_reply(ctx, runtime, partition_id,
-                                          msg.handle, &caps,
-                                          sizeof(caps)) != WT_FFM_SUCCESS) {
-            reply_status = PSA_ERROR_GENERIC_ERROR;
-        } else {
-            reply_status = PSA_SUCCESS;
-        }
-    } else if (msg.type >= WT_ITS_OP_SET &&
-               msg.type <= WT_PS_OP_SET_EXTENDED) {
-        reply_status = wt_storage_service_call(ctx, runtime, partition_id,
-                                               &msg);
-    } else {
-        reply_status = PSA_ERROR_NOT_SUPPORTED;
-    }
-
-    (void)memset(&call, 0, sizeof(call));
-    call.op = WT_SPM_OP_REPLY;
-    call.partition_id = partition_id;
-    call.msg_handle = msg.handle;
-    call.status = reply_status;
-    if (ctx->transport(runtime, &call) != WT_FFM_SUCCESS ||
-            call.ret_int != WT_FFM_SUCCESS) {
-        return WT_FFM_ERROR_STATE;
-    }
-    return WT_FFM_SUCCESS;
+    return wt_svc_dispatch(ctx->transport, runtime, partition_id,
+                           wt_storage_handle, ctx);
 }

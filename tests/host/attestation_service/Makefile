@@ -40,6 +40,7 @@ _WT_SRCS := \
     $(ROOT)/src/ipc.c \
     $(ROOT)/src/ffm_domain.c \
     $(ROOT)/src/spm_gate.c \
+    $(ROOT)/src/services/service_ipc.c \
     $(ROOT)/src/services/attestation_service.c
 
 _TEST_SRCS := main.c

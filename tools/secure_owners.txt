@@ -154,6 +154,7 @@ wh_sec_wh_utils.o                      shared
 wt_sec_fwu_service.o                   shared
 wt_sec_libc_stubs.o                    shared
 wt_sec_spm_sp_api.o                    shared
+wt_sec_service_ipc.o                   shared
 wt_sec_storage_service.o               shared
 wt_sec_wt_hsm_lock.o                   shared
 

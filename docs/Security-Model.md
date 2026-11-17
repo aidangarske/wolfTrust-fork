@@ -340,13 +340,14 @@ unsealed data uses the same transaction and retires the old seal counter on
 commit. If the recovery copy is missing or invalid, the live object is kept
 only if it authenticates under the committed counter; otherwise that object
 is discarded and its counter retired. Other objects remain available.
-The vault requires wolfHSM's
-`wh_NvmFlash` backend, including its capacity and compaction callbacks, and
+The vault requires an NVM backend with capacity and compaction callbacks
+(the native store, or wolfHSM's `wh_NvmFlash` with `WT_NVM_STORE=wolfhsm`) and
 rejects incompatible backends at initialization. The flash HAL may be supplied
 by the target port or the host RAM simulator.
 
 Vault storage rejects its reserved key-object type. In the native engine,
-explicit key requests use the vault's separate key face. In the hsm engine,
+the crypto partition keeps explicit keys in the vault's store through the
+keystore door, and the vault refuses `WT_VAULT_OP_KEY_*` requests. In the hsm engine,
 guest cryptographic keys instead use the wolfHSM server keystore behind
 `SERVICE_HSM`. Both paths bind operations to the SPM-stamped caller namespace.
 

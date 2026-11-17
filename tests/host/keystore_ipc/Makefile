@@ -60,6 +60,7 @@ _WT_SRCS := \
     $(ROOT)/src/ipc.c \
     $(ROOT)/src/spm_gate.c \
     $(ROOT)/src/guest_verify.c \
+    $(ROOT)/src/services/service_ipc.c \
     $(ROOT)/src/services/vault_service.c \
     $(ROOT)/src/services/hsm_relay_service.c \
     $(ROOT)/src/services/nvm_client.c \
