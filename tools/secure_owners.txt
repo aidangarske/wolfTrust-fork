@@ -139,6 +139,7 @@ wc_sec_memory.o                        shared
 wc_sec_random.o                        shared
 wc_sec_sha256.o                        shared
 wc_sec_sp_cortexm.o                    shared
+wc_sec_sp_c32.o                        shared
 wc_sec_sp_int.o                        shared
 wc_sec_thumb2-aes-asm_c.o              shared
 wc_sec_thumb2-sha256-asm_c.o           shared
