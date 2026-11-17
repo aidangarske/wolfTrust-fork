@@ -227,38 +227,74 @@ the M33MU `devcrypto` scenario runs the PSA crypto API tests against the
 Secure service, and `devcryptolocal` runs them against the `WT_SECURE_PSA=0`
 guest.
 
-## Shared NVM object store
+## NVM object store
 
-wolfHSM is not removed in the native engine. Its self-contained flash-backed
-object store is linked in **both** engines and owns every persistent object:
-the vault, Internal Trusted Storage, Protected Storage, the firmware-update
-staging metadata, the anti-rollback version floors, and the native engine's
-vault key objects. Only wolfHSM's server, communication, and message layers
-are dropped in native. The store's on-flash format is identical in both
-engines, so persistent storage objects survive a switch between engines.
+Both engines keep every persistent object in one flash-backed object store
+behind wolfHSM's `whNvmCb` interface: the vault, Internal Trusted Storage,
+Protected Storage, the firmware-update staging metadata, the anti-rollback
+version floors, and the native engine's vault key objects. Callers use the
+`wh_Nvm_*` API in either engine, and `wh_nvm.c` enforces the access policy
+(`NONMODIFIABLE`, `NONDESTROYABLE`, `NONEXPORTABLE`, `TRUSTED`) in both.
 
-The Initial Attestation Key is the exception. The hsm engine keeps the IAK in
-the wolfHSM server keystore; the native engine keeps it as a vault key object.
-Neither engine migrates the other's, so switching engines on an
+`WT_NVM_STORE` selects the store under that API:
+
+- `native` (the native engine's default) links `src/services/nvm_native.c`, a
+  compact store written for wolfTrust. It does not implement `wh_Nvm_List`,
+  which only wolfHSM's server calls; a listing request returns
+  `WH_ERROR_ABORTED`.
+- `wolfhsm` links wolfHSM's `wh_nvm_flash.c` and `wh_flash_unit.c`. The hsm
+  engine always uses it, and a native build can select it with
+  `WT_NVM_STORE=wolfhsm`.
+
+The two stores use different on-flash formats, and neither reads the other's.
+When the store finds flash it cannot read (another format, or a damaged
+newest copy), it reformats only while the boot lifecycle still allows
+provisioning. A SECURED device refuses the store and fails closed instead of
+erasing its objects and rollback floors. Choose the engine and the store at
+provisioning time and keep them for the device's life.
+
+The Initial Attestation Key is not shared either. The hsm engine keeps the IAK
+in the wolfHSM server keystore; the native engine keeps it as a vault key
+object. Neither engine migrates the other's, so switching engines on an
 already-provisioned device does not carry the attestation identity: a
 provisioning lifecycle mints a fresh IAK, and a SECURED device with no IAK for
-the running engine fails closed rather than adopting a new one. Choose the
-crypto engine at provisioning time and keep it fixed for the device's life.
+the running engine fails closed rather than adopting a new one.
+
+### Native store format
+
+Each of the two NVM partitions holds a header, a directory of 32 slots, and a
+data area. Every record is a whole 16-byte unit that the flash programs once.
+
+- A slot is its metadata (two units), the object's data in the data area, and
+  a commit unit programmed last. Only a slot whose commit is intact counts.
+- Commit and header units store each value next to its complement, so a torn
+  program never reads as valid.
+- Writes append. A newer slot with the same ID replaces the older one, which
+  becomes reclaimable space.
+- Destroying objects, or reclaiming space, copies the live objects into the
+  other partition and programs that partition's header (with the next epoch)
+  last, then erases the old one. On boot the valid header with the higher
+  epoch wins.
+- A power cut leaves either the state before the operation or the state after
+  it. A slot torn by the cut is dropped by the next write, which first
+  compacts.
+- A directory whose committed slots are out of order, overlap, or disagree
+  with their metadata is refused; the store never falls back to the older
+  partition.
+
+The host suite `tests/host/nvm_native` cuts power at every program and erase
+step of an add, a replace, a destroy and a compaction, and checks that the
+store recovers to the old or the new state. The vault, PS, ITS, keystore and
+rollback suites run over both stores.
 
 | Source | Role |
 | --- | --- |
-| `wh_nvm.c` | Object-store API: add, read, metadata, destroy, and the access-policy checks (`WRITE_ONCE`, `SENSITIVE`, `NONEXPORTABLE`) |
-| `wh_nvm_flash.c` | Log-structured object store implemented over a flash callback |
-| `wh_flash_unit.c` | Program-unit-aligned read, program, erase, and blank-check helpers under the store |
-| `wh_lock.c` | Serialization lock so the shared store is safe across the confined keystore partitions |
-| `wh_utils.c` | Endian, constant-time compare, and force-zero helpers the store depends on |
+| `wh_nvm.c` | Object-store API and the access-policy checks, in both stores |
+| `src/services/nvm_native.c` | The native store (`WT_NVM_STORE=native`) |
+| `wh_nvm_flash.c`, `wh_flash_unit.c` | The wolfHSM store (`WT_NVM_STORE=wolfhsm`) |
+| `wh_lock.c` | Serialization lock so the store is safe across the confined keystore partitions |
+| `wh_utils.c` | Endian, constant-time compare, and force-zero helpers |
 | `wh_keyid.c` | Key-id namespace translation between client and server key identifiers |
-
-These files carry no server, communication, message, or wolfCrypt dependency,
-so linking them costs only the store itself. Reusing the proven store rather
-than reimplementing it keeps the on-flash format stable and avoids re-testing a
-storage rewrite; the flash-backed object store is not where either engine's
-size difference lives.
 
 ## wolfHSM engine
 

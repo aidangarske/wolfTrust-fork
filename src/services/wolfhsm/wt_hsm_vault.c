@@ -35,8 +35,18 @@
 #include "wolfhsm/wh_common.h"
 #include "wolfhsm/wh_keyid.h"
 #include "wolfhsm/wh_nvm.h"
+#if defined(WT_NVM_STORE_NATIVE)
+#include "wolftrust/nvm_native.h"
+#define WT_VAULT_STORE_AVAILABLE wt_nvs_get_available
+#define WT_VAULT_STORE_DESTROY   wt_nvs_destroy_objects
+#define WT_VAULT_STORE_UNIT      WT_NVS_UNIT
+#else
 #include "wolfhsm/wh_nvm_flash.h"
 #include "wolfhsm/wh_flash_unit.h"
+#define WT_VAULT_STORE_AVAILABLE wh_NvmFlash_GetAvailable
+#define WT_VAULT_STORE_DESTROY   wh_NvmFlash_DestroyObjects
+#define WT_VAULT_STORE_UNIT      WHFU_BYTES_PER_UNIT
+#endif
 
 /* Vault NVM id window: plain-NVM id space (type nibble 0), disjoint from the
  * keystore's composed ids (type nibble >= 1, e.g. the attestation IAK). */
@@ -77,8 +87,8 @@ int wt_hsm_vault_init(whNvmContext* nvm)
 {
     /* Reservations require physical append slots and flash compaction. */
     if (nvm == NULL || nvm->cb == NULL ||
-            nvm->cb->GetAvailable != wh_NvmFlash_GetAvailable ||
-            nvm->cb->DestroyObjects != wh_NvmFlash_DestroyObjects) {
+            nvm->cb->GetAvailable != WT_VAULT_STORE_AVAILABLE ||
+            nvm->cb->DestroyObjects != WT_VAULT_STORE_DESTROY) {
         g_vault_nvm = NULL;
         return -1;
     }
@@ -135,7 +145,8 @@ static psa_status_t wt_hsm_vault_table_load(wt_hsm_vault_table_t* table)
  * roll back so recovery cannot run out of space. */
 static uint32_t wt_hsm_vault_storage_size(size_t len)
 {
-    return (uint32_t)(WHFU_BYTES2UNITS(len) * WHFU_BYTES_PER_UNIT);
+    return (uint32_t)(((len + WT_VAULT_STORE_UNIT - 1u) /
+                       WT_VAULT_STORE_UNIT) * WT_VAULT_STORE_UNIT);
 }
 
 static psa_status_t wt_hsm_vault_reserve_in(whNvmContext* nvm,

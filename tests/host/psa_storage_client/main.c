@@ -44,7 +44,7 @@
 
 #include "wolfhsm/wh_error.h"
 #include "wolfhsm/wh_nvm.h"
-#include "wolfhsm/wh_nvm_flash.h"
+#include "test_nvm_store.h"
 #include "wolfhsm/wh_flash_ramsim.h"
 
 #include <stdint.h>

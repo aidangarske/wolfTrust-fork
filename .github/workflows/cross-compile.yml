@@ -170,6 +170,16 @@ jobs:
               done
             done
           done
+          for target in $(python3 tests/target/lib/scenario_matrix.py --list-ports); do
+            make TARGET=$target WT_NVM_STORE=wolfhsm secure-image \
+              TOOLPREFIX=arm-none-eabi- BUILD_DIR=build_addon_${target}_nvm_wolfhsm
+          done
+          if make WT_ENGINE=hsm WT_NVM_STORE=native secure-image \
+              TOOLPREFIX=arm-none-eabi- BUILD_DIR=build-nvm-bad 2> nvm.err; then
+            echo 'FAIL: WT_ENGINE=hsm WT_NVM_STORE=native built' >&2
+            exit 1
+          fi
+          grep -q 'WT_NVM_STORE=native requires WT_ENGINE=native' nvm.err
       - name: Build every port with PSA Crypto in the Secure image (WT_SECURE_PSA=1, every profile)
         run: |
           for target in $(python3 tests/target/lib/scenario_matrix.py --list-ports); do
