@@ -165,8 +165,11 @@ then exempt, and every assertion block that needs one is reported N/A),
 purpose so the emulator must not stop on the fault, `ends` names the
 scenarios whose run the port ends at the partition's deliberate fault
 instead of the guest's clean breakpoint, `guest_flags` adds the port's own
-guest build flags to a scenario (the FWU stream probe's sizes), and `exempt`
-names any other scenario the port does not run with its reason. `scenarios.py
+guest build flags to a scenario (the FWU stream probe's sizes),
+`iso_refusal_src` names the block that refuses `guestisoneg`'s cross-guest
+store in the trace (`SAU` by default, `MPCBB` where the GTZC block curtain
+decides it), and `exempt` names any other scenario the port does not run with
+its reason. `scenarios.py
 --selftest` fails a port that neither runs nor exempts a scenario, lists a
 port-private name, or names a scenario in its profile outside a case label.
 
@@ -407,6 +410,9 @@ never a pass.
 
 G6 is the eight scenarios every board runs, which a port cannot exempt;
 extras go in `port.json` as `hardware.qualification` or `hardware.optin`.
+`hardware.iso_probe` says how the board's `guestisoneg` store is refused:
+`faults` (the guest is quarantined), `silent` (latch 2 and guest 0 keeps
+running) or any other value (latch 1 or 2 and guest 0 stops at the store).
 
 A port is done when every step's last line is in the PR, the emulator and
 silicon evidence are recorded apart, and `tools/check-port-only-diff.sh

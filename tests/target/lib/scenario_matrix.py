@@ -107,9 +107,10 @@ def group_name(port, scenario):
     return scenario
 
 
-def engines_for(scenarios, engine):
+def engines_for(scenarios, engine, port_engines=ENGINES):
     engines = ("hsm",) if all(s in HSM_ONLY for s in scenarios) else ENGINES
-    return [e for e in engines if engine is None or e == engine]
+    return [e for e in engines
+            if e in port_engines and (engine is None or e == engine)]
 
 
 def entry(port, tier, engine, key, name):
@@ -124,15 +125,16 @@ def entry(port, tier, engine, key, name):
 
 def entries(port, tier, engine):
     port_def = PORTS[port]
+    port_engines = port_def["def"]["build"]["engines"]
     out = []
     if tier == "smoke":
         for scenario in port_def["smoke"]:
-            for eng in engines_for([scenario], engine):
+            for eng in engines_for([scenario], engine, port_engines):
                 out.append(entry(port, tier, eng, scenario,
                                  group_name(port, scenario)))
     else:
         for key, name in port_def["groups"]:
-            for eng in engines_for(key.split(), engine):
+            for eng in engines_for(key.split(), engine, port_engines):
                 out.append(entry(port, tier, eng, key, name))
     return out
 
