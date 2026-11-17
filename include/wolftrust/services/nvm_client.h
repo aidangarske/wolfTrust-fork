@@ -21,6 +21,7 @@
 #ifndef WOLFTRUST_SERVICES_NVM_CLIENT_H
 #define WOLFTRUST_SERVICES_NVM_CLIENT_H
 
+#include "wolftrust/services/service_ipc.h"
 #include "wolftrust/ffm.h"
 #include "wolftrust/spm_gate.h"
 
@@ -31,14 +32,7 @@
  * SERVICE_VAULT's keystore object door. The partition keeps only this
  * context, its connection handle, and the wolfHSM contexts layered on top;
  * the store memory itself belongs to the vault partition alone. */
-typedef struct wt_nvm_client {
-    wt_spm_transport_fn transport;
-    wt_ffm_runtime_t* runtime;
-    int32_t partition_id;
-    uint32_t vault_sid;
-    psa_handle_t vault_handle;
-    uint8_t vault_restarted;
-} wt_nvm_client_t;
+typedef wt_svc_client_t wt_nvm_client_t;
 
 /* The forwarding callback table (context = a bound wt_nvm_client_t). */
 extern const whNvmCb wt_nvm_client_cb;

@@ -301,7 +301,6 @@ int main(void)
     (void)memset(&its_ctx, 0, sizeof(its_ctx));
     its_ctx.transport = wt_spm_transport_direct;
     its_ctx.vault_sid = TEST_VAULT_SID;
-    its_ctx.vault_handle = 0;
     its_ctx.client_flags_mask = WT_VAULT_FLAG_WRITE_ONCE;
     if (wt_ffm_register_partition(&runtime, TEST_ITS_PARTITION,
                                   wt_storage_service_dispatch, &its_ctx) !=
@@ -312,7 +311,6 @@ int main(void)
     (void)memset(&ps_ctx, 0, sizeof(ps_ctx));
     ps_ctx.transport = wt_spm_transport_direct;
     ps_ctx.vault_sid = TEST_VAULT_SID;
-    ps_ctx.vault_handle = 0;
     ps_ctx.client_flags_mask = WT_VAULT_FLAG_WRITE_ONCE |
                                WT_VAULT_FLAG_NO_CONFIDENTIALITY |
                                WT_VAULT_FLAG_NO_REPLAY;

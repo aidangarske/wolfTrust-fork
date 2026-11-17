@@ -24,91 +24,27 @@
 
 #include <string.h>
 
-/* One completed gate op: both transports finish blocking SP-as-client ops
- * before returning (the SVC transport re-issues around the coroutine block;
- * the direct transport dispatches the pending message inline). A residual
- * NOT_READY is therefore a failure, never a reason to spin. */
-static int wt_storage_xfer(const wt_svc_t* svc, wt_spm_call_t* call)
-{
-    call->partition_id = svc->partition_id;
-    if (svc->transport(svc->runtime, call) != WT_FFM_SUCCESS ||
-            call->ret_int == WT_FFM_ERROR_NOT_READY) {
-        return WT_FFM_ERROR_STATE;
-    }
-    return WT_FFM_SUCCESS;
-}
-
-/* SP-to-SP connection to the vault, held for one request: the vault may
- * restart between requests, and a handle kept across that is unusable. */
-static psa_status_t wt_storage_vault_handle(wt_storage_service_ctx_t* ctx,
-                                            const wt_svc_t* svc)
-{
-    wt_spm_call_t call;
-
-    if (ctx->vault_handle > 0) {
-        return PSA_SUCCESS;
-    }
-    (void)memset(&call, 0, sizeof(call));
-    call.op = WT_SPM_OP_CONNECT;
-    call.sid = ctx->vault_sid;
-    call.version = 1U;
-    if (wt_storage_xfer(svc, &call) != WT_FFM_SUCCESS ||
-            call.ret_int != WT_FFM_SUCCESS || call.ret_handle <= 0) {
-        return PSA_ERROR_GENERIC_ERROR;
-    }
-    ctx->vault_handle = call.ret_handle;
-    return PSA_SUCCESS;
-}
-
-static void wt_storage_vault_close(wt_storage_service_ctx_t* ctx,
-                                   const wt_svc_t* svc)
-{
-    wt_spm_call_t call;
-
-    if (ctx->vault_handle > 0) {
-        (void)memset(&call, 0, sizeof(call));
-        call.op = WT_SPM_OP_CLOSE;
-        call.msg_handle = ctx->vault_handle;
-        (void)wt_storage_xfer(svc, &call);
-    }
-    ctx->vault_handle = 0;
-}
-
-static psa_status_t wt_storage_vault_call(wt_storage_service_ctx_t* ctx,
-                                          const wt_svc_t* svc, int32_t type,
+/* One vault request on a connection held for this request only: the vault
+ * may restart between requests, and a handle kept across that is unusable. */
+static psa_status_t wt_storage_vault_call(wt_svc_client_t* vault,
+                                          int32_t type,
                                           const wt_vault_req_t* vreq,
                                           const uint8_t* set_data,
                                           size_t set_len,
                                           void* out, size_t out_cap,
                                           size_t* out_len)
 {
-    wt_spm_call_t call;
+    psa_status_t status = PSA_ERROR_GENERIC_ERROR;
+    size_t len = out_cap;
 
-    (void)memset(&call, 0, sizeof(call));
-    call.op = WT_SPM_OP_CALL;
-    call.msg_handle = ctx->vault_handle;
-    call.call_type = type;
-    call.sp_in[0].base = vreq;
-    call.sp_in[0].len = sizeof(*vreq);
-    call.sp_in_len = 1U;
-    if (set_data != NULL) {
-        call.sp_in[1].base = set_data;
-        call.sp_in[1].len = set_len;
-        call.sp_in_len = 2U;
+    if (wt_svc_client_call(vault, type, vreq, sizeof(*vreq), set_data,
+                           set_len, out, &len, &status) != WT_FFM_SUCCESS) {
+        status = PSA_ERROR_GENERIC_ERROR;
     }
-    if (out != NULL) {
-        call.sp_out[0].base = out;
-        call.sp_out[0].len = out_cap;
-        call.sp_out_len = 1U;
+    else if (out_len != NULL) {
+        *out_len = len;
     }
-    if (wt_storage_xfer(svc, &call) != WT_FFM_SUCCESS ||
-            call.ret_int != WT_FFM_SUCCESS) {
-        return PSA_ERROR_GENERIC_ERROR;
-    }
-    if (out_len != NULL) {
-        *out_len = call.sp_out[0].len;
-    }
-    return call.ret_status;
+    return status;
 }
 
 static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
@@ -122,8 +58,14 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
     size_t in_len = 0U;
     size_t out_len = 0U;
     size_t cap;
+    wt_svc_client_t vault;
     psa_status_t status;
 
+    (void)memset(&vault, 0, sizeof(vault));
+    vault.transport = svc->transport;
+    vault.runtime = svc->runtime;
+    vault.partition_id = svc->partition_id;
+    vault.sid = ctx->vault_sid;
     status = PSA_ERROR_INVALID_ARGUMENT;
     if (msg->in_size[0] >= sizeof(req)) {
         if (msg->in_size[0] > sizeof(buffer)) {
@@ -146,7 +88,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
                 status = PSA_ERROR_NOT_SUPPORTED;
             }
             else {
-                status = wt_storage_vault_handle(ctx, svc);
+                status = PSA_SUCCESS;
             }
         }
     }
@@ -172,7 +114,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
                 break;
             }
             vreq.flags = req.flags | ctx->vault_flags;
-            status = wt_storage_vault_call(ctx, svc, WT_VAULT_OP_SET, &vreq,
+            status = wt_storage_vault_call(&vault, WT_VAULT_OP_SET, &vreq,
                                            buffer + sizeof(req),
                                            in_len - sizeof(req), NULL, 0U,
                                            NULL);
@@ -186,7 +128,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
             if (cap > WT_FFM_TRANSFER_BYTES - sizeof(vreq)) {
                 cap = WT_FFM_TRANSFER_BYTES - sizeof(vreq);
             }
-            status = wt_storage_vault_call(ctx, svc, WT_VAULT_OP_GET, &vreq,
+            status = wt_storage_vault_call(&vault, WT_VAULT_OP_GET, &vreq,
                                            NULL, 0U, buffer, cap, &out_len);
             if (status == PSA_SUCCESS &&
                     wt_svc_write(svc, 0U, buffer, out_len) !=
@@ -199,7 +141,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
                 status = PSA_ERROR_INVALID_ARGUMENT;
             }
             else {
-                status = wt_storage_vault_call(ctx, svc, WT_VAULT_OP_GET_INFO,
+                status = wt_storage_vault_call(&vault, WT_VAULT_OP_GET_INFO,
                                                &vreq, NULL, 0U, &info,
                                                sizeof(info), NULL);
                 if (status == PSA_SUCCESS) {
@@ -214,7 +156,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
             }
             break;
         case WT_ITS_OP_REMOVE:
-            status = wt_storage_vault_call(ctx, svc, WT_VAULT_OP_REMOVE,
+            status = wt_storage_vault_call(&vault, WT_VAULT_OP_REMOVE,
                                            &vreq, NULL, 0U, NULL, 0U, NULL);
             break;
         default:
@@ -222,7 +164,7 @@ static psa_status_t wt_storage_service_call(wt_storage_service_ctx_t* ctx,
             break;
         }
     }
-    wt_storage_vault_close(ctx, svc);
+    wt_svc_client_close(&vault);
     wt_forceZero(buffer, sizeof(buffer));
     return status;
 }

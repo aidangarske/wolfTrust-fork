@@ -44,6 +44,26 @@ int wt_svc_read(const wt_svc_t* svc, uint32_t idx, void* buffer,
 int wt_svc_write(const wt_svc_t* svc, uint32_t idx, const void* data,
                  size_t len);
 
+/* A Secure Partition's connection to another partition's service. Set
+ * restarted when the server restarts; the next call reconnects. */
+typedef struct wt_svc_client {
+    wt_spm_transport_fn transport;
+    wt_ffm_runtime_t*   runtime;
+    int32_t             partition_id;
+    uint32_t            sid;
+    psa_handle_t        handle;
+    uint8_t             restarted;
+} wt_svc_client_t;
+
+/* Connect if needed and call: in0 and in1 are optional invecs, out is an
+ * optional outvec of *out_len bytes, updated to the bytes written. Returns
+ * WT_FFM_SUCCESS with the service status in *status. */
+int wt_svc_client_call(wt_svc_client_t* client, int32_t type,
+                       const void* in0, size_t in0_len,
+                       const void* in1, size_t in1_len,
+                       void* out, size_t* out_len, psa_status_t* status);
+void wt_svc_client_close(wt_svc_client_t* client);
+
 /* Serve one message: wait, get, run handler, reply with its status. */
 int wt_svc_dispatch(wt_spm_transport_fn transport, wt_ffm_runtime_t* runtime,
                     int32_t partition_id, wt_svc_handler_fn handler,

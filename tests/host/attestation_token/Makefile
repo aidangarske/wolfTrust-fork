@@ -53,6 +53,7 @@ include ../vendor_c99.mk
 COSE_CFLAGS := $(filter-out -Werror -pedantic,$(CFLAGS))
 
 _WT_SRCS := \
+    $(ROOT)/src/services/service_ipc.c \
     $(ROOT)/src/services/initial_attestation.c \
     $(ROOT)/src/services/attestation_cose.c \
     $(ROOT)/src/guest_verify.c

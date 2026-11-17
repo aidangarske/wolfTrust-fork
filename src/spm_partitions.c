@@ -484,7 +484,6 @@ static void wt_spm_its_entry(void* arg)
 #endif
     ctx.transport = wt_spm_svc_transport;
     ctx.vault_sid = SERVICE_VAULT_SID;
-    ctx.vault_handle = 0;
     ctx.client_flags_mask = WT_VAULT_FLAG_WRITE_ONCE;
     ctx.vault_flags = 0U;
     ctx.caps = 0U;
@@ -561,7 +560,6 @@ static void wt_spm_ps_entry(void* arg)
 
     ctx.transport = wt_spm_svc_transport;
     ctx.vault_sid = SERVICE_VAULT_SID;
-    ctx.vault_handle = 0;
     ctx.client_flags_mask = WT_VAULT_FLAG_WRITE_ONCE |
                             WT_VAULT_FLAG_NO_CONFIDENTIALITY |
                             WT_VAULT_FLAG_NO_REPLAY;

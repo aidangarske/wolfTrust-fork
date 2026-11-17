@@ -19,6 +19,7 @@
  */
 
 #include "wolftrust/services/initial_attestation.h"
+#include "wolftrust/services/service_ipc.h"
 
 #include "wolftrust/guest_verify.h"
 #include "wolftrust/spm_gate.h"
@@ -72,12 +73,7 @@ static bool g_attest_ready;
 /* SERVICE_HSM signer binding: transport, the attestation partition's own id
  * (stamped by the SVC on target), the crypto service's SID, and the cached
  * connection. A NULL transport selects the engine's local signer. */
-static wt_spm_transport_fn g_attest_hsm_transport;
-static wt_ffm_runtime_t* g_attest_hsm_runtime;
-static int32_t g_attest_hsm_partition;
-static uint32_t g_attest_hsm_sid;
-static psa_handle_t g_attest_hsm_handle;
-static uint8_t g_attest_hsm_restarted;
+static wt_svc_client_t g_attest_hsm;
 
 static void wt_attest_force_zero(void* memory, size_t size)
 {
@@ -96,44 +92,17 @@ int wt_initial_attest_bind_hsm(wt_spm_transport_fn transport,
     if (transport == NULL || partition_id <= 0) {
         return WT_ATTEST_ERROR_INVALID_ARGUMENT;
     }
-    g_attest_hsm_transport = transport;
-    g_attest_hsm_runtime = runtime;
-    g_attest_hsm_partition = partition_id;
-    g_attest_hsm_sid = hsm_sid;
-    g_attest_hsm_handle = 0;
-    g_attest_hsm_restarted = 0U;
+    (void)memset(&g_attest_hsm, 0, sizeof(g_attest_hsm));
+    g_attest_hsm.transport = transport;
+    g_attest_hsm.runtime = runtime;
+    g_attest_hsm.partition_id = partition_id;
+    g_attest_hsm.sid = hsm_sid;
     return WT_ATTEST_SUCCESS;
 }
 
 void wt_initial_attest_hsm_restarted(void)
 {
-    g_attest_hsm_restarted = 1U;
-}
-
-static int wt_attest_hsm_xfer(wt_spm_call_t* call)
-{
-    if (g_attest_hsm_transport(g_attest_hsm_runtime, call) !=
-            WT_FFM_SUCCESS || call->ret_int == WT_FFM_ERROR_NOT_READY) {
-        return WH_ERROR_ABORTED;
-    }
-    return 0;
-}
-
-/* Release a connection the crypto partition's fault dropped to the error
- * state: FF-M lets the client close such a handle, never call it again. */
-static void wt_attest_hsm_close(void)
-{
-    wt_spm_call_t call;
-
-    if (g_attest_hsm_handle > 0) {
-        (void)memset(&call, 0, sizeof(call));
-        call.op = WT_SPM_OP_CLOSE;
-        call.partition_id = g_attest_hsm_partition;
-        call.msg_handle = g_attest_hsm_handle;
-        (void)wt_attest_hsm_xfer(&call);
-    }
-    g_attest_hsm_handle = 0;
-    g_attest_hsm_restarted = 0U;
+    g_attest_hsm.restarted = 1U;
 }
 
 /* One attestation-door call on SERVICE_HSM: in is the digest (SIGN) or
@@ -142,59 +111,17 @@ static void wt_attest_hsm_close(void)
 static int wt_attest_hsm_call(int32_t type, const uint8_t* in, size_t in_len,
                               uint8_t* out, size_t out_len)
 {
-    wt_spm_call_t call;
-    int ret = 0;
+    psa_status_t status;
+    size_t got = out_len;
+    int ret = WH_ERROR_ABORTED;
 
-    if (g_attest_hsm_restarted != 0U) {
-        wt_attest_hsm_close();
-    }
-    if (g_attest_hsm_handle <= 0) {
-        (void)memset(&call, 0, sizeof(call));
-        call.op = WT_SPM_OP_CONNECT;
-        call.partition_id = g_attest_hsm_partition;
-        call.sid = g_attest_hsm_sid;
-        call.version = 1U;
-        ret = wt_attest_hsm_xfer(&call);
-        if (ret == 0 &&
-                (call.ret_int != WT_FFM_SUCCESS || call.ret_handle <= 0)) {
-            ret = WH_ERROR_ABORTED;
-        }
-        if (ret == 0) {
-            g_attest_hsm_handle = call.ret_handle;
-        }
-    }
-    if (ret == 0) {
-        (void)memset(&call, 0, sizeof(call));
-        call.op = WT_SPM_OP_CALL;
-        call.partition_id = g_attest_hsm_partition;
-        call.msg_handle = g_attest_hsm_handle;
-        call.call_type = type;
-        if (in != NULL) {
-            call.sp_in[0].base = in;
-            call.sp_in[0].len = in_len;
-            call.sp_in_len = 1U;
-        }
-        call.sp_out[0].base = out;
-        call.sp_out[0].len = out_len;
-        call.sp_out_len = 1U;
-        ret = wt_attest_hsm_xfer(&call);
-        if (ret == 0 && call.ret_int != WT_FFM_SUCCESS) {
-            ret = WH_ERROR_ABORTED;
-        }
-    }
-    if (ret == 0) {
-        if (call.ret_status == PSA_ERROR_COMMUNICATION_FAILURE) {
-            /* The crypto partition faulted under this request
-             * (WT-FFM-0017): close the dropped connection now. */
-            wt_attest_hsm_close();
-            ret = WH_ERROR_ABORTED;
-        }
-        else if (call.ret_status == PSA_ERROR_BAD_STATE) {
+    if (wt_svc_client_call(&g_attest_hsm, type, in, in_len, NULL, 0U, out,
+                           &got, &status) == WT_FFM_SUCCESS) {
+        if (status == PSA_ERROR_BAD_STATE) {
             ret = WH_ERROR_NOTREADY;
         }
-        else if (call.ret_status != PSA_SUCCESS ||
-                 call.sp_out[0].len != out_len) {
-            ret = WH_ERROR_ABORTED;
+        else if (status == PSA_SUCCESS && got == out_len) {
+            ret = 0;
         }
     }
     return ret;
@@ -205,7 +132,7 @@ static int wt_attest_signer_sign(const uint8_t* digest, size_t digestSize,
 {
     int ret;
 
-    if (g_attest_hsm_transport == NULL) {
+    if (g_attest_hsm.transport == NULL) {
         return wt_hsm_attest_sign(digest, digestSize, signature,
                                   signatureCapacity, signatureSize);
     }
@@ -234,7 +161,7 @@ static int wt_attest_signer_public_key(uint8_t* publicKey,
 {
     int ret;
 
-    if (g_attest_hsm_transport == NULL) {
+    if (g_attest_hsm.transport == NULL) {
         return wt_hsm_attest_public_key(publicKey, publicKeyCapacity,
                                         publicKeySize);
     }

@@ -231,7 +231,6 @@ static int test_runtime_up(wt_ffm_runtime_t* runtime,
     (void)memset(ps_ctx, 0, sizeof(*ps_ctx));
     ps_ctx->transport = wt_spm_transport_direct;
     ps_ctx->vault_sid = TEST_VAULT_SID;
-    ps_ctx->vault_handle = 0;
     ps_ctx->client_flags_mask = WT_VAULT_FLAG_WRITE_ONCE |
                                 WT_VAULT_FLAG_NO_CONFIDENTIALITY |
                                 WT_VAULT_FLAG_NO_REPLAY;
