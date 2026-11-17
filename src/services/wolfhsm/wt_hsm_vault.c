@@ -551,6 +551,23 @@ static psa_status_t wt_hsm_vault_map_err(int rc)
     return status;
 }
 
+/* Load the counter table (running recovery) and find the caller's object. */
+static psa_status_t wt_hsm_vault_open(wt_hsm_vault_table_t* table,
+                                      int32_t owner, int32_t sub,
+                                      uint64_t uid, whNvmId* id,
+                                      whNvmMetadata* meta, whNvmId* free_id)
+{
+    psa_status_t status = PSA_ERROR_NOT_SUPPORTED;
+
+    if (g_vault_nvm != NULL) {
+        status = wt_hsm_vault_table_load(table);
+        if (status == PSA_SUCCESS) {
+            status = wt_hsm_vault_lookup(owner, sub, uid, id, meta, free_id);
+        }
+    }
+    return status;
+}
+
 static psa_status_t wt_hsm_vault_set(int32_t owner, int32_t sub,
                                      uint64_t uid, uint32_t flags,
                                      const uint8_t* data, size_t len)
@@ -579,11 +596,7 @@ static psa_status_t wt_hsm_vault_set(int32_t owner, int32_t sub,
     if ((flags & WT_VAULT_FLAG_SEALED) != 0U && g_vault_sealer == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
-    status = wt_hsm_vault_table_load(&table);
-    if (status != PSA_SUCCESS) {
-        return status;
-    }
-    status = wt_hsm_vault_lookup(owner, sub, uid, &id, &meta, &free_id);
+    status = wt_hsm_vault_open(&table, owner, sub, uid, &id, &meta, &free_id);
     if (status == PSA_SUCCESS) {
         /* A storage SET must never overwrite a key object (WT-FFM-0046),
          * and honours WRITE_ONCE before any backend write; the *Checked add
@@ -726,14 +739,7 @@ static psa_status_t wt_hsm_vault_get(int32_t owner, int32_t sub,
     size_t pt_len;
     psa_status_t status;
 
-    if (g_vault_nvm == NULL) {
-        return PSA_ERROR_NOT_SUPPORTED;
-    }
-    status = wt_hsm_vault_table_load(&table);
-    if (status != PSA_SUCCESS) {
-        return status;
-    }
-    status = wt_hsm_vault_lookup(owner, sub, uid, &id, &meta, NULL);
+    status = wt_hsm_vault_open(&table, owner, sub, uid, &id, &meta, NULL);
     if (status != PSA_SUCCESS) {
         return status;
     }
@@ -796,14 +802,7 @@ static psa_status_t wt_hsm_vault_get_info(int32_t owner, int32_t sub,
     wt_hsm_vault_table_t table;
     psa_status_t status;
 
-    if (g_vault_nvm == NULL) {
-        return PSA_ERROR_NOT_SUPPORTED;
-    }
-    status = wt_hsm_vault_table_load(&table);
-    if (status != PSA_SUCCESS) {
-        return status;
-    }
-    status = wt_hsm_vault_lookup(owner, sub, uid, NULL, &meta, NULL);
+    status = wt_hsm_vault_open(&table, owner, sub, uid, NULL, &meta, NULL);
     if (status != PSA_SUCCESS) {
         return status;
     }
@@ -830,14 +829,7 @@ static psa_status_t wt_hsm_vault_remove(int32_t owner, int32_t sub,
     uint32_t flags;
     psa_status_t status;
 
-    if (g_vault_nvm == NULL) {
-        return PSA_ERROR_NOT_SUPPORTED;
-    }
-    status = wt_hsm_vault_table_load(&table);
-    if (status != PSA_SUCCESS) {
-        return status;
-    }
-    status = wt_hsm_vault_lookup(owner, sub, uid, &id, &meta, NULL);
+    status = wt_hsm_vault_open(&table, owner, sub, uid, &id, &meta, NULL);
     if (status != PSA_SUCCESS) {
         return status;
     }
