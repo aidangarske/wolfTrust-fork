@@ -398,6 +398,15 @@ volatile uint32_t g_wt_ffm_refuse_base;
  * 6 state, 7 alloc). */
 volatile uint32_t g_wt_ffm_call_trace;
 
+static void wt_ffm_call_refused(psa_client_id_t caller, uint32_t site,
+                                uint32_t base)
+{
+    if (caller < 0) {
+        g_wt_ffm_call_trace |= site << 28;
+        g_wt_ffm_refuse_base = base;
+    }
+}
+
 static int wt_ffm_prepare_vectors(wt_ffm_runtime_t* runtime,
                                   wt_ffm_message_runtime_t* message,
                                   const psa_invec* in_vec, size_t in_len,
@@ -666,83 +675,33 @@ psa_handle_t wt_ffm_connect(wt_ffm_runtime_t* runtime,
                             psa_client_id_t caller, uint32_t sid,
                             uint32_t version)
 {
-    wt_ffm_connection_runtime_t* connection;
     wt_ffm_message_runtime_t* message;
-    uint16_t connection_index;
     uint16_t message_index;
-    uint16_t service_index;
     psa_handle_t handle;
-    psa_status_t status;
     int ret;
 
-    if (runtime == NULL || caller == 0)
-        return (psa_handle_t)PSA_ERROR_INVALID_ARGUMENT;
-    ret = wt_ffm_find_service(runtime, sid, &service_index);
-    if (ret != WT_FFM_SUCCESS ||
-            !wt_ffm_caller_allowed(runtime, caller, service_index) ||
-            !wt_ffm_version_allowed(
-                runtime->services[service_index].descriptor, version)) {
-        return (psa_handle_t)PSA_ERROR_CONNECTION_REFUSED;
-    }
-    if (runtime->services[service_index].descriptor->connection_based == 0U)
-        return (psa_handle_t)PSA_ERROR_NOT_SUPPORTED;
-
-    /* Per-client quota: a single client cannot reserve the whole shared
-     * connection pool and starve peers of every service (CWE-400). */
-    if (wt_ffm_client_connection_count(runtime, caller) >=
-            WT_FFM_MAX_CONNECTIONS_PER_CLIENT)
-        return (psa_handle_t)PSA_ERROR_CONNECTION_BUSY;
-    /* Non-secure clients share a bounded part of the pool; the rest stays
-     * for the Secure Partitions' dependency connections. */
-    if (caller < 0 && wt_ffm_ns_connection_count(runtime) >=
-            WT_FFM_MAX_NS_CONNECTIONS)
-        return (psa_handle_t)PSA_ERROR_CONNECTION_BUSY;
-
-    if (wt_ffm_alloc_connection(runtime, &connection_index) !=
-            WT_FFM_SUCCESS)
-        return (psa_handle_t)PSA_ERROR_CONNECTION_BUSY;
-    if (wt_ffm_alloc_message(runtime, &message_index) != WT_FFM_SUCCESS) {
-        wt_ffm_release_connection(runtime, connection_index);
-        return (psa_handle_t)PSA_ERROR_CONNECTION_BUSY;
-    }
-
-    connection = &runtime->connections[connection_index];
-    connection->caller = caller;
-    connection->client_instance = wt_ffm_caller_instance(runtime, caller);
-    connection->service_index = service_index;
-    connection->state = WT_IPC_CONNECTION_PENDING_CONNECT;
-    handle = wt_ffm_make_handle(WT_FFM_HANDLE_CONNECTION, connection_index,
-                                connection->generation);
-
-    message = &runtime->messages[message_index];
-    message->caller = caller;
-    message->connection_index = connection_index;
-    message->service_index = service_index;
-    message->type = PSA_IPC_CONNECT;
-    wt_ffm_enqueue(runtime, service_index, message_index);
+    handle = wt_ffm_connect_begin(runtime, caller, sid, version,
+                                  &message_index);
+    if (handle <= 0)
+        return handle;
     ret = wt_ffm_dispatch_message(runtime, message_index);
-    status = message->reply_status;
-    if (ret != WT_FFM_SUCCESS && message->active != 0U) {
-        message->abandoned = WT_FFM_ABANDONED_CLOSE;
+    if (ret != WT_FFM_SUCCESS) {
+        message = &runtime->messages[message_index];
+        if (message->active != 0U) {
+            message->abandoned = WT_FFM_ABANDONED_CLOSE;
+        }
+        else {
+            /* A refused CONNECT dispatch must unlink the message before its
+             * slot is released, or the slot aliases the next request. */
+            wt_ffm_dequeue_message(runtime, message->service_index,
+                                   message_index);
+            (void)wt_ffm_close_finish(runtime, message_index);
+        }
         return ret == WT_FFM_ERROR_RESOURCE ?
             (psa_handle_t)PSA_ERROR_CONNECTION_BUSY :
             (psa_handle_t)PSA_ERROR_GENERIC_ERROR;
     }
-    if (ret != WT_FFM_SUCCESS) {
-        /* A refused CONNECT dispatch must unlink the message before its slot
-         * is released, or the slot aliases the next queued request. */
-        wt_ffm_dequeue_message(runtime, service_index, message_index);
-    }
-    wt_ffm_release_message(runtime, message_index);
-    if (ret != WT_FFM_SUCCESS || status != PSA_SUCCESS) {
-        wt_ffm_release_connection(runtime, connection_index);
-        return ret == WT_FFM_ERROR_RESOURCE ?
-            (psa_handle_t)PSA_ERROR_CONNECTION_BUSY :
-            (psa_handle_t)(status == PSA_SUCCESS ?
-                PSA_ERROR_GENERIC_ERROR : status);
-    }
-
-    return handle;
+    return wt_ffm_connect_finish(runtime, message_index);
 }
 
 psa_status_t wt_ffm_call(wt_ffm_runtime_t* runtime,
@@ -751,119 +710,33 @@ psa_status_t wt_ffm_call(wt_ffm_runtime_t* runtime,
                          size_t in_len, psa_outvec* out_vec,
                          size_t out_len)
 {
-    wt_ffm_connection_runtime_t* connection;
     wt_ffm_message_runtime_t* message;
-    uint16_t connection_index;
+    wt_ffm_connection_runtime_t* connection;
     uint16_t message_index;
     psa_status_t status;
-    size_t i;
-    int ret;
 
-    if (runtime == NULL || caller == 0)
-        return PSA_ERROR_INVALID_ARGUMENT;
-    if ((g_wt_ffm_call_trace & 0xF0000000UL) == 0U) {
-        g_wt_ffm_call_trace = ((uint32_t)type << 16) |
-            (((uint32_t)in_len & 0xFFU) << 8) | ((uint32_t)out_len & 0xFFU);
-    }
-    ret = wt_ffm_connection_from_handle(runtime, caller, handle,
-                                        &connection_index);
-    if (ret != WT_FFM_SUCCESS) {
-        g_wt_ffm_call_trace |= 5UL << 28;
-        g_wt_ffm_refuse_base = (uint32_t)handle;
-        /* FF-M: a forged, stale, or wrong-owner handle is invalid-handle use,
-         * a PROGRAMMER ERROR the Secure gate must panic the caller for. */
-        return PSA_ERROR_PROGRAMMER_ERROR;
-    }
-    connection = &runtime->connections[connection_index];
-    /* FF-M: a negative call type and in_len + out_len > PSA_MAX_IOVEC are
-     * both PROGRAMMER ERRORs, and the valid connection they arrived on must
-     * drop to the error state rather than stay usable. */
-    if (type < 0 || in_len > PSA_MAX_IOVEC || out_len > PSA_MAX_IOVEC ||
-            in_len + out_len > PSA_MAX_IOVEC) {
-        g_wt_ffm_call_trace |= 4UL << 28;
-        if (connection->state == WT_IPC_CONNECTION_IDLE)
-            connection->state = WT_IPC_CONNECTION_ERROR;
-        else
-            connection->error_latch = 1U;
-        return PSA_ERROR_PROGRAMMER_ERROR;
-    }
-    if (connection->state != WT_IPC_CONNECTION_IDLE) {
-        g_wt_ffm_call_trace |= 6UL << 28;
-        /* FF-M: calling a connection that is already handling a request, or one
-         * dropped by a prior PROGRAMMER ERROR, is itself a PROGRAMMER ERROR
-         * until the client closes the handle; the latch keeps the connection
-         * in the error state once the in-flight request completes. */
-        connection->error_latch = 1U;
-        return PSA_ERROR_PROGRAMMER_ERROR;
-    }
-    if (wt_ffm_alloc_message(runtime, &message_index) != WT_FFM_SUCCESS) {
-        g_wt_ffm_call_trace |= 7UL << 28;
-        return PSA_ERROR_INSUFFICIENT_MEMORY;
-    }
-
-    message = &runtime->messages[message_index];
-    message->caller = caller;
-    message->connection_index = connection_index;
-    message->service_index = connection->service_index;
-    message->type = type;
-    ret = wt_ffm_prepare_vectors(runtime, message, in_vec, in_len,
-                                 out_vec, out_len);
-    if (ret != WT_FFM_SUCCESS) {
-        wt_ffm_release_message(runtime, message_index);
-        /* FF-M: a vector referencing memory the caller cannot access is a
-         * PROGRAMMER ERROR, not a permission denial; the connection stays in
-         * the error state until the client closes the handle. */
-        if (ret != WT_FFM_ERROR_BUFFER)
-            connection->state = WT_IPC_CONNECTION_ERROR;
-        return ret == WT_FFM_ERROR_BUFFER ? PSA_ERROR_INVALID_ARGUMENT :
-                                            PSA_ERROR_PROGRAMMER_ERROR;
-    }
-
-    connection->state = WT_IPC_CONNECTION_PENDING_REQUEST;
-    wt_ffm_enqueue(runtime, connection->service_index, message_index);
-    ret = wt_ffm_dispatch_message(runtime, message_index);
-    if (ret != WT_FFM_SUCCESS) {
+    status = wt_ffm_call_begin(runtime, caller, handle, type, in_vec, in_len,
+                               out_vec, out_len, &message_index);
+    if (status != PSA_SUCCESS)
+        return status;
+    if (wt_ffm_dispatch_message(runtime, message_index) != WT_FFM_SUCCESS) {
+        message = &runtime->messages[message_index];
+        connection = &runtime->connections[message->connection_index];
         connection->state = WT_IPC_CONNECTION_ERROR;
         if (message->active != 0U) {
             connection->error_latch = 1U;
             message->abandoned = WT_FFM_ABANDONED_REPLY;
             (void)memset(message->client_output, 0,
                          sizeof(message->client_output));
-            return PSA_ERROR_GENERIC_ERROR;
         }
-        wt_ffm_dequeue_message(runtime, connection->service_index,
-                               message_index);
-        wt_ffm_release_message(runtime, message_index);
+        else {
+            wt_ffm_dequeue_message(runtime, message->service_index,
+                                   message_index);
+            wt_ffm_release_message(runtime, message_index);
+        }
         return PSA_ERROR_GENERIC_ERROR;
     }
-
-    status = message->reply_status;
-    /* FF-M requires atomic output publication: revalidate every destination
-     * before writing any, so a later revalidation failure cannot leave partial
-     * data or a partial length in the client's buffers. */
-    for (i = 0U; i < message->out_count; i++) {
-        if (message->out_position[i] != 0U &&
-                runtime->ops->check_write(runtime->port_context,
-                    message->caller, message->client_output[i],
-                    message->out_position[i]) == 0) {
-            /* FF-M: an invalid caller output reference is a PROGRAMMER
-             * ERROR, never a permission denial; the connection stays in the
-             * error state until close, and nothing was written (two-phase). */
-            connection->state = WT_IPC_CONNECTION_ERROR;
-            wt_ffm_release_message(runtime, message_index);
-            return PSA_ERROR_PROGRAMMER_ERROR;
-        }
-    }
-    for (i = 0U; i < message->out_count; i++) {
-        if (message->out_position[i] != 0U) {
-            (void)memcpy(message->client_output[i],
-                &message->output[message->out_offset[i]],
-                message->out_position[i]);
-        }
-        out_vec[i].len = message->out_position[i];
-    }
-    wt_ffm_release_message(runtime, message_index);
-    return status;
+    return wt_ffm_call_finish(runtime, message_index, out_vec, out_len);
 }
 
 void wt_ffm_call_refuse(wt_ffm_runtime_t* runtime, psa_client_id_t caller,
@@ -887,47 +760,21 @@ void wt_ffm_call_refuse(wt_ffm_runtime_t* runtime, psa_client_id_t caller,
 int wt_ffm_close(wt_ffm_runtime_t* runtime, psa_client_id_t caller,
                  psa_handle_t handle)
 {
-    wt_ffm_connection_runtime_t* connection;
-    wt_ffm_message_runtime_t* message;
-    uint16_t connection_index;
     uint16_t message_index;
     int ret;
 
-    if (handle == PSA_NULL_HANDLE)
-        return WT_FFM_SUCCESS;
-    if (runtime == NULL || caller == 0)
-        return WT_FFM_ERROR_ARGUMENT;
-    ret = wt_ffm_connection_from_handle(runtime, caller, handle,
-                                        &connection_index);
-    if (ret != WT_FFM_SUCCESS)
+    ret = wt_ffm_close_begin(runtime, caller, handle, &message_index);
+    if (ret != WT_FFM_SUCCESS || message_index == WT_FFM_QUEUE_NONE)
         return ret;
-    connection = &runtime->connections[connection_index];
-    /* FF-M: a client may close a connection dropped by a PROGRAMMER ERROR
-     * (WT_IPC_CONNECTION_ERROR), not only an idle one. */
-    if (connection->state != WT_IPC_CONNECTION_IDLE &&
-            connection->state != WT_IPC_CONNECTION_ERROR)
-        return WT_FFM_ERROR_STATE;
-    if (wt_ffm_close_abandoned(runtime, connection_index) != 0)
-        return WT_FFM_SUCCESS;
-    if (wt_ffm_alloc_message(runtime, &message_index) != WT_FFM_SUCCESS)
-        return WT_FFM_ERROR_RESOURCE;
-
-    connection->state = WT_IPC_CONNECTION_DISCONNECTING;
-    message = &runtime->messages[message_index];
-    message->caller = caller;
-    message->connection_index = connection_index;
-    message->service_index = connection->service_index;
-    message->type = PSA_IPC_DISCONNECT;
-    wt_ffm_enqueue(runtime, connection->service_index, message_index);
     ret = wt_ffm_dispatch_message(runtime, message_index);
     /* Delivered or not, the service must still see the DISCONNECT to release
      * its per-connection state; its reply (or fault cleanup) frees the slot. */
-    if (ret != WT_FFM_SUCCESS && message->complete == 0U) {
-        message->abandoned = WT_FFM_ABANDONED_CLOSE;
+    if (ret != WT_FFM_SUCCESS &&
+            runtime->messages[message_index].complete == 0U) {
+        runtime->messages[message_index].abandoned = WT_FFM_ABANDONED_CLOSE;
         return ret;
     }
-    wt_ffm_release_message(runtime, message_index);
-    wt_ffm_release_connection(runtime, connection_index);
+    (void)wt_ffm_close_finish(runtime, message_index);
     return ret;
 }
 
@@ -1006,16 +853,23 @@ psa_status_t wt_ffm_call_begin(wt_ffm_runtime_t* runtime,
 
     if (runtime == NULL || caller == 0 || msg_index == NULL)
         return PSA_ERROR_INVALID_ARGUMENT;
+    if (caller < 0 && (g_wt_ffm_call_trace & 0xF0000000UL) == 0U) {
+        g_wt_ffm_call_trace = ((uint32_t)type << 16) |
+            (((uint32_t)in_len & 0xFFU) << 8) | ((uint32_t)out_len & 0xFFU);
+    }
     ret = wt_ffm_connection_from_handle(runtime, caller, handle,
                                         &connection_index);
-    if (ret != WT_FFM_SUCCESS)
+    if (ret != WT_FFM_SUCCESS) {
+        wt_ffm_call_refused(caller, 5U, (uint32_t)handle);
         /* FF-M: a forged, stale, or wrong-owner handle is a PROGRAMMER ERROR. */
         return PSA_ERROR_PROGRAMMER_ERROR;
+    }
     connection = &runtime->connections[connection_index];
     /* FF-M: a malformed call on a valid connection drops it to the error
      * state; it must not stay usable after the PROGRAMMER ERROR. */
     if (type < 0 || in_len > PSA_MAX_IOVEC || out_len > PSA_MAX_IOVEC ||
             in_len + out_len > PSA_MAX_IOVEC) {
+        wt_ffm_call_refused(caller, 4U, g_wt_ffm_refuse_base);
         if (connection->state == WT_IPC_CONNECTION_IDLE)
             connection->state = WT_IPC_CONNECTION_ERROR;
         else
@@ -1023,14 +877,17 @@ psa_status_t wt_ffm_call_begin(wt_ffm_runtime_t* runtime,
         return PSA_ERROR_PROGRAMMER_ERROR;
     }
     if (connection->state != WT_IPC_CONNECTION_IDLE) {
+        wt_ffm_call_refused(caller, 6U, g_wt_ffm_refuse_base);
         /* FF-M: a busy or programmer-error-dropped connection is a PROGRAMMER
          * ERROR until close; latch so it lands in the error state once the
          * in-flight request completes. */
         connection->error_latch = 1U;
         return PSA_ERROR_PROGRAMMER_ERROR;
     }
-    if (wt_ffm_alloc_message(runtime, &message_index) != WT_FFM_SUCCESS)
+    if (wt_ffm_alloc_message(runtime, &message_index) != WT_FFM_SUCCESS) {
+        wt_ffm_call_refused(caller, 7U, g_wt_ffm_refuse_base);
         return PSA_ERROR_INSUFFICIENT_MEMORY;
+    }
 
     message = &runtime->messages[message_index];
     message->caller = caller;
