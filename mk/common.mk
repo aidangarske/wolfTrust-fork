@@ -417,7 +417,6 @@ WT_SECURE_EXTRA_SRCS += \
     $(ROOT)/src/services/native/keyvault.c
 endif
 
-WT_SECURE_PSA ?= 0
 WT_SECURE_PSA_PROFILE ?= compat
 WT_PSA_SIZE_VARS := WT_PSA_POOL_BYTES WT_PSA_KEY_SLOTS WT_PSA_OP_SLOTS
 $(foreach v,$(WT_PSA_SIZE_VARS),$(if $(filter-out 0 1 2 3 4 5 6 7 8 9,$(subst 0,0 ,$(subst 1,1 ,$(subst 2,2 ,$(subst 3,3 ,$(subst 4,4 ,$(subst 5,5 ,$(subst 6,6 ,$(subst 7,7 ,$(subst 8,8 ,$(subst 9,9 ,$($(v)))))))))))))$(word 2,$($(v))),$(error unsupported $(v)='$($(v))' (want a decimal count))))

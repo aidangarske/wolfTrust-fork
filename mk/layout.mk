@@ -52,6 +52,9 @@ WT_LAYOUT_DEFS := \
     -DWT_GUEST1_FLASH_BASE=$(WT_GUEST1_FLASH_BASE) \
     -DWT_GUEST0_FLASH_SIZE=$(WT_GUEST0_FLASH_SIZE) \
     -DWT_GUEST1_FLASH_SIZE=$(WT_GUEST1_FLASH_SIZE)
+# The native engine serves PSA Crypto from the Secure image unless the build or
+# the target sets WT_SECURE_PSA=0; the wolfHSM engine cannot.
+WT_SECURE_PSA ?= $(if $(or $(filter hsm,$(WT_ENGINE)),$(filter 1,$(WT_ENGINE_HSM))),0,1)
 # A Secure PSA crypto band holds the wolfPSA pool plus about 1.4 KB of slot
 # tables and service state; wolfPSA needs the larger stack for ECDSA.
 ifeq ($(WT_SECURE_PSA),1)

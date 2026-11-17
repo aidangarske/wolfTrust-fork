@@ -125,20 +125,20 @@ jobs:
               { echo "WT_MANIFEST_RUNTIME_CHECK=$check linked=$linked" >&2; exit 1; }
           done
       # TF-M v2.3.1 level 3 tfm_s on the STM32L562E-DK is 79,680 bytes of
-      # flash and 45,728 bytes of RAM, partition stacks included; the lean
-      # default, attestation included as in TF-M, must stay below both
-      # (docs/TF-M-Compatibility.md). A port's linked RAM code band is allowed.
-      - name: Check the lean default footprint against TF-M level 3
+      # flash and 45,728 bytes of RAM, partition stacks included; the
+      # guest-local PSA build, attestation included as in TF-M, must stay below
+      # both (docs/TF-M-Compatibility.md). A port's linked RAM code band is allowed.
+      - name: Check the guest-local PSA footprint against TF-M level 3
         run: |
           budget=79680
           for target in $(python3 tests/target/lib/scenario_matrix.py --list-ports); do
-            make TARGET=$target WT_ENGINE=native WT_ATTEST_COSE=1 secure-image \
+            make TARGET=$target WT_ENGINE=native WT_ATTEST_COSE=1 WT_SECURE_PSA=0 secure-image \
               TOOLPREFIX=arm-none-eabi- BUILD_DIR=build_budget_$target
             flash=$(arm-none-eabi-size build_budget_$target/wolftrust.elf \
               | awk 'NR == 2 { print $1 + $2 }')
-            echo "$target native default flash: $flash bytes (budget $budget)"
+            echo "$target guest-local PSA flash: $flash bytes (budget $budget)"
             test "$flash" -le "$budget" || \
-              { echo "FAIL: $target lean default exceeds the TF-M level 3 budget" >&2; exit 1; }
+              { echo "FAIL: $target guest-local PSA build exceeds the TF-M level 3 budget" >&2; exit 1; }
             python3 tools/secure_ram.py --base-max 45728 \
               build_budget_$target/wolftrust.map
           done
@@ -216,6 +216,24 @@ jobs:
               exit 1
             fi
             arm-none-eabi-nm $syms | grep -q ' psa_sign_hash$'
+          done
+          make -C tests/firmware/psa-guest clean
+          rm -rf build
+      - name: Verify the default is Secure PSA and WT_SECURE_PSA=0 links wolfPSA in the guest
+        run: |
+          for target in $(python3 tests/target/lib/scenario_matrix.py --list-ports); do
+            make TARGET=$target secure-image TOOLPREFIX=arm-none-eabi- BUILD_DIR=build_spsa_dflt
+            grep -qx 'WT_SECURE_PSA=1' build_spsa_dflt/secure_build_mode.stamp
+            make TARGET=$target WT_ENGINE=hsm secure-image TOOLPREFIX=arm-none-eabi- BUILD_DIR=build_spsa_hsm
+            grep -qx 'WT_SECURE_PSA=0' build_spsa_hsm/secure_build_mode.stamp
+            rm -rf build build_spsa_dflt build_spsa_hsm
+            make TARGET=$target WT_SECURE_PSA=0 secure-image TOOLPREFIX=arm-none-eabi-
+            grep -qx 'WT_SECURE_PSA=0' build/secure_build_mode.stamp
+            make -C tests/firmware/psa-guest clean
+            make -C tests/firmware/psa-guest TARGET=$target WT_SECURE_PSA=0 \
+              WT_EXPECTED_LIFECYCLE=0x1000u
+            arm-none-eabi-nm tests/firmware/psa-guest/build/guest0.elf | \
+              grep -q ' wolfpsa_get_key_data$'
           done
           make -C tests/firmware/psa-guest clean
           rm -rf build

@@ -342,8 +342,9 @@ runs and exempts the rest with a reason. Beyond the families above:
 - `confboot` hosts Arm's unmodified FF-M IPC suite against the conformance
   image and expects 85 passed, 4 skipped, 0 failed. `devstorage`,
   `devcrypto`, `devattest` and `devattestqcbor` run the dev_apis suites.
-  `devcryptospsa` runs the crypto suite with `WT_SECURE_PSA=1`, so every
-  call reaches wolfPSA in the Secure image instead of a guest copy.
+  `devcrypto` reaches wolfPSA in the Secure image under the native default,
+  and `devcryptolocal` runs the crypto suite with `WT_SECURE_PSA=0`, against
+  the guest's own wolfPSA.
   `vaultrecover` proves a foreign vault pool self-heals on a development
   device, and `vaultrecoversec` that SECURED refuses it gracefully.
 - `wrpfence` and `wrpoff` build with `WT_GUEST_FLASH_WRP=1`: behind a first
