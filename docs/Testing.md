@@ -36,6 +36,12 @@ vectors, Secure Partition layout and recovery, crypto-engine relay and key
 isolation, vault and storage services, attestation and COSE integration,
 firmware update, runtime remeasurement, linked Secure layout, VNET, public PSA
 headers, boot-handoff record consumption, and negative paths.
+The manifest_ports suite generates every `port/*/manifest*.json` with that
+port's build arguments, for the default profile (update partition left out)
+and the `full` profile, and runs each through the boot-time validator, the
+port binding, and FF-M activation, since default images validate the manifest only
+at build time. `tests/host/manifest/test_generator.py` checks that each
+manifest the boot-time checks reject also fails generation.
 The monitor suite checks bounded guest recovery, idle backoff, and terminal
 lifecycle decisions against the production scheduler with simulated architecture
 operations.
@@ -116,6 +122,13 @@ It runs the port's smoke tier from its `port.json` (listed in
 `PATH` or a path in `M33MU`; a port whose emulator carries a model patch
 (`M33MU_PATCH` in its profile) builds its pinned emulator instead. If the
 emulator is unavailable, the target reports a skip rather than a pass.
+Each tier runs on the `full` build profile. `WT_PROFILE=default` runs the
+lean default image instead: its one-guest `positive`, the level 3 scenarios
+and, on the STM32H563, the SP fault, panic, attestation, launch, rollback,
+re-measurement, manifest, SP budget, peripheral and silicon-revision
+negatives (see [Build profiles](Macros.md#build-profiles)). Each port's
+`port.json` lists its lean set under `m33mu.default`; the two-guest, VNET,
+conformance and update scenarios run only on `full`.
 
 Additional focused runs use:
 
@@ -137,9 +150,9 @@ authenticated-boot failure, rollback, runtime remeasurement, Secure Partition
 recovery, key and vault isolation, storage recovery, attestation negatives,
 firmware update, manifest rejection, GTZC behavior, and VNET paths.
 
-`restartidle` runs the STM32H563 recovery check with `WT_MAX_GUESTS=1`. It
-requires every allowed relaunch and the final terminal verdict. The full tier
-runs it with both crypto engines.
+`restartidle` runs the recovery check on the one-guest default image. It
+requires every allowed relaunch and the final terminal verdict (BKPT 0x7d,
+no guest left). The full tier runs it with both crypto engines on every port.
 It also runs `tests/target/test_systick_idle.sh`, which executes the production
 Armv8-M timer code with modeled Non-secure timer registers and real Secure
 SysTick interrupts. The check covers timer configuration and pending-tick
@@ -200,7 +213,9 @@ faults; its restarted instance faults again if either value survived.
 
 `manifestneg` removes a required feature, `manifestneg2` declares isolation
 level 2, and `manifestneg3` composes a partition table that reaches another
-partition's band. Each must halt the boot before anything is scheduled.
+partition's band. Each must halt the boot before anything is scheduled. The
+first two corrupt the manifest after the build validated it, so they build
+with `WT_MANIFEST_RUNTIME_CHECK=1`; `manifestneg3` runs on the default image.
 
 Each numbered probe variant is its own matrix row; CI packs each family
 into one job.
@@ -429,7 +444,9 @@ engines for each port whose CI label is optional; a port marked label only in
 on manual dispatch (with a `port` input), and on a pull request that carries
 the port's label, `ci:all`, or `ci:m33mu`. The scenario groups per port and
 tier are in its `port.json`; `make test-target TARGET=<port>` runs the same
-smoke tier locally and `WT_TIER=full` every scenario.
+smoke tier locally and `WT_TIER=full` every scenario. Every tier runs on both
+build profiles, and the level 3 bar (`l3_gaps()` in the matrix selftest)
+must hold on `default` and on `full`.
 
 ### Running M33MU off a pull request
 

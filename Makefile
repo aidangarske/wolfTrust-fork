@@ -80,16 +80,23 @@ c99-check:
 		EXTRA_CFLAGS="$(C99_CFLAGS)"
 
 # M33MU scenarios for one registered port (TARGET): WT_TIER=smoke (default) or
-# full, from its port.json. Skips, never passes, without an emulator; runs in
-# the wolfboot-ci-m33mu container, never bare-metal.
+# full, from its port.json. WT_PROFILE picks the build profile: full (every
+# add-on, the default here) or default (the lean image make builds with no
+# options). Skips, never passes, without an emulator; runs in the
+# wolfboot-ci-m33mu container, never bare-metal.
 WT_TIER ?= smoke
+WT_PROFILE ?= full
 WT_SCENARIOS = $(shell python3 tests/target/lib/scenario_matrix.py \
-    --port $(TARGET) --tier $(WT_TIER) --engine $(WT_ENGINE) --flat)
+    --port $(TARGET) --tier $(WT_TIER) --engine $(WT_ENGINE) \
+    --profile $(WT_PROFILE) --flat)
 test-target:
+	@case "$(WT_PROFILE)" in default|full) ;; *) \
+		echo "unsupported WT_PROFILE='$(WT_PROFILE)' (want default or full)" >&2; \
+		exit 2 ;; esac
 	@if ! tests/target/detect_m33mu.sh $(TARGET) >/dev/null 2>&1; then \
 		echo "SKIP: FF-M target scenarios ($$(tests/target/detect_m33mu.sh $(TARGET) 2>&1))"; \
 	else \
-		tests/target/run_suite.sh $(TARGET) $(WT_SCENARIOS); \
+		WT_PROFILE=$(WT_PROFILE) tests/target/run_suite.sh $(TARGET) $(WT_SCENARIOS); \
 	fi
 
 # Real hardware suite, the on-silicon counterpart of test-target, on the host
