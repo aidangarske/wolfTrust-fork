@@ -83,6 +83,13 @@ if(CONFIG_WOLFPSA)
 
   zephyr_library_named(wolftrust_wolfpsa)
 
+  if(CONFIG_WOLFTRUST_SECURE_PSA)
+  zephyr_library_sources(
+    ${WT_REPO_ROOT}/src/client/psa_crypto_client.c
+    ${WT_WOLFPSA_DIR}/src/psa_api_stub.c
+    ${WT_MODULE_DIR}/src/wolfpsa_zephyr_init.c
+  )
+  else()
   # Compile every wolfPSA src/*.c EXCEPT psa_store_posix.c (POSIX-only).
   file(GLOB WOLFPSA_SRCS ${WT_WOLFPSA_DIR}/src/*.c)
   list(FILTER WOLFPSA_SRCS EXCLUDE REGEX "psa_store_posix\\.c$")
@@ -115,5 +122,6 @@ if(CONFIG_WOLFPSA)
     PROPERTIES COMPILE_OPTIONS
       "-Wno-unused-function;-Wno-unused-variable;-Wno-unused-parameter;-Wno-type-limits"
   )
+  endif()
 
 endif()

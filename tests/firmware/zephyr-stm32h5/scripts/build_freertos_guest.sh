@@ -48,6 +48,7 @@ fi
 mkdir -p "${BUILD_DIR}"
 
 GUEST_CC="${GUEST_CC:-arm-none-eabi-gcc}"
+WT_SECURE_PSA="${WT_SECURE_PSA:-0}"
 GUEST_OBJCOPY="${GUEST_OBJCOPY:-arm-none-eabi-objcopy}"
 
 # Sources -- everything compiled as one TU set fed to gcc.
@@ -118,6 +119,9 @@ ${ROOT}/src/client/crypto_native_client.c"
 
 GUEST_GLUE_SRCS="\
 ${BAREMETAL_NS_DIR}/libc_stubs_guest.c"
+if [ "${WT_SECURE_PSA}" = "1" ]; then
+WOLFPSA_SRCS="${ROOT}/src/client/psa_crypto_client.c"
+fi
 else
 WT_CLIENT_SRCS="\
 ${ROOT}/src/client/psa_ffm_client.c \
@@ -213,6 +217,11 @@ if [ "${WT_ENGINE}" = "native" ]; then
     fi
     if printf '%s\n' "${NM_OUT}" | grep -q "wh_Client"; then
         echo "FAIL: wolfHSM client linked into a native-engine guest1" >&2
+        exit 1
+    fi
+    if [ "${WT_SECURE_PSA}" = "1" ] && \
+            printf '%s\n' "${NM_OUT}" | grep -Eq ' (wc_error_to_psa_status|wolfpsa_get_key_data)$'; then
+        echo "FAIL: wolfPSA linked into a WT_SECURE_PSA guest1" >&2
         exit 1
     fi
 elif ! printf '%s\n' "${NM_OUT}" | grep -q "wt_hsm_psa_transport_cb"; then
