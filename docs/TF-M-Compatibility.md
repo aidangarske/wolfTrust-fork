@@ -41,6 +41,17 @@ Secure Partition unprivileged with its own MPU regions. Each wolfTrust
 feature the default leaves out comes back with one Make variable; see
 [Build profiles](Macros.md#build-profiles) for each one's cost.
 
+The crypto split differs too. TF-M serves PSA Crypto from its Crypto
+partition, while the native default runs wolfPSA in the Non-secure guest and
+keeps only the vault's key operations in the Secure image. The like-for-like
+wolfTrust build is `WT_SECURE_PSA=1` (see
+[Crypto Engines](Crypto-Engines.md#psa-crypto-in-the-secure-image-wt_secure_psa1)).
+On the STM32H563 its `standard` profile, the closest to TF-M's Medium set, is
+99,108 bytes of flash and 54,988 bytes of Secure RAM: 19,428 bytes more flash
+and 9,260 bytes more RAM than the TF-M image above. 8,017 bytes of the flash
+gap are the crypto stack (48,495 against 40,478 for TF-M's Crypto partition
+and Mbed TLS); the rest is the storage and SPM code outside it.
+
 ### Methodology
 
 Footprint is read from the linked Secure ELF and its map:
@@ -64,9 +75,9 @@ Secure RAM = all RAM the Secure image reserves, partition stacks included
   tree, merged with these sources before the shared port layer landed and
   built with its defaults (native engine, LTO, one guest):
   `make TARGET=stm32l562 secure-image` in
-  `ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.25`. The same defaults give 79,388
-  bytes of flash and 44,236 bytes of Secure RAM for `TARGET=stm32h563` in this
-  tree.
+  `ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.25`, when wolfCrypt was still built
+  with its Thumb-2 assembly. The current portable C defaults give 70,432 bytes
+  of flash and 44,236 bytes of Secure RAM for `TARGET=stm32h563` in this tree.
 - wolfBoot: `config/examples/stm32l5-tz-wolftrust.config` (ECC256, SHA256,
   `WOLFBOOT_SECURE_APP=1`).
 - TF-M: v2.3.1, platform `stm/stm32l562e_dk`, `TFM_ISOLATION_LEVEL=3`,
@@ -84,7 +95,7 @@ Secure RAM = all RAM the Secure image reserves, partition stacks included
 | Framework and service discovery | 1.0 | Supported | `psa_framework_version` and `psa_version` |
 | Copied input and output vectors | FF-M 1.0 | Supported, with at most four vectors total and a 1024-byte aggregate budget across input bytes and declared output capacity | `include/wolftrust/ffm.h` and `src/ffm.c` |
 | Manifest validation | wolfTrust format 1 | Supported for immutable generated C data | `tools/manifest/generate.py`, `src/manifest.c`, and `manifest/base.json` |
-| PSA Crypto | 1.4 header | Supported through wolfPSA; algorithms depend on the guest profile | `lib/wolfPSA/wolfpsa/psa/crypto.h` and both reference guest settings |
+| PSA Crypto | 1.4 header | Supported through wolfPSA; algorithms depend on the guest profile, or on `WT_SECURE_PSA_PROFILE` when `WT_SECURE_PSA=1` serves it from the Secure image | `lib/wolfPSA/wolfpsa/psa/crypto.h` and both reference guest settings |
 | Internal Trusted Storage | 1.0 | Core set/get/get-info/remove subset with the `WRITE_ONCE` lifecycle deviation below | `include/psa/internal_trusted_storage.h` and `src/services/wolfhsm/wt_hsm_vault.c` |
 | Protected Storage | 1.0 | Core set/get/get-info/remove subset; optional create/set-extended absent and the `WRITE_ONCE` lifecycle deviation below applies | `include/psa/protected_storage.h` and `src/services/storage_service.c` |
 | Initial Attestation | 1.0 API subset with a nonconformant RFC 9783-derived token | Token and exact-size operations are supported, but the advertised TF-M profile has the claim-semantic deviations below | `lib/wolfPSA/wolfpsa/psa/initial_attestation.h` and `src/services/initial_attestation.c` |
