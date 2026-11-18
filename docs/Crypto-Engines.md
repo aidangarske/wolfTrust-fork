@@ -194,9 +194,9 @@ includes too:
 
 | Profile | Algorithms | STM32H563 Secure flash / RAM |
 | --- | --- | ---: |
-| `compat` (default) | The reference guest's set: P-256 ECDSA (deterministic) and ECDH, AES-GCM, CCM, CTR, CBC and ECB, SHA-256, HMAC, HKDF, PBKDF2, TLS 1.2 PRF | 111,417 / 48,844 |
-| `standard` | `compat` without PBKDF2, TLS 1.2 PRF, CBC, ECB and deterministic ECDSA (ECDSA uses a random nonce) | 105,241 / 48,844 |
-| `medium` | TF-M's Medium set: `standard` without GCM and CTR, plus ECB, SHA-224, CMAC, the TLS 1.2 PRF and PSK-to-MS. The vault still seals with GCM inside wolfCrypt, and P-256 runs on wolfPSA's direct SP path, so `ecc.c` leaves the image | 103,167 / 48,844 |
+| `compat` (default) | The reference guest's set: P-256 ECDSA (deterministic) and ECDH, AES-GCM, CCM, CTR, CBC and ECB, SHA-256, HMAC, HKDF, PBKDF2, TLS 1.2 PRF | 109,941 / 48,844 |
+| `standard` | `compat` without PBKDF2, TLS 1.2 PRF, CBC, ECB and deterministic ECDSA (ECDSA uses a random nonce) | 103,797 / 48,844 |
+| `medium` | TF-M's Medium set: `standard` without GCM and CTR, plus ECB, SHA-224, CMAC, the TLS 1.2 PRF and PSK-to-MS. The vault still seals with GCM inside wolfCrypt, and P-256 runs on wolfPSA's direct SP path, so `ecc.c` leaves the image | 101,499 / 48,844 |
 | `lean` | `standard` without CCM and AES decryption | 102,133 / 48,844 |
 | `symmetric` | `lean` without ECC in the PSA surface; ECC key imports and generation return `PSA_ERROR_NOT_SUPPORTED` | 97,397 / 48,844 |
 
@@ -208,9 +208,9 @@ guest drops from 65,384 to 34,600 bytes of flash; it keeps wolfCrypt only for
 the attestation token verifier. For comparison, TF-M v2.3.1 at isolation
 level 3 on the STM32L562 with its Medium crypto set is 79,680 bytes of flash
 and 45,728 bytes of RAM; of that flash, its Crypto partition and Mbed TLS
-are 40,478 bytes, against 54,542 for wolfCrypt, wolfPSA, the service and the
-key glue in `standard` and 52,489 in `medium`, which builds TF-M Medium's
-algorithm set (the STM32L562 `medium` image is 102,691 bytes).
+are 40,478 bytes, against 53,088 for wolfCrypt, wolfPSA, the service and the
+key glue in `standard` and 50,825 in `medium`, which builds TF-M Medium's
+algorithm set (the STM32L562 `medium` image is 101,023 bytes).
 
 wolfPSA refuses AES or GHASH whose timing depends on the key or the data, so
 the Secure image runs AES on wolfCrypt's touch-lines C core and GHASH on its
@@ -372,9 +372,9 @@ wolfBoot and Non-secure guest images are not included.
 
 | Engine and profile | `text` | `data` | `bss` | Flash | Secure RAM |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Native, default (`WT_SECURE_PSA=1`, `compat`) | 111,021 bytes | 396 bytes | 20,732 bytes | 111,417 bytes | 48,844 bytes |
-| Native, `WT_SECURE_PSA=1` `standard` | 104,849 bytes | 392 bytes | 20,732 bytes | 105,241 bytes | 48,844 bytes |
-| Native, `WT_SECURE_PSA=1` `medium` | 102,775 bytes | 392 bytes | 20,732 bytes | 103,167 bytes | 48,844 bytes |
+| Native, default (`WT_SECURE_PSA=1`, `compat`) | 109,545 bytes | 396 bytes | 20,732 bytes | 109,941 bytes | 48,844 bytes |
+| Native, `WT_SECURE_PSA=1` `standard` | 103,405 bytes | 392 bytes | 20,732 bytes | 103,797 bytes | 48,844 bytes |
+| Native, `WT_SECURE_PSA=1` `medium` | 101,107 bytes | 392 bytes | 20,732 bytes | 101,499 bytes | 48,844 bytes |
 | Native, `WT_SECURE_PSA=0` | 70,016 bytes | 384 bytes | 18,340 bytes | 70,400 bytes | 45,260 bytes |
 | wolfHSM, default | 97,916 bytes | 392 bytes | 40,648 bytes | 98,308 bytes | 83,932 bytes |
 | wolfHSM over native `WT_SECURE_PSA=0` | 27,900 bytes | 8 bytes | 22,308 bytes | 27,908 bytes | 38,672 bytes |
