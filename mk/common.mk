@@ -429,8 +429,8 @@ ifeq ($(WT_SECURE_PSA),1)
 ifneq ($(WT_ENGINE),native)
 $(error WT_SECURE_PSA=1 requires WT_ENGINE=native)
 endif
-ifneq ($(filter-out compat standard lean symmetric,$(WT_SECURE_PSA_PROFILE))$(words $(WT_SECURE_PSA_PROFILE)),1)
-$(error unsupported WT_SECURE_PSA_PROFILE='$(WT_SECURE_PSA_PROFILE)' (want compat, standard, lean or symmetric))
+ifneq ($(filter-out compat standard medium lean symmetric,$(WT_SECURE_PSA_PROFILE))$(words $(WT_SECURE_PSA_PROFILE)),1)
+$(error unsupported WT_SECURE_PSA_PROFILE='$(WT_SECURE_PSA_PROFILE)' (want compat, standard, medium, lean or symmetric))
 endif
 ifeq ($(WT_WOLFCRYPT_ARMASM),1)
 $(error WT_SECURE_PSA=1 needs constant-time AES, and WT_WOLFCRYPT_ARMASM=1 builds the T-table Thumb-2 AES)
@@ -450,6 +450,12 @@ WT_SECURE_EXTRA_SRCS += $(ROOT)/src/services/native/psa_crypto_service.c
 ifeq ($(WT_SECURE_PSA_PROFILE),compat)
 WOLFCRYPT_SECURE_SRCS += $(WOLFSSL_DIR)/wolfcrypt/src/kdf.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/pwdbased.c
+endif
+ifeq ($(WT_SECURE_PSA_PROFILE),medium)
+WOLFCRYPT_SECURE_SRCS += $(WOLFSSL_DIR)/wolfcrypt/src/kdf.c \
+    $(WOLFSSL_DIR)/wolfcrypt/src/cmac.c
+# The vault seals with one-shot GCM, which PSA does not offer in this profile
+WT_PSA_WANT_WITHOUT := --without PSA_WANT_ALG_GCM
 endif
 endif
 
@@ -1669,7 +1675,7 @@ ifeq ($(WT_SECURE_PSA),1)
 # FORCE: the generator rewrites the header only when the surface changes.
 $(WT_PSA_CONFIG_H): $(WOLFHSM_CFG_H) $(BUILD_MODE_STAMP) FORCE | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
-	python3 $(WOLFPSA_DIR)/tools/gen-crypto-config.py $@ "$(CC)" \
+	python3 $(WOLFPSA_DIR)/tools/gen-crypto-config.py $(WT_PSA_WANT_WITHOUT) $@ "$(CC)" \
 	    $(WOLFPSA_DIR)/tools/psa_want_probe.c $(HSM_LIB_CFLAGS) -I$(WOLFPSA_DIR)/src \
 	    -DWT_PSA_WANT_PROBE
 $(BUILD_DIR)/wt_sec_psa_crypto_service.o: $(WT_PSA_CONFIG_H)

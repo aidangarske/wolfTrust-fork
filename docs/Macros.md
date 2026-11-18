@@ -18,7 +18,7 @@ Costs are over the default image, built with Arm GNU 15.2.1 in
 `make size-report`: flash is `text + data`, and RAM is the Secure RAM the image
 reserves, partition stacks and bands included ([Footprint](Footprint.md#how-sizes-are-measured)).
 The default native image serves PSA Crypto from the Secure image and is
-111,513 bytes of flash and 48,844 bytes of RAM on the STM32H563, with wolfCrypt
+111,417 bytes of flash and 48,844 bytes of RAM on the STM32H563, with wolfCrypt
 built as portable C. The other rows are measured over the `WT_SECURE_PSA=0`
 image, 70,400 and 45,260 bytes on the STM32H563, and 69,496 and 45,280 bytes
 on the STM32L562 (measured on the STM32L562 port, which is under review and not
@@ -177,7 +177,7 @@ build `full` only, because their checks assert both guests.
 | `WT_ENGINE_HSM` | Legacy engine selector; unset by default. `0` maps to `WT_ENGINE=native` and `1` maps to `WT_ENGINE=hsm` when the public selector is not supplied. The build also derives this internal value from `WT_ENGINE`. | Prefer `WT_ENGINE` for new builds and do not supply conflicting selectors. The guest and Secure image must select the same engine. |
 | `WT_ATTEST_COSE` | Build the COSE attestation token service; default `1`. CI compile-checks `0`, and builds each port with its `port.json` `attest_cose` value. | `1` requires the wolfCOSE submodule and the configured attestation key backend. |
 | `WT_SECURE_PSA` | When `1`, serve PSA Crypto from the Secure image: wolfPSA runs in the crypto partition and the guest links the PSA client instead of wolfPSA. Default `1` with the native engine and `0` with wolfHSM; a port may default it to `0` in its `mk/target-<soc>.mk`. See [Crypto Engines](Crypto-Engines.md#psa-crypto-in-the-secure-image-wt_secure_psa1). | `1` requires `WT_ENGINE=native`; build every guest with the Secure image's value. |
-| `WT_SECURE_PSA_PROFILE` | Algorithm set of a `WT_SECURE_PSA=1` image: `compat` (default), `standard`, `lean` or `symmetric`. | Any other value stops the build. |
+| `WT_SECURE_PSA_PROFILE` | Algorithm set of a `WT_SECURE_PSA=1` image: `compat` (default), `standard`, `medium`, `lean` or `symmetric`. | Any other value stops the build. |
 | `WT_PSA_POOL_BYTES` | Make variable: size of the crypto partition's private wolfPSA pool, split evenly into one arena per guest; empty keeps 2,048 bytes per guest. | A smaller arena fails calls that hold more with `PSA_ERROR_INSUFFICIENT_MEMORY`; below 1,536 bytes per guest stops the build. A pool past the crypto partition's band fails the link. |
 | `WT_PSA_KEY_SLOTS`, `WT_PSA_OP_SLOTS` | Make variables: volatile keys and live operations the Secure PSA service tracks, split evenly across the guests; empty keeps `16` and `8`. | Fewer slots than guests, more than 256 operation slots, or a non-number stops the build. Each slot's state is allocated from `WT_PSA_POOL_BYTES`. |
 | `WT_WOLFCRYPT_SP_ASM` | Enable wolfCrypt SP Cortex-M assembly; default `0`, the portable C `sp_c32.c`, which is smaller. `1` trades flash for faster ECC and, on the native engine, raises the crypto partition stack from 5 KiB to 9 KiB for its deeper P-256 verify. | `1` requires compatible Armv8-M assembly sources and toolchain. |

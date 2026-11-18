@@ -33,17 +33,28 @@
 /* wolfPSA refuses T-table AES and a GHASH that branches on the hash key. */
 #define WOLFSSL_AES_TOUCH_LINES
 #undef GCM_SMALL
+#ifndef WT_SECURE_PSA_medium
 #define WOLFSSL_AES_COUNTER
 /* wolfPSA's multipart GCM runs on the wolfCrypt GCM streaming calls. */
 #define WOLFSSL_AESGCM_STREAM
+#endif
 #if !defined(WT_SECURE_PSA_lean) && !defined(WT_SECURE_PSA_symmetric)
 #define HAVE_AESCCM
 /* wolfPSA's multipart CCM runs on the direct AES block calls. */
 #define WOLFSSL_AES_DIRECT
 #endif
 #define HAVE_ECC_DHE
-#if defined(WT_SECURE_PSA_compat) || defined(WT_SECURE_PSA_standard)
+#if defined(WT_SECURE_PSA_compat) || defined(WT_SECURE_PSA_standard) || \
+    defined(WT_SECURE_PSA_medium)
 #undef NO_AES_DECRYPT
+#endif
+/* TF-M's Medium set: ECB, SHA-224, CMAC and the TLS 1.2 PRF, no GCM or CTR */
+#ifdef WT_SECURE_PSA_medium
+#define WOLFPSA_ECC_SP_DIRECT
+#define HAVE_AES_ECB
+#define WOLFSSL_SHA224
+#define WOLFSSL_CMAC
+#define WOLFSSL_HAVE_PRF
 #endif
 #ifdef WT_SECURE_PSA_compat
 #define HAVE_AES_ECB
@@ -54,7 +65,9 @@
 #else
 #define NO_AES_CBC
 #define NO_PBKDF2
+#ifndef WT_SECURE_PSA_medium
 #define NO_KDF
+#endif
 #endif
 #if defined(WT_PSA_POOL_TU) && defined(NO_AES_CBC)
 #define wc_AesCbcEncrypt(a, o, i, s) ((void)(a), (void)(o), (void)(i), (void)(s), -174)

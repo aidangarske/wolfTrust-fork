@@ -39,6 +39,13 @@
 /* Past what the old 2,048-byte staging buffer could carry. */
 #define HUGE   5000U
 
+
+/* medium keeps GCM out of PSA, so the service tests run their AEAD on CCM */
+#ifdef WT_SECURE_PSA_medium
+#define WT_TEST_AEAD PSA_ALG_CCM
+#else
+#define WT_TEST_AEAD PSA_ALG_GCM
+#endif
 static int g_failures;
 
 static void check(int ok, const char* what)
@@ -60,7 +67,7 @@ static psa_key_id_t aes_key(psa_key_id_t id, uint8_t fill, psa_status_t* st)
     psa_set_key_bits(&attr, 128);
     psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT |
                             PSA_KEY_USAGE_DECRYPT | PSA_KEY_USAGE_EXPORT);
-    psa_set_key_algorithm(&attr, PSA_ALG_GCM);
+    psa_set_key_algorithm(&attr, WT_TEST_AEAD);
     if (id != PSA_KEY_ID_NULL) {
         psa_set_key_id(&attr, id);
     }
@@ -137,7 +144,13 @@ static void test_profile(void)
 
     check(psa_generate_random(NULL, 1U) == PSA_ERROR_INVALID_ARGUMENT,
           "generate_random refuses a NULL buffer");
-    check(aes_oneshot(PSA_ALG_GCM, 0) == PSA_SUCCESS, "GCM in every profile");
+#ifdef WT_SECURE_PSA_medium
+    check(aes_oneshot(PSA_ALG_GCM, 0) == PSA_ERROR_NOT_SUPPORTED,
+          "medium keeps GCM out of PSA");
+#else
+    check(aes_oneshot(PSA_ALG_GCM, 0) == PSA_SUCCESS,
+          "GCM in the other profiles");
+#endif
     k = ecc_key(&ecc);
     if (k != PSA_KEY_ID_NULL) {
         (void)psa_destroy_key(k);
@@ -155,6 +168,15 @@ static void test_profile(void)
     check(pbkdf2_setup() == PSA_ERROR_NOT_SUPPORTED,
           "standard compiles out PBKDF2");
     check(ecc == PSA_SUCCESS, "standard keeps ECC");
+#elif defined(WT_SECURE_PSA_medium)
+    check(aes_oneshot(PSA_ALG_CCM, 0) == PSA_SUCCESS, "medium keeps CCM");
+    check(aes_oneshot(PSA_ALG_ECB_NO_PADDING, 1) == PSA_SUCCESS,
+          "medium keeps ECB decryption");
+    check(aes_oneshot(PSA_ALG_CBC_NO_PADDING, 0) == PSA_ERROR_NOT_SUPPORTED,
+          "medium compiles out CBC");
+    check(pbkdf2_setup() == PSA_ERROR_NOT_SUPPORTED,
+          "medium compiles out PBKDF2");
+    check(ecc == PSA_SUCCESS, "medium keeps ECC");
 #elif defined(WT_SECURE_PSA_lean)
     check(aes_oneshot(PSA_ALG_CCM, 0) == PSA_ERROR_NOT_SUPPORTED,
           "lean compiles out CCM");
@@ -224,16 +246,16 @@ static void test_lost_message(void)
           "a long hash works again after the lost piece");
     k = aes_key(PSA_KEY_ID_NULL, 0x77, &st);
     check(st == PSA_SUCCESS &&
-          psa_aead_encrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), NULL, 0U,
+          psa_aead_encrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), NULL, 0U,
                            big, sizeof(big), ct, sizeof(ct), &len) ==
           PSA_SUCCESS, "GCM encrypt for the lost-message decrypt");
     (void)memset(pt, 0xAA, sizeof(pt));
     wt_test_fail_call(7);
-    check(psa_aead_decrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), NULL, 0U,
+    check(psa_aead_decrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), NULL, 0U,
                            ct, len, pt, sizeof(pt), &len2) ==
           PSA_ERROR_COMMUNICATION_FAILURE && len2 == 0U && pt[0] == 0U &&
           pt[100] == 0U, "a lost piece of a long decrypt leaves no plaintext");
-    check(psa_aead_decrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), NULL, 0U,
+    check(psa_aead_decrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), NULL, 0U,
                            ct, len, pt, sizeof(pt), &len2) == PSA_SUCCESS &&
           len2 == sizeof(big) && memcmp(pt, big, sizeof(big)) == 0,
           "the decrypt works again after the lost piece");
@@ -278,20 +300,20 @@ static void test_large_oneshots(psa_key_id_t k, const uint8_t* nonce)
     for (i = 0U; i < sizeof(msg); i++) {
         msg[i] = (uint8_t)(i * 7U);
     }
-    check(psa_aead_encrypt(k, PSA_ALG_GCM, nonce, 12U, msg, 700U, msg,
+    check(psa_aead_encrypt(k, WT_TEST_AEAD, nonce, 12U, msg, 700U, msg,
                            sizeof(msg), ct, sizeof(ct), &len) == PSA_SUCCESS &&
           len == sizeof(msg) + 16U &&
-          psa_aead_decrypt(k, PSA_ALG_GCM, nonce, 12U, msg, 700U, ct, len, pt,
+          psa_aead_decrypt(k, WT_TEST_AEAD, nonce, 12U, msg, 700U, ct, len, pt,
                            sizeof(pt), &len2) == PSA_SUCCESS &&
           len2 == sizeof(msg) && memcmp(pt, msg, sizeof(msg)) == 0,
           "5,000-byte GCM round trip with a 700-byte AD");
-    check(psa_aead_encrypt(k, PSA_ALG_GCM, nonce, 12U, msg, 700U, msg,
+    check(psa_aead_encrypt(k, WT_TEST_AEAD, nonce, 12U, msg, 700U, msg,
                            sizeof(msg), ct, sizeof(msg), &len) ==
           PSA_ERROR_BUFFER_TOO_SMALL && len == 0U,
           "a long GCM encrypt with no room for the tag fails");
     ct[sizeof(msg) - 1U] ^= 1U;
     (void)memset(pt, 0xAA, sizeof(pt));
-    check(psa_aead_decrypt(k, PSA_ALG_GCM, nonce, 12U, msg, 700U, ct,
+    check(psa_aead_decrypt(k, WT_TEST_AEAD, nonce, 12U, msg, 700U, ct,
                            sizeof(msg) + 16U, pt, sizeof(pt), &len2) ==
           PSA_ERROR_INVALID_SIGNATURE && len2 == 0U && pt[0] == 0U &&
           pt[sizeof(pt) - 1U] == 0U,
@@ -335,7 +357,7 @@ static void test_arena_isolation(void)
     k = aes_key(PSA_KEY_ID_NULL, 0x24, &st);
     for (nops = 0U; st == PSA_SUCCESS && nops < 8U; nops++) {
         ops[nops] = psa_aead_operation_init();
-        st = psa_aead_encrypt_setup(&ops[nops], k, PSA_ALG_GCM);
+        st = psa_aead_encrypt_setup(&ops[nops], k, WT_TEST_AEAD);
         if (st == PSA_SUCCESS) {
             st = psa_aead_set_nonce(&ops[nops], nonce, sizeof(nonce));
         }
@@ -352,7 +374,7 @@ static void test_arena_isolation(void)
     wt_test_set_client(GUEST1);
     k = aes_key(PSA_KEY_ID_NULL, 0x26, &st);
     check(st == PSA_SUCCESS &&
-          psa_aead_encrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), msg, 300U,
+          psa_aead_encrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), msg, 300U,
                            msg, sizeof(msg), ct, sizeof(ct), &len) ==
           PSA_SUCCESS && len == sizeof(msg) + 16U,
           "guest1 runs a long GCM while guest0 holds everything it can");
@@ -365,7 +387,7 @@ static void test_arena_isolation(void)
     check(raw_init() == PSA_SUCCESS, "guest0 restarts and drops its state");
     k = aes_key(PSA_KEY_ID_NULL, 0x27, &st);
     check(st == PSA_SUCCESS &&
-          psa_aead_encrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), NULL, 0U,
+          psa_aead_encrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), NULL, 0U,
                            msg, sizeof(msg), ct, sizeof(ct), &len) ==
           PSA_SUCCESS, "guest0's arena is whole again after its restart");
     (void)psa_destroy_key(k);
@@ -423,17 +445,17 @@ static void test_basic(void)
     check(psa_get_key_attributes(k, &attr) == PSA_SUCCESS &&
           psa_get_key_type(&attr) == PSA_KEY_TYPE_AES &&
           psa_get_key_bits(&attr) == 128U, "get_key_attributes of the new key");
-    st = psa_aead_encrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), big, 20U, big,
+    st = psa_aead_encrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), big, 20U, big,
                           sizeof(big), ct, sizeof(ct), &len);
     check(st == PSA_SUCCESS && len == sizeof(big) + 16U,
           "GCM encrypt of 1500 bytes");
-    st = psa_aead_decrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), big, 20U, ct,
+    st = psa_aead_decrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), big, 20U, ct,
                           len, pt, sizeof(pt), &len2);
     check(st == PSA_SUCCESS && len2 == sizeof(big) &&
           memcmp(pt, big, sizeof(big)) == 0, "GCM decrypt round trip");
     ct[5] ^= 1U;
     (void)memset(pt, 0xAA, sizeof(pt));
-    st = psa_aead_decrypt(k, PSA_ALG_GCM, nonce, sizeof(nonce), big, 20U, ct,
+    st = psa_aead_decrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), big, 20U, ct,
                           len, pt, sizeof(pt), &len2);
     check(st == PSA_ERROR_INVALID_SIGNATURE && len2 == 0U && pt[0] == 0U &&
           pt[100] == 0U && pt[sizeof(pt) - 1U] == 0U,

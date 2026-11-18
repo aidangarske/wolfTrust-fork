@@ -26,7 +26,7 @@ CC ?= cc
 BUILD_DIR ?= build
 # run builds and runs every WT_SECURE_PSA_PROFILE; run-one takes PROFILE.
 PROFILE ?= compat
-PROFILES := compat standard lean symmetric
+PROFILES := compat standard medium lean symmetric
 
 WARN := -std=c11 -O0 -g -Wall -Wextra -Werror -pedantic \
     -Wno-unused-function -Wno-unused-parameter
@@ -56,7 +56,7 @@ _SRV_WT := \
 
 _SRV_WH := wh_nvm wh_nvm_flash wh_flash_ramsim wh_flash_unit wh_utils
 _SRV_WC := aes coding ecc sp_int wolfmath sha256 random memory error logging \
-    hash wc_port misc hmac kdf pwdbased
+    hash wc_port misc hmac kdf pwdbased cmac sp_c32 sp_c64
 _SRV_WP := $(notdir $(basename $(filter-out %/psa_store_posix.c \
     %/psa_store_zephyr.c %/psa_attestation.c %/psa_ffm.c %/psa_its.c \
     %/misc_impl.c %/psa_tf_psa.c,$(wildcard $(WOLFPSA)/src/*.c))))
@@ -88,7 +88,8 @@ PSA_CFG_H := $(BUILD_DIR)/wolfpsa_cfg/crypto_config_generated.h
 $(PSA_CFG_H): $(WOLFPSA)/tools/gen-crypto-config.py \
     $(WOLFPSA)/tools/psa_want_probe.c user_settings.h | $(BUILD_DIR)
 	mkdir -p $(dir $@)
-	python3 $(WOLFPSA)/tools/gen-crypto-config.py $@ "$(CC)" \
+	python3 $(WOLFPSA)/tools/gen-crypto-config.py \
+	    $(if $(filter medium,$(PROFILE)),--without PSA_WANT_ALG_GCM) $@ "$(CC)" \
 	    $(WOLFPSA)/tools/psa_want_probe.c $(SRV_CFLAGS) -DWT_PSA_WANT_PROBE
 $(SRV_OBJS) $(CLI_OBJS) $(BUILD_DIR)/main.o: $(PSA_CFG_H)
 

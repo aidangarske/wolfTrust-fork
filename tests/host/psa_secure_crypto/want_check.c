@@ -22,9 +22,19 @@
  * PSA_WANT_* surface its service implements. */
 #include "psa/crypto.h"
 
-#if !defined(PSA_WANT_ALG_GCM) || !defined(PSA_WANT_ALG_HKDF) || \
-    !defined(PSA_WANT_ALG_HMAC) || !defined(PSA_WANT_ALG_SHA_256)
-#error "every profile advertises GCM, HKDF, HMAC and SHA-256"
+#if !defined(PSA_WANT_ALG_HKDF) || !defined(PSA_WANT_ALG_HMAC) || \
+    !defined(PSA_WANT_ALG_SHA_256)
+#error "every profile advertises HKDF, HMAC and SHA-256"
+#endif
+
+#ifdef WT_SECURE_PSA_medium
+#if defined(PSA_WANT_ALG_GCM) || defined(PSA_WANT_ALG_CTR) || \
+    !defined(PSA_WANT_ALG_ECB_NO_PADDING) || !defined(PSA_WANT_ALG_SHA_224) || \
+    !defined(PSA_WANT_ALG_TLS12_PRF) || !defined(PSA_WANT_ALG_TLS12_PSK_TO_MS)
+#error "medium is TF-M's Medium set: ECB, SHA-224, TLS 1.2 PRF, no GCM or CTR"
+#endif
+#elif !defined(PSA_WANT_ALG_GCM)
+#error "the other profiles advertise GCM"
 #endif
 
 #ifdef WT_SECURE_PSA_symmetric
@@ -45,7 +55,7 @@
 #error "lean and symmetric advertise CCM"
 #endif
 #elif !defined(PSA_WANT_ALG_CCM)
-#error "compat and standard advertise CCM"
+#error "compat, standard and medium advertise CCM"
 #endif
 
 #ifdef WT_SECURE_PSA_compat
@@ -54,9 +64,10 @@
     !defined(PSA_WANT_ALG_DETERMINISTIC_ECDSA)
 #error "compat advertises PBKDF2, CBC, TLS 1.2 PRF and deterministic ECDSA"
 #endif
-#elif defined(PSA_WANT_ALG_PBKDF2_HMAC) || defined(PSA_WANT_ALG_CBC_NO_PADDING) || \
-    defined(PSA_WANT_ALG_TLS12_PRF)
-#error "only compat advertises PBKDF2, CBC and TLS 1.2 PRF"
+#elif defined(PSA_WANT_ALG_PBKDF2_HMAC) || defined(PSA_WANT_ALG_CBC_NO_PADDING)
+#error "only compat advertises PBKDF2 and CBC"
+#elif defined(PSA_WANT_ALG_TLS12_PRF) && !defined(WT_SECURE_PSA_medium)
+#error "only compat and medium advertise the TLS 1.2 PRF"
 #endif
 
 typedef int wt_want_check_t;
