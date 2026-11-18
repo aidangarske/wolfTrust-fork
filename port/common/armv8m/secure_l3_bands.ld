@@ -90,6 +90,7 @@
     *wp_sec_*.o(.data .data.*)
     *wc_sec_pwdbased.o(.data .data.*)
     *wc_sec_kdf.o(.data .data.*)
+    *wc_sec_cmac.o(.data .data.*)
     *wh_sec_*.o(.data .data.*)
     *wc_sec_cryptocb.o(.data .data.*)
     . = ALIGN(4);
@@ -109,6 +110,7 @@
     *wp_sec_*.o(.bss .bss.* COMMON)
     *wc_sec_pwdbased.o(.bss .bss.* COMMON)
     *wc_sec_kdf.o(.bss .bss.* COMMON)
+    *wc_sec_cmac.o(.bss .bss.* COMMON)
     *wh_sec_*.o(.bss .bss.* COMMON)
     *wc_sec_cryptocb.o(.bss .bss.* COMMON)
     . = ALIGN(32);

@@ -48,6 +48,10 @@
 
 #include <string.h>
 
+#ifdef WOLFPSA_ECC_SP_DIRECT
+#include "wolfpsa/psa_p256.h"
+#endif
+
 #define WT_HSM_KEY_P256_OBJ_LEN \
     (WT_VAULT_KEY_MATERIAL_LEN + WT_VAULT_KEY_PUB_LEN)
 #define WT_HSM_KEY_AES_OBJ_LEN WT_VAULT_KEY_MATERIAL_LEN
@@ -212,6 +216,11 @@ static psa_status_t wt_hsm_kv_load(int32_t owner, int32_t sub, uint64_t uid,
 /* Derive [d][X9.63 public] from a P-256 private scalar. */
 static psa_status_t wt_hsm_kv_p256_object(const uint8_t* d, uint8_t* obj)
 {
+#ifdef WOLFPSA_ECC_SP_DIRECT
+    (void)memcpy(obj, d, WT_VAULT_KEY_MATERIAL_LEN);
+    return (wolfPSA_P256_Public(d, obj + WT_VAULT_KEY_MATERIAL_LEN) == 0) ?
+        PSA_SUCCESS : PSA_ERROR_GENERIC_ERROR;
+#else
     ecc_key key;
     word32 len;
     int rc;
@@ -235,6 +244,7 @@ static psa_status_t wt_hsm_kv_p256_object(const uint8_t* d, uint8_t* obj)
     }
     wc_ecc_free(&key);
     return (rc == 0) ? PSA_SUCCESS : PSA_ERROR_GENERIC_ERROR;
+#endif
 }
 
 static psa_status_t wt_hsm_kv_generate(int32_t owner, int32_t sub,
@@ -243,9 +253,11 @@ static psa_status_t wt_hsm_kv_generate(int32_t owner, int32_t sub,
 {
     uint8_t obj[WT_HSM_KEY_P256_OBJ_LEN];
     uint8_t d[WT_VAULT_KEY_MATERIAL_LEN];
+#ifndef WOLFPSA_ECC_SP_DIRECT
     ecc_key key;
-    WC_RNG* rng;
     word32 len;
+#endif
+    WC_RNG* rng;
     psa_status_t status;
     int rc;
 
@@ -260,6 +272,9 @@ static psa_status_t wt_hsm_kv_generate(int32_t owner, int32_t sub,
         return status;
     }
     if (type == WT_VAULT_KEY_P256) {
+#ifdef WOLFPSA_ECC_SP_DIRECT
+        rc = wolfPSA_P256_Generate(rng, obj, obj + WT_VAULT_KEY_MATERIAL_LEN);
+#else
         rc = wc_ecc_init_ex(&key, NULL, INVALID_DEVID);
         if (rc != 0) {
             return PSA_ERROR_GENERIC_ERROR;
@@ -275,6 +290,7 @@ static psa_status_t wt_hsm_kv_generate(int32_t owner, int32_t sub,
                                     &len);
         }
         wc_ecc_free(&key);
+#endif
         if (rc != 0) {
             wt_hsm_kv_zeroize(obj, sizeof(obj));
             return PSA_ERROR_GENERIC_ERROR;
@@ -353,7 +369,9 @@ static psa_status_t wt_hsm_kv_sign(int32_t owner, int32_t sub, uint64_t uid,
                                    uint8_t* sig, size_t cap, size_t* out_len)
 {
     uint8_t obj[WT_HSM_KEY_P256_OBJ_LEN];
+#ifndef WOLFPSA_ECC_SP_DIRECT
     ecc_key key;
+#endif
     WC_RNG* rng;
     word32 sig_len = WT_VAULT_KEY_SIG_LEN;
     psa_status_t status;
@@ -377,6 +395,9 @@ static psa_status_t wt_hsm_kv_sign(int32_t owner, int32_t sub, uint64_t uid,
         wt_hsm_kv_zeroize(obj, sizeof(obj));
         return status;
     }
+#ifdef WOLFPSA_ECC_SP_DIRECT
+    rc = wolfPSA_P256_Sign(obj, digest, (word32)digest_len, rng, sig);
+#else
     rc = wc_ecc_init_ex(&key, NULL, INVALID_DEVID);
     if (rc == 0) {
         rc = wc_ecc_import_private_key_ex(obj, WT_VAULT_KEY_MATERIAL_LEN,
@@ -387,6 +408,7 @@ static psa_status_t wt_hsm_kv_sign(int32_t owner, int32_t sub, uint64_t uid,
         }
         wc_ecc_free(&key);
     }
+#endif
     wt_hsm_kv_zeroize(obj, sizeof(obj));
     if (rc != 0 || sig_len != WT_VAULT_KEY_SIG_LEN) {
         (void)memset(sig, 0, WT_VAULT_KEY_SIG_LEN);
@@ -401,7 +423,9 @@ static psa_status_t wt_hsm_kv_verify(int32_t owner, int32_t sub, uint64_t uid,
                                      const uint8_t* sig, size_t sig_len)
 {
     uint8_t obj[WT_HSM_KEY_P256_OBJ_LEN];
+#ifndef WOLFPSA_ECC_SP_DIRECT
     ecc_key key;
+#endif
     int res = 0;
     psa_status_t status;
     int rc;
@@ -416,6 +440,10 @@ static psa_status_t wt_hsm_kv_verify(int32_t owner, int32_t sub, uint64_t uid,
     if (status != PSA_SUCCESS) {
         return status;
     }
+#ifdef WOLFPSA_ECC_SP_DIRECT
+    rc = wolfPSA_P256_Verify(obj + WT_VAULT_KEY_MATERIAL_LEN, digest,
+                             (word32)digest_len, sig, &res);
+#else
     rc = wc_ecc_init_ex(&key, NULL, INVALID_DEVID);
     if (rc == 0) {
         rc = wc_ecc_import_x963_ex(obj + WT_VAULT_KEY_MATERIAL_LEN,
@@ -426,6 +454,7 @@ static psa_status_t wt_hsm_kv_verify(int32_t owner, int32_t sub, uint64_t uid,
         }
         wc_ecc_free(&key);
     }
+#endif
     wt_hsm_kv_zeroize(obj, sizeof(obj));
     if (rc != 0) {
         return PSA_ERROR_GENERIC_ERROR;

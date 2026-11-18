@@ -178,7 +178,7 @@ jobs:
       - name: Build every port with PSA Crypto in the Secure image (WT_SECURE_PSA=1, every profile)
         run: |
           for target in $(python3 tests/target/lib/scenario_matrix.py --list-ports); do
-            for profile in compat standard lean symmetric; do
+            for profile in compat standard medium lean symmetric; do
               dir=build_spsa_${target}_$profile
               make TARGET=$target WT_SECURE_PSA=1 WT_SECURE_PSA_PROFILE=$profile \
                 secure-image TOOLPREFIX=arm-none-eabi- BUILD_DIR=$dir
