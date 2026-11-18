@@ -30,8 +30,10 @@
 #ifdef WT_SECURE_PSA_medium
 #if defined(PSA_WANT_ALG_GCM) || defined(PSA_WANT_ALG_CTR) || \
     !defined(PSA_WANT_ALG_ECB_NO_PADDING) || !defined(PSA_WANT_ALG_SHA_224) || \
-    !defined(PSA_WANT_ALG_TLS12_PRF) || !defined(PSA_WANT_ALG_TLS12_PSK_TO_MS)
-#error "medium is TF-M's Medium set: ECB, SHA-224, TLS 1.2 PRF, no GCM or CTR"
+    !defined(PSA_WANT_ALG_TLS12_PRF) || !defined(PSA_WANT_ALG_TLS12_PSK_TO_MS) || \
+    defined(PSA_WANT_ALG_SP800_108_COUNTER_HMAC) || \
+    defined(PSA_WANT_ALG_SP800_108_COUNTER_CMAC)
+#error "medium is TF-M's Medium set: ECB, SHA-224, TLS 1.2 PRF, no GCM, CTR or SP800-108"
 #endif
 #elif !defined(PSA_WANT_ALG_GCM)
 #error "the other profiles advertise GCM"

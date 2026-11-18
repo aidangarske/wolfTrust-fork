@@ -455,7 +455,9 @@ ifeq ($(WT_SECURE_PSA_PROFILE),medium)
 WOLFCRYPT_SECURE_SRCS += $(WOLFSSL_DIR)/wolfcrypt/src/kdf.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/cmac.c
 # The vault seals with one-shot GCM, which PSA does not offer in this profile
-WT_PSA_WANT_WITHOUT := --without PSA_WANT_ALG_GCM
+WT_PSA_WANT_WITHOUT := --without PSA_WANT_ALG_GCM \
+    --without PSA_WANT_ALG_SP800_108_COUNTER_HMAC \
+    --without PSA_WANT_ALG_SP800_108_COUNTER_CMAC
 endif
 endif
 

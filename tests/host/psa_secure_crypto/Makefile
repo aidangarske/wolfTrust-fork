@@ -89,7 +89,9 @@ $(PSA_CFG_H): $(WOLFPSA)/tools/gen-crypto-config.py \
     $(WOLFPSA)/tools/psa_want_probe.c user_settings.h | $(BUILD_DIR)
 	mkdir -p $(dir $@)
 	python3 $(WOLFPSA)/tools/gen-crypto-config.py \
-	    $(if $(filter medium,$(PROFILE)),--without PSA_WANT_ALG_GCM) $@ "$(CC)" \
+	    $(if $(filter medium,$(PROFILE)),--without PSA_WANT_ALG_GCM \
+	        --without PSA_WANT_ALG_SP800_108_COUNTER_HMAC \
+	        --without PSA_WANT_ALG_SP800_108_COUNTER_CMAC) $@ "$(CC)" \
 	    $(WOLFPSA)/tools/psa_want_probe.c $(SRV_CFLAGS) -DWT_PSA_WANT_PROBE
 $(SRV_OBJS) $(CLI_OBJS) $(BUILD_DIR)/main.o: $(PSA_CFG_H)
 
