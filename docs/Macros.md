@@ -18,9 +18,9 @@ Costs are over the default image, built with Arm GNU 15.2.1 in
 `make size-report`: flash is `text + data`, and RAM is the Secure RAM the image
 reserves, partition stacks and bands included ([Footprint](Footprint.md#how-sizes-are-measured)).
 The default native image serves PSA Crypto from the Secure image and is
-110,009 bytes of flash and 48,844 bytes of RAM on the STM32H563, with wolfCrypt
+108,697 bytes of flash and 48,844 bytes of RAM on the STM32H563, with wolfCrypt
 built as portable C. The other rows are measured over the `WT_SECURE_PSA=0`
-image, 70,400 and 45,260 bytes on the STM32H563, and 69,496 and 45,280 bytes
+image, 70,432 and 45,260 bytes on the STM32H563, and 69,496 and 45,280 bytes
 on the STM32L562 (measured on the STM32L562 port, which is under review and not
 yet in this tree).
 [Footprint](Footprint.md) logs the sizes of every port and engine.
@@ -181,7 +181,7 @@ build `full` only, because their checks assert both guests.
 | `WT_PSA_POOL_BYTES` | Make variable: size of the crypto partition's private wolfPSA pool, split evenly into one arena per guest; empty keeps 2,048 bytes per guest. | A smaller arena fails calls that hold more with `PSA_ERROR_INSUFFICIENT_MEMORY`; below 1,536 bytes per guest stops the build. A pool past the crypto partition's band fails the link. |
 | `WT_PSA_KEY_SLOTS`, `WT_PSA_OP_SLOTS` | Make variables: volatile keys and live operations the Secure PSA service tracks, split evenly across the guests; empty keeps `16` and `8`. | Fewer slots than guests, more than 256 operation slots, or a non-number stops the build. Each slot's state is allocated from `WT_PSA_POOL_BYTES`. |
 | `WT_WOLFCRYPT_SP_ASM` | Enable wolfCrypt SP Cortex-M assembly; default `0`, the portable C `sp_c32.c`, which is smaller. `1` trades flash for faster ECC and, on the native engine, raises the crypto partition stack from 5 KiB to 9 KiB for its deeper P-256 verify. | `1` requires compatible Armv8-M assembly sources and toolchain. |
-| `WT_VAULT_AEAD` | AEAD for the vault encrypt service and sealed storage: `gcm` or `ccm`, both AES-256 with a 12-byte nonce and 16-byte tag; empty keeps `gcm`. `ccm` lets a build that offers no PSA GCM, such as the `medium` Secure PSA profile, drop GCM entirely: 316 B less flash in `medium` with `WT_P256_SMALL=1` on STM32L562. Elsewhere it adds CCM, and `lean` and `symmetric` still advertise no PSA CCM. | Data sealed or encrypted under one setting does not open under the other, so changing it on a deployed device means re-provisioning its sealed store and re-encrypting vault data. Any other value stops the build. |
+| `WT_VAULT_AEAD` | AEAD for the vault encrypt service and sealed storage: `gcm` or `ccm`, both AES-256 with a 12-byte nonce and 16-byte tag; empty keeps `gcm`. `ccm` lets a build that offers no PSA GCM, such as the `medium` Secure PSA profile, drop GCM entirely: 348 B less flash in `medium` on STM32L562. Elsewhere it adds CCM, and `lean` and `symmetric` still advertise no PSA CCM. | Data sealed or encrypted under one setting does not open under the other, so changing it on a deployed device means re-provisioning its sealed store and re-encrypting vault data. Any other value stops the build. |
 | `WT_WOLFCRYPT_ARMASM` | Enable additional wolfCrypt Thumb-2 assembly; default `0`, portable C AES with small tables. `1` trades flash for faster AES and SHA-256. | `1` requires a compatible GNU Arm toolchain and `WT_SECURE_PSA=0`: the Thumb-2 AES is not constant time, which wolfPSA refuses. [`WT_SHA256_FAST`](#wt_sha256_fast-unrolled-sha-256) picks the SHA-256 transform either way. |
 | `WT_WOLFCRYPT_STM32_HASH` | STM32 HASH acceleration selector; default `0`. | Must remain `0`: the Makefile rejects other values because wolfHSM SHA state is not compatible with the peripheral representation. |
 | `WT_CONFORMANCE` | When `1`, select the manifest and sources used by Arm PSA API validation. | Use only for conformance builds; the default production manifest is selected at `0`. |
