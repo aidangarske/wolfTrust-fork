@@ -235,11 +235,12 @@ Moving an existing guest-local application to the `WT_SECURE_PSA=1` default:
   `WT_SECURE_PSA=0` (Zephyr: `CONFIG_WOLFTRUST_SECURE_PSA=n`).
 
 `WT_SECURE_PSA=1` covers Non-secure callers. Secure partitions keep using the
-vault backend directly. CMAC is not compiled in, so PSA API test c047 stays
-skipped as in the guest build. Host coverage is `tests/host/psa_secure_crypto`,
-the M33MU `devcrypto` scenario runs the PSA crypto API tests against the
-Secure service, and `devcryptolocal` runs them against the `WT_SECURE_PSA=0`
-guest.
+vault backend directly. Only the `medium` profile compiles CMAC in, and the
+host suite checks it against RFC 4493. The conformance schedule skips PSA API
+test c047 in every profile, as the guest build does. Host coverage is
+`tests/host/psa_secure_crypto`, the M33MU `devcrypto` scenario runs the PSA
+crypto API tests against the Secure service, and `devcryptolocal` runs them
+against the `WT_SECURE_PSA=0` guest.
 
 ## Shared NVM object store
 

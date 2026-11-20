@@ -136,6 +136,113 @@ static psa_status_t pbkdf2_setup(void)
     return st;
 }
 
+#ifdef WT_SECURE_PSA_medium
+static psa_status_t tls12_prf(psa_algorithm_t alg, uint8_t* out, size_t len)
+{
+    static const uint8_t secret[16] = { 0x9b, 0xbe, 0x43, 0x6b };
+    static const uint8_t seed[16] = { 0xa0, 0xba, 0x9f, 0x93 };
+    static const uint8_t label[] = { 't', 'e', 's', 't' };
+    psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+    psa_status_t st;
+
+    st = psa_key_derivation_setup(&op, alg);
+    if (st == PSA_SUCCESS) {
+        st = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_SEED, seed, sizeof(seed));
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_SECRET, secret, sizeof(secret));
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_key_derivation_input_bytes(&op,
+            PSA_KEY_DERIVATION_INPUT_LABEL, label, sizeof(label));
+    }
+    if (st == PSA_SUCCESS) {
+        st = psa_key_derivation_output_bytes(&op, out, len);
+    }
+    (void)psa_key_derivation_abort(&op);
+    return st;
+}
+
+static psa_status_t kdf_setup(psa_algorithm_t alg)
+{
+    psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
+    psa_status_t st;
+
+    st = psa_key_derivation_setup(&op, alg);
+    (void)psa_key_derivation_abort(&op);
+    return st;
+}
+
+/* Known answers for what medium adds: RFC 4493 example 2 and FIPS 180-4 */
+static void test_medium_algs(void)
+{
+    static const uint8_t cmac_key[16] = {
+        0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+        0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c
+    };
+    static const uint8_t cmac_msg[16] = {
+        0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96,
+        0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a
+    };
+    static const uint8_t cmac_tag[16] = {
+        0x07, 0x0a, 0x16, 0xb4, 0x6b, 0x4d, 0x41, 0x44,
+        0xf7, 0x9b, 0xdd, 0x9d, 0xd0, 0x4a, 0x28, 0x7c
+    };
+    static const uint8_t sha224_abc[28] = {
+        0x23, 0x09, 0x7d, 0x22, 0x34, 0x05, 0xd8, 0x22,
+        0x86, 0x42, 0xa4, 0x77, 0xbd, 0xa2, 0x55, 0xb3,
+        0x2a, 0xad, 0xbc, 0xe4, 0xbd, 0xa0, 0xb3, 0xf7,
+        0xe3, 0x6c, 0x9d, 0xa7
+    };
+    psa_key_attributes_t attr = psa_key_attributes_init();
+    uint8_t out[32];
+    uint8_t out2[32];
+    uint8_t bad[16];
+    psa_key_id_t k = PSA_KEY_ID_NULL;
+    size_t len = 0U;
+
+    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attr, 128);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_MESSAGE |
+                            PSA_KEY_USAGE_VERIFY_MESSAGE);
+    psa_set_key_algorithm(&attr, PSA_ALG_CMAC);
+    check(psa_import_key(&attr, cmac_key, sizeof(cmac_key), &k) ==
+          PSA_SUCCESS, "medium imports an AES-CMAC key");
+    check(psa_mac_compute(k, PSA_ALG_CMAC, cmac_msg, sizeof(cmac_msg), out,
+                          sizeof(out), &len) == PSA_SUCCESS &&
+          len == sizeof(cmac_tag) && memcmp(out, cmac_tag, len) == 0,
+          "medium AES-CMAC matches RFC 4493 example 2");
+    check(psa_mac_verify(k, PSA_ALG_CMAC, cmac_msg, sizeof(cmac_msg),
+                         cmac_tag, sizeof(cmac_tag)) == PSA_SUCCESS,
+          "medium AES-CMAC verifies the RFC 4493 tag");
+    (void)memcpy(bad, cmac_tag, sizeof(bad));
+    bad[0] ^= 1U;
+    check(psa_mac_verify(k, PSA_ALG_CMAC, cmac_msg, sizeof(cmac_msg), bad,
+                         sizeof(bad)) == PSA_ERROR_INVALID_SIGNATURE,
+          "medium AES-CMAC rejects a wrong tag");
+    (void)psa_destroy_key(k);
+
+    check(psa_hash_compute(PSA_ALG_SHA_224, (const uint8_t*)"abc", 3U, out,
+                           sizeof(out), &len) == PSA_SUCCESS &&
+          len == sizeof(sha224_abc) && memcmp(out, sha224_abc, len) == 0,
+          "medium SHA-224 of \"abc\" matches FIPS 180-4");
+
+    check(tls12_prf(PSA_ALG_TLS12_PRF(PSA_ALG_SHA_256), out, sizeof(out)) ==
+          PSA_SUCCESS &&
+          tls12_prf(PSA_ALG_TLS12_PRF(PSA_ALG_SHA_256), out2, sizeof(out2)) ==
+          PSA_SUCCESS && memcmp(out, out2, sizeof(out)) == 0,
+          "medium TLS 1.2 PRF derives the same bytes twice");
+    check(kdf_setup(PSA_ALG_TLS12_PSK_TO_MS(PSA_ALG_SHA_256)) == PSA_SUCCESS,
+          "medium keeps TLS 1.2 PSK-to-MS");
+    check(kdf_setup(PSA_ALG_SP800_108_COUNTER_HMAC(PSA_ALG_SHA_256)) ==
+          PSA_ERROR_NOT_SUPPORTED, "medium refuses SP800-108 HMAC");
+    check(kdf_setup(PSA_ALG_SP800_108_COUNTER_CMAC) ==
+          PSA_ERROR_NOT_SUPPORTED, "medium refuses SP800-108 CMAC");
+}
+#endif
+
 /* What each WT_SECURE_PSA_PROFILE keeps and what it compiles out. */
 static void test_profile(void)
 {
@@ -177,6 +284,7 @@ static void test_profile(void)
     check(pbkdf2_setup() == PSA_ERROR_NOT_SUPPORTED,
           "medium compiles out PBKDF2");
     check(ecc == PSA_SUCCESS, "medium keeps ECC");
+    test_medium_algs();
 #elif defined(WT_SECURE_PSA_lean)
     check(aes_oneshot(PSA_ALG_CCM, 0) == PSA_ERROR_NOT_SUPPORTED,
           "lean compiles out CCM");
@@ -248,7 +356,7 @@ static void test_lost_message(void)
     check(st == PSA_SUCCESS &&
           psa_aead_encrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), NULL, 0U,
                            big, sizeof(big), ct, sizeof(ct), &len) ==
-          PSA_SUCCESS, "GCM encrypt for the lost-message decrypt");
+          PSA_SUCCESS, "AEAD encrypt for the lost-message decrypt");
     (void)memset(pt, 0xAA, sizeof(pt));
     wt_test_fail_call(7);
     check(psa_aead_decrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), NULL, 0U,
@@ -306,18 +414,18 @@ static void test_large_oneshots(psa_key_id_t k, const uint8_t* nonce)
           psa_aead_decrypt(k, WT_TEST_AEAD, nonce, 12U, msg, 700U, ct, len, pt,
                            sizeof(pt), &len2) == PSA_SUCCESS &&
           len2 == sizeof(msg) && memcmp(pt, msg, sizeof(msg)) == 0,
-          "5,000-byte GCM round trip with a 700-byte AD");
+          "5,000-byte AEAD round trip with a 700-byte AD");
     check(psa_aead_encrypt(k, WT_TEST_AEAD, nonce, 12U, msg, 700U, msg,
                            sizeof(msg), ct, sizeof(msg), &len) ==
           PSA_ERROR_BUFFER_TOO_SMALL && len == 0U,
-          "a long GCM encrypt with no room for the tag fails");
+          "a long AEAD encrypt with no room for the tag fails");
     ct[sizeof(msg) - 1U] ^= 1U;
     (void)memset(pt, 0xAA, sizeof(pt));
     check(psa_aead_decrypt(k, WT_TEST_AEAD, nonce, 12U, msg, 700U, ct,
                            sizeof(msg) + 16U, pt, sizeof(pt), &len2) ==
           PSA_ERROR_INVALID_SIGNATURE && len2 == 0U && pt[0] == 0U &&
           pt[sizeof(pt) - 1U] == 0U,
-          "a long GCM decrypt with a bad tag leaves no plaintext");
+          "a long AEAD decrypt with a bad tag leaves no plaintext");
     check(psa_hash_compute(PSA_ALG_SHA_256, msg, sizeof(msg), hash,
                            sizeof(hash), &len) == PSA_SUCCESS &&
           psa_hash_setup(&op, PSA_ALG_SHA_256) == PSA_SUCCESS &&
@@ -377,7 +485,7 @@ static void test_arena_isolation(void)
           psa_aead_encrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), msg, 300U,
                            msg, sizeof(msg), ct, sizeof(ct), &len) ==
           PSA_SUCCESS && len == sizeof(msg) + 16U,
-          "guest1 runs a long GCM while guest0 holds everything it can");
+          "guest1 runs a long AEAD while guest0 holds everything it can");
     (void)psa_destroy_key(k);
 
     wt_test_set_client(GUEST0);
@@ -448,18 +556,18 @@ static void test_basic(void)
     st = psa_aead_encrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), big, 20U, big,
                           sizeof(big), ct, sizeof(ct), &len);
     check(st == PSA_SUCCESS && len == sizeof(big) + 16U,
-          "GCM encrypt of 1500 bytes");
+          "AEAD encrypt of 1500 bytes");
     st = psa_aead_decrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), big, 20U, ct,
                           len, pt, sizeof(pt), &len2);
     check(st == PSA_SUCCESS && len2 == sizeof(big) &&
-          memcmp(pt, big, sizeof(big)) == 0, "GCM decrypt round trip");
+          memcmp(pt, big, sizeof(big)) == 0, "AEAD decrypt round trip");
     ct[5] ^= 1U;
     (void)memset(pt, 0xAA, sizeof(pt));
     st = psa_aead_decrypt(k, WT_TEST_AEAD, nonce, sizeof(nonce), big, 20U, ct,
                           len, pt, sizeof(pt), &len2);
     check(st == PSA_ERROR_INVALID_SIGNATURE && len2 == 0U && pt[0] == 0U &&
           pt[100] == 0U && pt[sizeof(pt) - 1U] == 0U,
-          "GCM bad tag fails and releases no plaintext");
+          "AEAD bad tag fails and releases no plaintext");
     test_large_oneshots(k, nonce);
     check(psa_destroy_key(k) == PSA_SUCCESS, "destroy volatile key");
 

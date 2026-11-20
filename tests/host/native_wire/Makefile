@@ -21,9 +21,12 @@
 ROOT    := ../../..
 WOLFHSM := $(ROOT)/lib/wolfHSM
 WOLFSSL := $(ROOT)/lib/wolfSSL
+WOLFPSA := $(ROOT)/lib/wolfPSA
 
 CC ?= cc
 BUILD_DIR ?= build
+# SP_DIRECT=1 builds the medium profile's direct P-256 keyvault path
+SP_DIRECT ?= 0
 
 CFLAGS := \
     -DWOLFSSL_USER_SETTINGS \
@@ -36,6 +39,9 @@ CFLAGS := \
     -I$(WOLFSSL) \
     -std=c11 -O0 -g -Wall -Wextra -Werror -pedantic \
     -Wno-unused-function -Wno-unused-parameter
+ifeq ($(SP_DIRECT),1)
+CFLAGS += -DWOLFPSA_ECC_SP_DIRECT -I$(WOLFPSA)
+endif
 CFLAGS += $(EXTRA_CFLAGS)
 
 # wolfCrypt's ECC sources need GNU libc declarations that strict C11
@@ -72,15 +78,21 @@ _WC_SRCS := \
     $(WOLFSSL)/wolfcrypt/src/hash.c     \
     $(WOLFSSL)/wolfcrypt/src/wc_port.c  \
     $(WOLFSSL)/wolfcrypt/src/misc.c
+ifeq ($(SP_DIRECT),1)
+_WC_SRCS += $(WOLFSSL)/wolfcrypt/src/sp_c32.c $(WOLFSSL)/wolfcrypt/src/sp_c64.c
+_WP_SRCS := $(WOLFPSA)/src/psa_p256.c
+endif
 
 _TEST_SRCS := main.c
 
 _WT_OBJS   := $(patsubst %.c,wt_%.o,$(notdir $(_WT_SRCS)))
 _WH_OBJS   := $(patsubst %.c,wh_%.o,$(notdir $(_WH_SRCS)))
 _WC_OBJS   := $(patsubst %.c,wc_%.o,$(notdir $(_WC_SRCS)))
+_WP_OBJS   := $(patsubst %.c,wp_%.o,$(notdir $(_WP_SRCS)))
 _TEST_OBJS := $(patsubst %.c,%.o,$(notdir $(_TEST_SRCS)))
 
-ALL_OBJS := $(addprefix $(BUILD_DIR)/,$(_WT_OBJS) $(_WH_OBJS) $(_WC_OBJS) $(_TEST_OBJS))
+ALL_OBJS := $(addprefix $(BUILD_DIR)/,$(_WT_OBJS) $(_WH_OBJS) $(_WC_OBJS) \
+    $(_WP_OBJS) $(_TEST_OBJS))
 TEST_BIN := $(BUILD_DIR)/test_native_wire
 
 .PHONY: all run compilers sanitize valgrind clean
@@ -102,6 +114,9 @@ $(BUILD_DIR)/wh_%.o: $(WOLFHSM)/src/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/wc_%.o: $(WOLFSSL)/wolfcrypt/src/%.c | $(BUILD_DIR)
 	$(CC) $(WC_CFLAGS) -c -o $@ $<
 
+$(BUILD_DIR)/wp_%.o: $(WOLFPSA)/src/%.c | $(BUILD_DIR)
+	$(CC) $(WC_CFLAGS) -c -o $@ $<
+
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -119,6 +134,12 @@ run: $(TEST_BIN)
 	    cat $(BUILD_DIR)/aes_setup_failure.log; exit 1; \
 	fi; \
 	printf '%s\n' 'PASS: AEAD setup failure remains a failed test'
+ifneq ($(SP_DIRECT),1)
+	$(MAKE) --no-print-directory SP_DIRECT=1 BUILD_DIR=$(BUILD_DIR)/direct \
+	    $(BUILD_DIR)/direct/test_native_wire
+	$(BUILD_DIR)/direct/test_native_wire
+	@printf '%s\n' 'PASS: native wire on the direct P-256 path'
+endif
 
 compilers:
 	$(MAKE) clean run CC=gcc BUILD_DIR=$(BUILD_DIR)/gcc

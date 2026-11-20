@@ -77,7 +77,7 @@ CLI_OBJS := $(BUILD_DIR)/psa_crypto_client.o \
 SRV_BIN := $(BUILD_DIR)/psa_server
 TEST_BIN := $(BUILD_DIR)/test_psa_secure_crypto
 
-.PHONY: all run run-one compilers sanitize valgrind clean
+.PHONY: all run run-one compilers sanitize valgrind valgrind-one clean
 
 all: $(SRV_BIN) $(TEST_BIN)
 
@@ -157,7 +157,14 @@ sanitize:
 		EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
 		EXTRA_LDFLAGS="-fsanitize=address,undefined"
 
-valgrind: all
+valgrind:
+	@for p in $(PROFILES); do \
+		echo "== profile $$p"; \
+		$(MAKE) --no-print-directory valgrind-one PROFILE=$$p \
+			BUILD_DIR=$(BUILD_DIR)/$$p || exit 1; \
+	done
+
+valgrind-one: all
 	rm -f $(BUILD_DIR)/flash.bin
 	valgrind --error-exitcode=1 --leak-check=full \
 		--trace-children=yes $(TEST_BIN)
