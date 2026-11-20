@@ -69,10 +69,6 @@
 #define NO_KDF
 #endif
 #endif
-#if defined(WT_PSA_POOL_TU) && defined(NO_AES_CBC)
-#define wc_AesCbcEncrypt(a, o, i, s) ((void)(a), (void)(o), (void)(i), (void)(s), -174)
-#define wc_AesCbcDecrypt(a, o, i, s) ((void)(a), (void)(o), (void)(i), (void)(s), -174)
-#endif
 #ifdef WT_PSA_POOL_TU
 #define XMALLOC_OVERRIDE
 void* wt_psa_pool_alloc(unsigned int sz);
