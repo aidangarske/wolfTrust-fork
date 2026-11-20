@@ -82,4 +82,16 @@ void* wt_psa_pool_realloc(void* p, unsigned int sz);
 #endif
 #endif
 
+/* Vault and sealed-storage AEAD: GCM unless WT_VAULT_AEAD=ccm */
+#if defined(WT_VAULT_AEAD_GCM) && defined(WT_VAULT_AEAD_CCM)
+#error "WT_VAULT_AEAD_GCM and WT_VAULT_AEAD_CCM are exclusive"
+#endif
+#if defined(WT_VAULT_AEAD_CCM) && !defined(HAVE_AESCCM)
+#define HAVE_AESCCM
+#endif
+#ifdef WT_VAULT_AEAD_CCM
+/* wolfCrypt builds CCM decrypt only with HAVE_AES_DECRYPT; it runs AES forward */
+#undef NO_AES_DECRYPT
+#endif
+
 #endif /* WOLFTRUST_SECURE_PSA_PROFILE_H */

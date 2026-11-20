@@ -52,6 +52,7 @@ _SRV_WT := \
     $(ROOT)/src/services/native/psa_crypto_service.c \
     $(ROOT)/src/services/native/native_wire.c \
     $(ROOT)/src/services/native/keyvault.c \
+    $(ROOT)/src/services/wolfhsm/wt_hsm_aead.c \
     $(ROOT)/src/services/wolfhsm/wt_hsm_vault.c
 
 _SRV_WH := wh_nvm wh_nvm_flash wh_flash_ramsim wh_flash_unit wh_utils
@@ -91,7 +92,9 @@ $(PSA_CFG_H): $(WOLFPSA)/tools/gen-crypto-config.py \
 	python3 $(WOLFPSA)/tools/gen-crypto-config.py \
 	    $(if $(filter medium,$(PROFILE)),--without PSA_WANT_ALG_GCM \
 	        --without PSA_WANT_ALG_SP800_108_COUNTER_HMAC \
-	        --without PSA_WANT_ALG_SP800_108_COUNTER_CMAC) $@ "$(CC)" \
+	        --without PSA_WANT_ALG_SP800_108_COUNTER_CMAC) \
+	    $(if $(and $(filter lean symmetric,$(PROFILE)),$(findstring WT_VAULT_AEAD_CCM,$(EXTRA_CFLAGS))),--without PSA_WANT_ALG_CCM) \
+	    $@ "$(CC)" \
 	    $(WOLFPSA)/tools/psa_want_probe.c $(SRV_CFLAGS) -DWT_PSA_WANT_PROBE
 $(SRV_OBJS) $(CLI_OBJS) $(BUILD_DIR)/main.o: $(PSA_CFG_H)
 

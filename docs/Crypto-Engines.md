@@ -121,7 +121,8 @@ The defined operations are key generate, import, public export, sign, verify,
 encrypt, decrypt, and destroy, plus random generation and SHA-256 hashing.
 Random responses are limited to 256 bytes per request. P-256 signatures use a
 fixed 64-byte `r || s` form and public keys use the 65-byte uncompressed X9.63
-form. AES-256 encrypt and decrypt use AES-GCM and return or consume
+form. AES-256 encrypt and decrypt use AES-GCM (AES-CCM with `WT_VAULT_AEAD=ccm`)
+and return or consume
 `nonce || ciphertext || tag`.
 
 The structures are copied directly between the reference Cortex-M client and
@@ -196,7 +197,7 @@ includes too:
 | --- | --- | ---: |
 | `compat` (default) | The reference guest's set: P-256 ECDSA (deterministic) and ECDH, AES-GCM, CCM, CTR, CBC and ECB, SHA-256, HMAC, HKDF, PBKDF2, TLS 1.2 PRF | 110,009 / 48,844 |
 | `standard` | `compat` without PBKDF2, TLS 1.2 PRF, CBC, ECB and deterministic ECDSA (ECDSA uses a random nonce) | 103,835 / 48,844 |
-| `medium` | TF-M's Medium set: `standard` without GCM, CTR and the SP800-108 KDFs, plus ECB, SHA-224, CMAC, the TLS 1.2 PRF and PSK-to-MS. The vault still seals with GCM inside wolfCrypt, and P-256 runs on wolfPSA's direct SP path, so `ecc.c` leaves the image | 100,705 / 48,844 |
+| `medium` | TF-M's Medium set: `standard` without GCM, CTR and the SP800-108 KDFs, plus ECB, SHA-224, CMAC, the TLS 1.2 PRF and PSK-to-MS. The vault still seals with GCM inside wolfCrypt unless `WT_VAULT_AEAD=ccm`, which drops GCM, and P-256 runs on wolfPSA's direct SP path, so `ecc.c` leaves the image | 100,705 / 48,844 |
 | `lean` | `standard` without CCM and AES decryption | 102,133 / 48,844 |
 | `symmetric` | `lean` without ECC in the PSA surface; ECC key imports and generation return `PSA_ERROR_NOT_SUPPORTED` | 97,397 / 48,844 |
 

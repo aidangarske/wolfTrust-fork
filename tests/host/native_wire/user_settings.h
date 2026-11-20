@@ -39,6 +39,9 @@
 #define HAVE_STRINGS_H
 
 #define HAVE_AESGCM
+#ifdef WT_VAULT_AEAD_CCM
+#define HAVE_AESCCM
+#endif
 #define WOLFSSL_SHA256
 #define HAVE_HASHDRBG
 

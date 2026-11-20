@@ -198,6 +198,40 @@ jobs:
             WT_PSA_KEY_SLOTS=8 WT_PSA_OP_SLOTS=4 secure-image \
             TOOLPREFIX=arm-none-eabi- BUILD_DIR=build_spsa_sizes
           grep -qx 'WT_PSA_SIZES=8192/8/4/' build_spsa_sizes/secure_build_mode.stamp
+          for aead in "" gcm ccm; do
+            dir=build_vault_aead_$aead
+            make WT_SECURE_PSA=1 WT_SECURE_PSA_PROFILE=medium \
+              WT_VAULT_AEAD=$aead secure-image TOOLPREFIX=arm-none-eabi- BUILD_DIR=$dir
+            grep -qx "WT_VAULT_AEAD=$aead" $dir/secure_build_mode.stamp
+            arm-none-eabi-nm $dir/wolftrust.elf > $dir/syms.txt
+            if [ "$aead" = ccm ]; then want=' wc_AesCcm'; drop=' wc_AesGcm'; else want=' wc_AesGcm'; drop=''; fi
+            grep -q "$want" $dir/syms.txt
+            if [ -n "$drop" ] && grep -q "$drop" $dir/syms.txt; then
+              echo "FAIL: WT_VAULT_AEAD=$aead still links$drop" >&2
+              exit 1
+            fi
+          done
+          make WT_SECURE_PSA=1 WT_SECURE_PSA_PROFILE=lean WT_VAULT_AEAD=ccm \
+            secure-image TOOLPREFIX=arm-none-eabi- BUILD_DIR=build_vault_aead_lean
+          for mode in "WT_ENGINE=hsm" "WT_SECURE_PSA=0"; do
+            # shellcheck disable=SC2086
+            make $mode WT_VAULT_AEAD=ccm secure-image TOOLPREFIX=arm-none-eabi- \
+              BUILD_DIR=build_vault_aead_mode
+            grep -qx 'WT_VAULT_AEAD=ccm' build_vault_aead_mode/secure_build_mode.stamp
+            arm-none-eabi-nm build_vault_aead_mode/wolftrust.elf | grep -q ' wc_AesCcm'
+            rm -rf build_vault_aead_mode
+          done
+          if grep -qE '^#define PSA_WANT_ALG_CCM\b' \
+              build_vault_aead_lean/wolfpsa_cfg/crypto_config_generated.h; then
+            echo "FAIL: WT_VAULT_AEAD=ccm made lean advertise PSA CCM" >&2
+            exit 1
+          fi
+          if make WT_VAULT_AEAD=chacha BUILD_DIR=build_spsa_bad secure-image \
+              TOOLPREFIX=arm-none-eabi- 2> spsa.err; then
+            echo "FAIL: WT_VAULT_AEAD=chacha built" >&2
+            exit 1
+          fi
+          grep -q 'WT_VAULT_AEAD' spsa.err
           for bad in "WT_PSA_OP_SLOTS=1x" "WT_PSA_OP_SLOTS=300" "WT_PSA_POOL_BYTES=1024"; do
             # shellcheck disable=SC2086
             if make WT_SECURE_PSA=1 $bad BUILD_DIR=build_spsa_bad \

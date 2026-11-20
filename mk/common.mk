@@ -208,6 +208,17 @@ endif
 ifeq ($(WT_DEPUTY_NEG_PROBE),1)
 SECURE_CFLAGS += -DWT_DEPUTY_NEG_PROBE=1
 endif
+# Vault and sealed-storage AEAD; empty keeps GCM
+WT_VAULT_AEAD ?=
+ifneq ($(filter-out gcm ccm,$(WT_VAULT_AEAD))$(word 2,$(WT_VAULT_AEAD)),)
+$(error unsupported WT_VAULT_AEAD='$(WT_VAULT_AEAD)' (want gcm or ccm))
+endif
+ifeq ($(WT_VAULT_AEAD),ccm)
+SECURE_CFLAGS += -DWT_VAULT_AEAD_CCM
+endif
+ifeq ($(WT_VAULT_AEAD),gcm)
+SECURE_CFLAGS += -DWT_VAULT_AEAD_GCM
+endif
 ifeq ($(WT_HSM_PIN_NEG_PROBE),1)
 # Probe lives in the hsm-only wt_hsm.c; defining it for a native build would
 # leave the spm_partitions.c call undefined at link. Native has no tasklet, so
@@ -454,10 +465,16 @@ endif
 ifeq ($(WT_SECURE_PSA_PROFILE),medium)
 WOLFCRYPT_SECURE_SRCS += $(WOLFSSL_DIR)/wolfcrypt/src/kdf.c \
     $(WOLFSSL_DIR)/wolfcrypt/src/cmac.c
-# The vault seals with one-shot GCM, which PSA does not offer in this profile
+# The vault seals with GCM unless WT_VAULT_AEAD=ccm, which PSA does not offer here
 WT_PSA_WANT_WITHOUT := --without PSA_WANT_ALG_GCM \
     --without PSA_WANT_ALG_SP800_108_COUNTER_HMAC \
     --without PSA_WANT_ALG_SP800_108_COUNTER_CMAC
+endif
+ifneq ($(filter lean symmetric,$(WT_SECURE_PSA_PROFILE)),)
+ifeq ($(WT_VAULT_AEAD),ccm)
+# The vault's CCM must not widen these profiles' PSA surface
+WT_PSA_WANT_WITHOUT := --without PSA_WANT_ALG_CCM
+endif
 endif
 endif
 
@@ -1640,6 +1657,7 @@ BUILD_MODE_LINES = \
 		'WT_CO_STACK_SIZE=$(WT_CO_STACK_SIZE)' \
 		'WT_SPM_STACK_SIZE=$(WT_SPM_STACK_SIZE)' \
 		'WT_WOLFCRYPT_SP_ASM=$(WT_WOLFCRYPT_SP_ASM)' \
+		'WT_VAULT_AEAD=$(WT_VAULT_AEAD)' \
 		'WT_WOLFCRYPT_ARMASM=$(WT_WOLFCRYPT_ARMASM)' \
 		'WT_SHA256_FAST=$(WT_SHA256_FAST)' \
 		'WT_WOLFCRYPT_STM32_HASH=$(WT_WOLFCRYPT_STM32_HASH)' \
