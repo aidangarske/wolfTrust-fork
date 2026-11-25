@@ -34,6 +34,7 @@
 
 #include "wolfhsm/wh_error.h"
 #include "wolfhsm/wh_common.h"
+#include "wolftrust/vault_store.h"
 #include "wolfhsm/wh_nvm.h"
 
 #include "wolftrust/services/hsm.h"
@@ -113,14 +114,14 @@ int wt_hsm_seal_init(whNvmContext* nvm)
     /* Fail closed across a re-init: drop readiness until the key is proven
      * present again, so a partial reinit can never seal with a stale key. */
     g_seal_ready = 0;
-    rc = wh_Nvm_GetMetadata(nvm, WT_HSM_SEAL_KEY_ID, &meta);
+    rc = wt_vstore_metadata(nvm, WT_HSM_SEAL_KEY_ID, &meta);
     if (rc == WH_ERROR_OK) {
         if (meta.len != WT_HSM_SEAL_KEY_LEN) {
             wt_hsm_seal_zeroize(g_seal_key, sizeof(g_seal_key));
             return -1;
         }
-        rc = wh_Nvm_Read(nvm, WT_HSM_SEAL_KEY_ID, 0U, WT_HSM_SEAL_KEY_LEN,
-                         g_seal_key);
+        rc = wt_vstore_read(nvm, WT_HSM_SEAL_KEY_ID, 0U, WT_HSM_SEAL_KEY_LEN,
+                            g_seal_key);
         if (rc != WH_ERROR_OK) {
             wt_hsm_seal_zeroize(g_seal_key, sizeof(g_seal_key));
             return -1;
@@ -144,7 +145,7 @@ int wt_hsm_seal_init(whNvmContext* nvm)
                      WH_NVM_FLAGS_NONMODIFIABLE | WH_NVM_FLAGS_NONDESTROYABLE;
         meta.len = WT_HSM_SEAL_KEY_LEN;
         (void)memcpy(meta.label, &magic, sizeof(magic));
-        rc = wh_Nvm_AddObject(nvm, &meta, WT_HSM_SEAL_KEY_LEN, g_seal_key);
+        rc = wt_vstore_add(nvm, &meta, WT_HSM_SEAL_KEY_LEN, g_seal_key);
         if (rc != WH_ERROR_OK) {
             wt_hsm_seal_zeroize(g_seal_key, sizeof(g_seal_key));
             return -1;

@@ -20,11 +20,11 @@
 
 /* wolfCrypt key-op backend (WT-FFM-0046): every private-key computation runs
  * inside the crypto partition against material copied in through the vault's
- * keystore door, and no result carries it back out.
+ * key face, and no result carries it back out.
  * Keys are vault NVM objects (shared (owner, sub_owner, uid) directory)
  * stored SENSITIVE + NONEXPORTABLE, so no *Checked NVM path can return the
- * bytes, the storage face refuses key-flagged objects, and no wire op
- * exports private material — three independent layers between a compromised
+ * bytes, the storage face never sees key-flagged objects, and no wire op
+ * exports private material: three independent layers between a compromised
  * Secure Partition and raw key bytes. P-256 objects store
  * [d 32][X9.63 public 65] with the public point derived once at creation;
  * AES-256 objects store the raw 32-byte key. */
@@ -36,10 +36,6 @@
 #include "wolfssl/wolfcrypt/aes.h"
 #include "wolfssl/wolfcrypt/random.h"
 #include "wolfssl/wolfcrypt/error-crypt.h"
-
-#include "wolfhsm/wh_error.h"
-#include "wolfhsm/wh_common.h"
-#include "wolfhsm/wh_nvm.h"
 
 #include "wolftrust/services/vault_service.h"
 #include "wolftrust/services/hsm.h"
@@ -60,12 +56,7 @@
 #define WT_HSM_KEY_DER_SIG_MAX 80U
 #endif
 
-#define WT_HSM_KEY_LABEL(usage, type) \
-    (WT_VAULT_FLAG_KEY | ((usage) & WT_VAULT_KEY_USAGE_MASK) | \
-     (((uint32_t)(type) & 0xFFU) << 24))
-#define WT_HSM_KEY_TYPE_OF(flags) (((flags) >> 24) & 0xFFU)
-
-static whNvmContext* g_kv_nvm;
+static const wt_vault_keystore_t* g_kv_store;
 static WC_RNG g_kv_rng;
 static int g_kv_rng_ready;
 
@@ -84,12 +75,12 @@ static int wt_hsm_kv_rng_init(void)
     return 0;
 }
 
-int wt_hsm_keyvault_init(whNvmContext* nvm)
+int wt_hsm_keyvault_init(const wt_vault_keystore_t* store)
 {
-    if (nvm == NULL) {
+    if (store == NULL) {
         return -1;
     }
-    g_kv_nvm = nvm;
+    g_kv_store = store;
     return wt_hsm_kv_rng_init();
 }
 
@@ -132,84 +123,33 @@ psa_status_t wt_hsm_keyvault_random(uint8_t* out, size_t len)
     return PSA_SUCCESS;
 }
 
-/* Store new key material at a free directory slot; refuses any existing
- * object (storage or key) at the same (owner, sub, uid) with ALREADY_EXISTS,
- * matching psa_import_key/psa_generate_key on an occupied persistent id. */
+/* Store new key material. The vault refuses an existing key at the same
+ * (owner, sub, uid) with ALREADY_EXISTS, matching psa_import_key and
+ * psa_generate_key on an occupied persistent id. */
 static psa_status_t wt_hsm_kv_store(int32_t owner, int32_t sub, uint64_t uid,
                                     uint32_t type, uint32_t usage,
                                     const uint8_t* obj, size_t obj_len)
 {
-    whNvmMetadata meta;
-    whNvmId free_id = WH_NVM_ID_INVALID;
-    psa_status_t status;
-    int rc;
-
-    status = wt_hsm_vault_lookup_in(g_kv_nvm, owner, sub, uid, NULL, NULL,
-                                    &free_id);
-    if (status == PSA_SUCCESS) {
-        return PSA_ERROR_ALREADY_EXISTS;
+    if (g_kv_store == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
     }
-    if (status != PSA_ERROR_DOES_NOT_EXIST) {
-        return status;
-    }
-    if (free_id == WH_NVM_ID_INVALID) {
-        return PSA_ERROR_INSUFFICIENT_STORAGE;
-    }
-    /* Reserve and reclaim before the add, exactly like wt_hsm_vault_set: key
-     * generate/destroy churn over the native wire must not fill the shared log
-     * or eat the headroom the seal-counter table and rollback floor need. */
-    status = wt_hsm_vault_reserve_object_in(g_kv_nvm, (whNvmSize)obj_len);
-    if (status != PSA_SUCCESS) {
-        return status;
-    }
-    (void)memset(&meta, 0, sizeof(meta));
-    meta.id = free_id;
-    meta.access = WH_NVM_ACCESS_ANY;
-    meta.flags = WH_NVM_FLAGS_SENSITIVE | WH_NVM_FLAGS_NONEXPORTABLE;
-    meta.len = (whNvmSize)obj_len;
-    wt_hsm_vault_make_label(meta.label, owner, sub, uid,
-                            WT_HSM_KEY_LABEL(usage, type));
-    rc = wh_Nvm_AddObject(g_kv_nvm, &meta, (whNvmSize)obj_len, obj);
-    return (rc == WH_ERROR_OK) ? PSA_SUCCESS : PSA_ERROR_STORAGE_FAILURE;
+    return g_kv_store->put(owner, sub, uid, WT_VAULT_KEY_LABEL(usage, type),
+                           obj, obj_len);
 }
 
-/* Load key material for one operation: the object must be a key of the
- * expected type carrying the required usage bit. The plain (non-Checked)
- * read is the privileged domain's internal path — NONEXPORTABLE blocks
- * every Checked consumer. Caller zeroizes obj after use. */
+/* Load key material for one operation: the vault checks the object is a key
+ * of the expected type carrying the required usage bits and exactly obj_len
+ * bytes long. Caller zeroizes obj after use. */
 static psa_status_t wt_hsm_kv_load(int32_t owner, int32_t sub, uint64_t uid,
                                    uint32_t type, uint32_t usage_needed,
                                    uint8_t* obj, size_t obj_len)
 {
-    whNvmMetadata meta;
-    whNvmId id = WH_NVM_ID_INVALID;
-    uint32_t flags;
-    psa_status_t status;
-
-    if (g_kv_nvm == NULL) {
+    if (g_kv_store == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
-    status = wt_hsm_vault_lookup_in(g_kv_nvm, owner, sub, uid, &id, &meta,
-                                    NULL);
-    if (status != PSA_SUCCESS) {
-        return status;
-    }
-    flags = wt_hsm_vault_flags_of(meta.label);
-    if ((flags & WT_VAULT_FLAG_KEY) == 0U) {
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (WT_HSM_KEY_TYPE_OF(flags) != type ||
-            (flags & usage_needed) != usage_needed) {
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (meta.len != obj_len) {
-        return PSA_ERROR_STORAGE_FAILURE;
-    }
-    if (wh_Nvm_Read(g_kv_nvm, id, 0U, (whNvmSize)obj_len, obj) !=
-            WH_ERROR_OK) {
-        return PSA_ERROR_STORAGE_FAILURE;
-    }
-    return PSA_SUCCESS;
+    return g_kv_store->get(owner, sub, uid,
+                           WT_VAULT_KEY_LABEL(usage_needed, type),
+                           WT_VAULT_KEY_SEL_WHOLE, 0U, obj, obj_len);
 }
 
 /* Derive [d][X9.63 public] from a P-256 private scalar. */
@@ -252,7 +192,7 @@ static psa_status_t wt_hsm_kv_generate(int32_t owner, int32_t sub,
     psa_status_t status;
     int rc;
 
-    if (g_kv_nvm == NULL) {
+    if (g_kv_store == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
     if ((usage & ~WT_VAULT_KEY_USAGE_MASK) != 0U || usage == 0U) {
@@ -306,7 +246,7 @@ static psa_status_t wt_hsm_kv_import(int32_t owner, int32_t sub, uint64_t uid,
     uint8_t obj[WT_HSM_KEY_P256_OBJ_LEN];
     psa_status_t status;
 
-    if (g_kv_nvm == NULL) {
+    if (g_kv_store == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
     if ((usage & ~WT_VAULT_KEY_USAGE_MASK) != 0U || usage == 0U ||
@@ -598,83 +538,44 @@ static psa_status_t wt_hsm_kv_decrypt(int32_t owner, int32_t sub,
  * usage mask, so it would read a signing key's usage bit as WRITE_ONCE. */
 psa_status_t wt_hsm_keyvault_destroy(int32_t owner, int32_t sub, uint64_t uid)
 {
-    whNvmMetadata meta;
-    whNvmId id = WH_NVM_ID_INVALID;
-    psa_status_t status;
-
-    if (g_kv_nvm == NULL) {
+    if (g_kv_store == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
-    status = wt_hsm_vault_lookup_in(g_kv_nvm, owner, sub, uid, &id, &meta,
-                                    NULL);
-    if (status != PSA_SUCCESS) {
-        return status;
-    }
-    if ((wt_hsm_vault_flags_of(meta.label) & WT_VAULT_FLAG_KEY) == 0U) {
-        return PSA_ERROR_NOT_PERMITTED;
-    }
-    if (wh_Nvm_DestroyObjectsChecked(g_kv_nvm, 1U, &id) != WH_ERROR_OK) {
-        return PSA_ERROR_STORAGE_FAILURE;
-    }
-    return PSA_SUCCESS;
+    return g_kv_store->del(owner, sub, uid);
 }
 
 #ifdef WT_SECURE_PSA
 psa_status_t wt_hsm_keyvault_rec_put(int32_t owner, int32_t sub, uint64_t uid,
                                      const uint8_t* data, size_t len)
 {
-    if (g_kv_nvm == NULL) {
-        return PSA_ERROR_NOT_SUPPORTED;
-    }
     if (data == NULL || len == 0U || len > WT_VAULT_OBJECT_MAX) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
-    return wt_hsm_kv_store(owner, sub, uid, WT_HSM_KEY_TYPE_PSA_RECORD, 0U,
+    return wt_hsm_kv_store(owner, sub, uid, WT_VAULT_KEY_PSA_RECORD, 0U,
                            data, len);
 }
 
-/* Reads len bytes at offset; total reports the record size. */
+/* Reads len bytes at offset; a zero len only checks the record exists. */
 psa_status_t wt_hsm_keyvault_rec_get(int32_t owner, int32_t sub, uint64_t uid,
                                      uint32_t offset, uint8_t* data,
-                                     size_t len, size_t* total)
+                                     size_t len)
 {
-    whNvmMetadata meta;
-    whNvmId id = WH_NVM_ID_INVALID;
-    uint32_t flags;
-    psa_status_t status;
-
-    if (g_kv_nvm == NULL) {
+    if (g_kv_store == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
-    status = wt_hsm_vault_lookup_in(g_kv_nvm, owner, sub, uid, &id, &meta,
-                                    NULL);
-    if (status == PSA_SUCCESS) {
-        flags = wt_hsm_vault_flags_of(meta.label);
-        if ((flags & WT_VAULT_FLAG_KEY) == 0U ||
-                WT_HSM_KEY_TYPE_OF(flags) != WT_HSM_KEY_TYPE_PSA_RECORD) {
-            status = PSA_ERROR_NOT_PERMITTED;
-        }
+    if (data == NULL && len != 0U) {
+        return PSA_ERROR_INVALID_ARGUMENT;
     }
-    if (status == PSA_SUCCESS && total != NULL) {
-        *total = meta.len;
-    }
-    if (status == PSA_SUCCESS && len != 0U) {
-        if (data == NULL || offset > meta.len || len > meta.len - offset) {
-            status = PSA_ERROR_INVALID_ARGUMENT;
-        }
-        else if (wh_Nvm_Read(g_kv_nvm, id, (whNvmSize)offset, (whNvmSize)len,
-                             data) != WH_ERROR_OK) {
-            status = PSA_ERROR_STORAGE_FAILURE;
-        }
-    }
-    return status;
+    return g_kv_store->get(owner, sub, uid,
+                           WT_VAULT_KEY_LABEL(0U, WT_VAULT_KEY_PSA_RECORD), 0U,
+                           offset, data, len);
 }
 
 psa_status_t wt_hsm_keyvault_rec_remove(int32_t owner, int32_t sub,
                                         uint64_t uid)
 {
     psa_status_t status = wt_hsm_keyvault_rec_get(owner, sub, uid, 0U, NULL,
-                                                  0U, NULL);
+                                                  0U);
 
     if (status == PSA_SUCCESS) {
         status = wt_hsm_keyvault_destroy(owner, sub, uid);

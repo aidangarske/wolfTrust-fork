@@ -466,9 +466,9 @@ int main(void)
     check(wh_Nvm_AddObject(&nvm_ctx, &key_meta, key_meta.len, data_a) ==
           WH_ERROR_OK, "created key object in shared vault window");
     status = vault_remove(runtime, TEST_CLIENT_A, handle_a, 0x44ULL);
-    check(status == PSA_ERROR_NOT_PERMITTED &&
+    check(status == PSA_ERROR_DOES_NOT_EXIST &&
           wh_Nvm_GetMetadata(&nvm_ctx, key_id, &key_meta) == WH_ERROR_OK,
-          "storage remove cannot delete a key object");
+          "storage remove cannot see or delete a key object");
 
     /* Malformed request header is refused, not misparsed. */
     (void)memset(short_req, 0, sizeof(short_req));

@@ -566,8 +566,11 @@ static void test_nvm_door(void)
     check(rc == WH_ERROR_OK, "D2 key-flagged window object added");
     window_key_id = free_id;
     check(wt_hsm_vault_lookup_in(&view, 4, -1, 0x55ULL, &id, &got, NULL) ==
-              PSA_SUCCESS && id == window_key_id && got.len == 32U,
-          "D2 the window lookup over the door finds the key object");
+              PSA_ERROR_DOES_NOT_EXIST,
+          "D2 a storage-namespace lookup never matches the key object");
+    check(wh_Nvm_GetMetadata(&view, window_key_id, &got) == WH_ERROR_OK &&
+              got.len == 32U,
+          "D2 the door reports the key object's metadata");
     rc = wh_Nvm_Read(&view, window_key_id, 0U, 32U, out);
     check(rc == WH_ERROR_OK && memcmp(out, key_bytes, 32U) == 0,
           "D2 key-flagged window object reads back");
@@ -631,8 +634,8 @@ static void test_nvm_door(void)
     check(rc == WH_ERROR_OK, "D5 reclaim through the door is allowed");
     rc = wh_Nvm_DestroyObjectsChecked(&view, 1U, &window_key_id);
     check(rc == WH_ERROR_OK, "D5 the key-flagged window object is destroyed");
-    check(wt_hsm_vault_lookup_in(&view, 4, -1, 0x55ULL, NULL, NULL, NULL) ==
-              PSA_ERROR_DOES_NOT_EXIST,
+    check(wh_Nvm_GetMetadata(&view, window_key_id, &got) ==
+              WH_ERROR_NOTFOUND,
           "D5 the destroyed key object is gone");
     id = TEST_KEYSTORE_ID;
     rc = wh_Nvm_DestroyObjects(&view, 1U, &id);
@@ -662,8 +665,8 @@ static void test_nvm_door(void)
     check(rc == WH_ERROR_OK, "D7 a key object under a storage owner's ids");
     check(wt_hsm_vault_backend.get(TEST_ROGUE_PARTITION, 0, 0x99ULL, 0U, out,
                                    sizeof(out), &got_len) ==
-              PSA_ERROR_NOT_PERMITTED,
-          "D7 the storage face refuses to serve the key object");
+              PSA_ERROR_DOES_NOT_EXIST,
+          "D7 the storage face never sees the key object");
 
     /* R1: the vault restarts while the door connection is idle. */
     test_partition_restart(TEST_VAULT_PARTITION);

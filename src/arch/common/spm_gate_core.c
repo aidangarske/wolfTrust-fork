@@ -201,7 +201,11 @@ static void wt_spm_fault_release(void* ctx)
     if (c->slot->partition_id == PARTITION_VAULT_ID) {
         /* Every connection to the vault drops to the error state below; the
          * crypto partition's cached keystore door must close and reconnect. */
+#if defined(WT_ENGINE_NATIVE)
+        wt_hsm_keyvault_vault_restarted();
+#else
         wt_nvm_client_partition_vault_restarted();
+#endif
     }
 #if defined(WT_ATTEST_COSE) && (WT_ATTEST_COSE == 1)
     if (c->slot->partition_id == g_spm_hsm_partition_id) {
@@ -491,7 +495,9 @@ static int wt_spm_dispatch_held(wt_spm_sp_t* slot, wt_spm_call_t* call,
     if (call->op == WT_SPM_OP_KEYSTORE_FLASH ||
             call->op == WT_SPM_OP_KEYSTORE_ENTROPY ||
             call->op == WT_SPM_OP_KEYSTORE_LOCK) {
+#if !defined(WT_NVM_STORE_NATIVE)
         wt_mutex_t* nvm_mutex;
+#endif
         int ks_ret = -1;
         int pinned;
 
@@ -518,6 +524,7 @@ static int wt_spm_dispatch_held(wt_spm_sp_t* slot, wt_spm_call_t* call,
             call->ret_int = wt_spm_keystore_op(&slot->table, call);
             return WT_FFM_SUCCESS;
         }
+#if !defined(WT_NVM_STORE_NATIVE)
         nvm_mutex = (wt_mutex_t*)(void*)wt_hsm_nvm_lock_mutex();
         if (call->call_type == WT_SPM_KS_LOCK_ACQUIRE) {
             ks_ret = wt_mutex_acquire_queued(nvm_mutex, wt_co_current());
@@ -535,6 +542,7 @@ static int wt_spm_dispatch_held(wt_spm_sp_t* slot, wt_spm_call_t* call,
         else if (call->call_type == WT_SPM_KS_LOCK_RELEASE) {
             ks_ret = wt_mutex_release(nvm_mutex);
         }
+#endif
 #if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
         /* First-wins failure latch (1 means enqueued, not an error). */
         if (ks_ret != 0 && ks_ret != 1 && g_wt_ks_last_lock == 0u) {

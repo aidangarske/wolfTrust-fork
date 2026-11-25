@@ -32,7 +32,9 @@
 /* The vault's NVM context and its SPM-owned serialisation mutex. The mutex
  * must be initialised (wt_mutex_init) before wt_nvm_store_bind wires it in. */
 extern whNvmContext g_wt_nvm_ctx;
+#if !defined(WT_NVM_STORE_NATIVE)
 extern wt_mutex_t   g_wt_nvm_lock_mutex;
+#endif
 
 /* Wire the port flash callbacks and the lock config, then initialise the
  * shared NVM context. Re-callable: the vault format/recovery path runs it

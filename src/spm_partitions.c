@@ -285,6 +285,7 @@ static int wt_spm_hsm_init_provider_namespace(void)
 static int wt_spm_hsm_bind(int32_t partition_id)
 {
     wt_hsm_relay_set_transport(wt_spm_svc_transport);
+#if defined(WT_ENGINE_HSM)
     /* Boot provisioned on the direct store; the running partition only ever
      * sees the vault through its door (the client context lives in the
      * crypto partition's own data band, nvm_client.o). */
@@ -292,7 +293,6 @@ static int wt_spm_hsm_bind(int32_t partition_id)
                                      SERVICE_VAULT_SID) != 0) {
         return WT_FFM_ERROR_STATE;
     }
-#if defined(WT_ENGINE_HSM)
     if (wt_hsm_bind_nvm(wt_nvm_client_partition_nvm()) != 0) {
         return WT_FFM_ERROR_STATE;
     }
@@ -308,7 +308,8 @@ static int wt_spm_hsm_bind(int32_t partition_id)
 #else
     /* Native engine: SERVICE_HSM stays the single mediated door; its packets
      * carry the native wire and dispatch straight into wolfCrypt. */
-    if (wt_native_bind_nvm(wt_nvm_client_partition_nvm()) != 0) {
+    if (wt_hsm_keyvault_bind_client(wt_spm_svc_transport, NULL, partition_id,
+                                    SERVICE_VAULT_SID) != 0) {
         return WT_FFM_ERROR_STATE;
     }
 #ifdef WT_SECURE_PSA

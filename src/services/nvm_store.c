@@ -65,15 +65,19 @@ static const whNvmCb     g_nvm_flash_cb[1] = {WH_NVM_FLASH_CB};
 typedef whNvmFlashConfig wt_nvm_backend_config_t;
 #endif
 
+#if !defined(WT_NVM_STORE_NATIVE)
 /* g_wt_hsm_lock_cb (wt_hsm_lock.c) dispatches acquire/release to the
  * SPM-owned g_wt_nvm_lock_mutex (nvm_boot.c). */
 static whLockConfig g_nvm_lock_cfg;
 extern const whLockCb g_wt_hsm_lock_cb; /* defined in wt_hsm_lock.c */
+#endif
 
 int wt_nvm_store_bind(void)
 {
     wt_nvm_backend_config_t nvm_flash_cfg;
+#if !defined(WT_NVM_STORE_NATIVE)
     whNvmConfig             nvm_cfg;
+#endif
 
     (void)memset(&g_nvm_flash_ctx, 0, sizeof(g_nvm_flash_ctx));
     (void)memset(&nvm_flash_cfg, 0, sizeof(nvm_flash_cfg));
@@ -82,8 +86,13 @@ int wt_nvm_store_bind(void)
     nvm_flash_cfg.config  = wt_hsm_flash_config();
 #if defined(WT_NVM_STORE_NATIVE)
     nvm_flash_cfg.may_format = wt_nvm_reformat_allowed;
-#endif
 
+    /* The vault calls the native store directly (vault_store.h): no lock. */
+    (void)memset(&g_wt_nvm_ctx, 0, sizeof(g_wt_nvm_ctx));
+    g_wt_nvm_ctx.cb      = (whNvmCb *)g_nvm_flash_cb;
+    g_wt_nvm_ctx.context = &g_nvm_flash_ctx;
+    return wt_nvs_init(&g_nvm_flash_ctx, &nvm_flash_cfg);
+#else
     g_nvm_lock_cfg.cb      = &g_wt_hsm_lock_cb;
     g_nvm_lock_cfg.context = &g_wt_nvm_lock_mutex;
     g_nvm_lock_cfg.config  = NULL;
@@ -96,6 +105,7 @@ int wt_nvm_store_bind(void)
     nvm_cfg.lockConfig = &g_nvm_lock_cfg;
 
     return wh_Nvm_Init(&g_wt_nvm_ctx, &nvm_cfg);
+#endif
 }
 
 void wt_nvm_store_pin(void)
@@ -105,8 +115,10 @@ void wt_nvm_store_pin(void)
      * (WT-FFM-0011); data fields (directory, state) stay partition-owned. */
     g_wt_nvm_ctx.cb           = (whNvmCb *)g_nvm_flash_cb;
     g_wt_nvm_ctx.context      = &g_nvm_flash_ctx;
+#if !defined(WT_NVM_STORE_NATIVE)
     g_wt_nvm_ctx.lock.cb      = &g_wt_hsm_lock_cb;
     g_wt_nvm_ctx.lock.context = &g_wt_nvm_lock_mutex;
+#endif
     g_nvm_flash_ctx.cb    = &g_wt_hsm_flash_cb;
     g_nvm_flash_ctx.flash = wt_hsm_flash_context();
 }
@@ -121,8 +133,10 @@ int wt_nvm_store_pin_probe(void)
      * correct with no yield (WT-FFM-0011). */
     g_wt_nvm_ctx.cb           = (whNvmCb *)sentinel;
     g_wt_nvm_ctx.context      = sentinel;
+#if !defined(WT_NVM_STORE_NATIVE)
     g_wt_nvm_ctx.lock.cb      = (const whLockCb *)sentinel;
     g_wt_nvm_ctx.lock.context = sentinel;
+#endif
     g_nvm_flash_ctx.cb        = (const whFlashCb *)sentinel;
     g_nvm_flash_ctx.flash     = sentinel;
 
@@ -130,8 +144,10 @@ int wt_nvm_store_pin_probe(void)
 
     if (g_wt_nvm_ctx.cb != (whNvmCb *)g_nvm_flash_cb ||
             g_wt_nvm_ctx.context != (void *)&g_nvm_flash_ctx ||
+#if !defined(WT_NVM_STORE_NATIVE)
             g_wt_nvm_ctx.lock.cb != &g_wt_hsm_lock_cb ||
             g_wt_nvm_ctx.lock.context != (void *)&g_wt_nvm_lock_mutex ||
+#endif
             g_nvm_flash_ctx.cb != &g_wt_hsm_flash_cb ||
             g_nvm_flash_ctx.flash != wt_hsm_flash_context()) {
         return 0;

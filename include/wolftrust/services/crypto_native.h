@@ -29,8 +29,8 @@
 /* Native crypto engine (WT_ENGINE=native): wolfCrypt dispatch behind the
  * unchanged SERVICE_HSM door. The relay hands one opaque packet to
  * wt_native_submit; key ops and the keyvault DRBG run in SERVICE_HSM, and key
- * objects persist in the vault through its keystore IPC door — the wolfHSM
- * server, comm, and message layers are not linked. */
+ * objects persist in the vault through its key face (key_client.c); the
+ * wolfHSM server, comm, and message layers are not linked. */
 
 /* Native wire ops carried in wt_crypto_wire_req_t.op. Key ops address vault
  * key objects namespaced (owner = SERVICE_HSM partition, sub = SPM-stamped
@@ -77,12 +77,18 @@ int wt_native_submit(void* submit_ctx, int32_t client_id, const uint8_t* req,
  * material is stored SENSITIVE + NONEXPORTABLE in the vault and is copied
  * through the keystore door only into the crypto partition, which computes
  * on it and never exports it. */
-struct whNvmContext_t;
-int wt_hsm_keyvault_init(struct whNvmContext_t* nvm);
+struct wt_vault_keystore;
+int wt_hsm_keyvault_init(const struct wt_vault_keystore* store);
 
-/* Rebind the keyvault to nvm (the crypto partition's IPC-backed store view)
- * after boot provisioning on the direct store. Privileged bootstrap only. */
-int wt_native_bind_nvm(struct whNvmContext_t* nvm);
+/* Rebind the keyvault to the vault's key face over IPC after boot
+ * provisioning on the direct store. Privileged bootstrap only. */
+int wt_hsm_keyvault_bind_client(wt_spm_transport_fn transport,
+                                wt_ffm_runtime_t* runtime,
+                                int32_t partition_id, uint32_t vault_sid);
+
+/* The vault restarted: the cached key-face connection is in the error state,
+ * so the next operation reconnects. */
+void wt_hsm_keyvault_vault_restarted(void);
 extern const wt_vault_key_backend_t wt_hsm_key_backend;
 
 /* Destroy one key object in the caller's namespace. Refuses anything that
@@ -102,12 +108,12 @@ psa_status_t wt_hsm_keyvault_random(uint8_t* out, size_t len);
 #ifdef WT_SECURE_PSA
 /* Opaque PSA key records (Secure PSA Crypto persistent keys), stored as key
  * objects of their own type so neither the key wire nor storage can use them. */
-#define WT_HSM_KEY_TYPE_PSA_RECORD 0xFFU
+#define WT_HSM_KEY_TYPE_PSA_RECORD WT_VAULT_KEY_PSA_RECORD
 psa_status_t wt_hsm_keyvault_rec_put(int32_t owner, int32_t sub, uint64_t uid,
                                      const uint8_t* data, size_t len);
 psa_status_t wt_hsm_keyvault_rec_get(int32_t owner, int32_t sub, uint64_t uid,
                                      uint32_t offset, uint8_t* data,
-                                     size_t len, size_t* total);
+                                     size_t len);
 psa_status_t wt_hsm_keyvault_rec_remove(int32_t owner, int32_t sub,
                                         uint64_t uid);
 #endif

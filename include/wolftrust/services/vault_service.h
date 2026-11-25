@@ -59,6 +59,22 @@
 #define WT_VAULT_OP_NVM_DESTROY       16
 #define WT_VAULT_OP_NVM_READ          17
 
+/* Key face (native engine), in place of the door: the vault looks up, checks
+ * and stores the registered keystore client's key objects itself, under the
+ * caller's own partition id. */
+#define WT_VAULT_OP_KEY_PUT           18
+#define WT_VAULT_OP_KEY_GET           19
+#define WT_VAULT_OP_KEY_DEL           20
+
+/* KEY_GET select bits (wt_vault_req_t.select). IAK reads the boot-provisioned
+ * attestation key, whatever sub and uid say; WHOLE requires the read to cover
+ * the object exactly. */
+#define WT_VAULT_KEY_SEL_IAK   0x1U
+#define WT_VAULT_KEY_SEL_WHOLE 0x2U
+#define WT_VAULT_IAK_OWNER     0
+#define WT_VAULT_IAK_SUB       0
+#define WT_VAULT_IAK_UID       0xF0U
+
 /* Copied-IOVEC randomness bound: RANDOM requests past this are refused. */
 #define WT_VAULT_RANDOM_MAX 256U
 
@@ -129,6 +145,13 @@ typedef struct wt_vault_nvm_avail {
 #define WT_VAULT_KEY_USAGE_DECRYPT 0x8U
 #define WT_VAULT_KEY_USAGE_MASK    0xFU
 
+/* Key object label flags: the key flag, the usage mask and the key type. */
+#define WT_VAULT_KEY_PSA_RECORD    0xFFU
+#define WT_VAULT_KEY_LABEL(usage, type) \
+    (WT_VAULT_FLAG_KEY | ((usage) & WT_VAULT_KEY_USAGE_MASK) | \
+     (((uint32_t)(type) & 0xFFU) << 24))
+#define WT_VAULT_KEY_TYPE_OF(flags) (((flags) >> 24) & 0xFFU)
+
 /* Fixed sizes on the key wire: P-256 private scalar / AES-256 key material
  * (import payload), X9.63 public point (export_public), SHA-256 digest and
  * raw r||s signature (sign/verify: invec[1] = [digest][sig] on verify), and
@@ -154,7 +177,7 @@ typedef struct wt_vault_req {
     uint32_t flags;      /* SET: PSA create flags */
     uint32_t offset;     /* GET: read offset into the object */
     int32_t  sub_owner;  /* frontend-delegated end-client id (0 = none) */
-    uint32_t reserved;
+    uint32_t select;     /* KEY_GET: WT_VAULT_KEY_SEL_* */
 } wt_vault_req_t;
 
 /* outvec[0] of GET_INFO. */
@@ -224,6 +247,19 @@ typedef struct wt_vault_nvm_backend {
                          size_t len);
 } wt_vault_nvm_backend_t;
 
+/* Key face backend (wt_hsm_vault_keystore). owner is the caller's partition
+ * id, or the IAK owner for boot provisioning and IAK reads. put is
+ * create-only; label is WT_VAULT_KEY_LABEL. get checks the stored type and
+ * that it carries every usage bit in want. */
+typedef struct wt_vault_keystore {
+    psa_status_t (*put)(int32_t owner, int32_t sub, uint64_t uid,
+                        uint32_t label, const uint8_t* data, size_t len);
+    psa_status_t (*get)(int32_t owner, int32_t sub, uint64_t uid,
+                        uint32_t want, uint32_t select, uint32_t offset,
+                        uint8_t* data, size_t len);
+    psa_status_t (*del)(int32_t owner, int32_t sub, uint64_t uid);
+} wt_vault_keystore_t;
+
 /* Install the backing store. NULL restores the fail-closed default, which
  * refuses every request with PSA_ERROR_NOT_SUPPORTED. */
 void wt_vault_service_set_backend(const wt_vault_backend_t* backend);
@@ -241,6 +277,7 @@ void wt_vault_service_set_transport(wt_spm_transport_fn fn);
  * default) closes the door; NULL restores the fail-closed backend. */
 void wt_vault_service_set_keystore_client(int32_t partition_id);
 void wt_vault_service_set_nvm_backend(const wt_vault_nvm_backend_t* backend);
+void wt_vault_service_set_keystore(const wt_vault_keystore_t* keystore);
 
 /* SERVICE_VAULT's dispatch loop: wait, get, service one message, reply.
  * Architecture-neutral so the same code is host-tested through a real

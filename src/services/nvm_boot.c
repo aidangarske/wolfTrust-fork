@@ -28,6 +28,7 @@
 #include "wolfssl/wolfcrypt/settings.h"
 
 #include "wolfhsm/wh_error.h"
+#include "wolftrust/vault_store.h"
 #include "wolfhsm/wh_nvm.h"
 
 #include "wolftrust/types.h"
@@ -46,7 +47,9 @@
 #include <string.h>
 #include <stdint.h>
 
+#if !defined(WT_NVM_STORE_NATIVE)
 wt_mutex_t g_wt_nvm_lock_mutex;
+#endif
 
 /* -------------------------------------------------------------------------
  * Store recovery policy. A pool written by an older firmware generation (or
@@ -94,7 +97,11 @@ int wt_nvm_vault_bind(void)
 
     if (wt_hsm_vault_init(&g_wt_nvm_ctx) == 0) {
         wt_vault_service_set_backend(&wt_hsm_vault_backend);
+#if defined(WT_ENGINE_NATIVE)
+        wt_vault_service_set_keystore(&wt_hsm_vault_keystore);
+#else
         wt_vault_service_set_nvm_backend(&wt_hsm_vault_nvm_backend);
+#endif
         if (wt_hsm_seal_init(&g_wt_nvm_ctx) == 0) {
             wt_hsm_vault_set_sealer(&wt_hsm_sealer);
         }
@@ -116,6 +123,7 @@ int wt_nvm_vault_bind(void)
     return WH_ERROR_OK;
 }
 
+#if !defined(WT_NVM_STORE_NATIVE)
 void wt_hsm_release_locks(struct wt_co *co)
 {
     /* Drop every secure-side store lock the faulted coroutine still held, and
@@ -134,6 +142,7 @@ wt_mutex_t *wt_hsm_nvm_lock_mutex(void)
 {
     return &g_wt_nvm_lock_mutex;
 }
+#endif
 
 /* -------------------------------------------------------------------------
  * WT-FFM-0050 firmware anti-rollback: monotonic version floors in a plain
@@ -149,7 +158,7 @@ static int wt_nvm_rollback_load(wt_rollback_table_t* table)
     /* The privileged FWU-floor SVC and boot rollback reach this without a
      * server pump, so re-assert the NVM callback chain here too (WT-FFM-0011). */
     wt_nvm_store_pin();
-    rc = wh_Nvm_GetMetadata(&g_wt_nvm_ctx, WT_HSM_ROLLBACK_TABLE_ID, &meta);
+    rc = wt_vstore_metadata(&g_wt_nvm_ctx, WT_HSM_ROLLBACK_TABLE_ID, &meta);
     if (rc == WH_ERROR_NOTFOUND) {
         wt_rollback_table_init(table);
         return 1;
@@ -157,8 +166,8 @@ static int wt_nvm_rollback_load(wt_rollback_table_t* table)
     if (rc != WH_ERROR_OK || meta.len != sizeof(*table)) {
         return -1;
     }
-    rc = wh_Nvm_Read(&g_wt_nvm_ctx, WT_HSM_ROLLBACK_TABLE_ID, 0U,
-                     (whNvmSize)sizeof(*table), (uint8_t*)table);
+    rc = wt_vstore_read(&g_wt_nvm_ctx, WT_HSM_ROLLBACK_TABLE_ID, 0U,
+                        (whNvmSize)sizeof(*table), (uint8_t*)table);
     if (rc != WH_ERROR_OK || !wt_rollback_table_valid(table)) {
         return -1;
     }
@@ -179,8 +188,8 @@ static int wt_nvm_rollback_store(const wt_rollback_table_t* table)
     meta.access = WH_NVM_ACCESS_ANY;
     meta.flags = 0U;
     meta.len = (whNvmSize)sizeof(*table);
-    rc = wh_Nvm_AddObject(&g_wt_nvm_ctx, &meta, (whNvmSize)sizeof(*table),
-                          (const uint8_t*)table);
+    rc = wt_vstore_add(&g_wt_nvm_ctx, &meta, (whNvmSize)sizeof(*table),
+                       (const uint8_t*)table);
     return (rc == WH_ERROR_OK) ? 0 : -1;
 }
 

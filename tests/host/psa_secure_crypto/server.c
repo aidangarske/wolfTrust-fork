@@ -160,7 +160,7 @@ static int store_up(uint8_t* mem)
     g_nvm_cfg.config = &g_nvm_flash_cfg;
     if (wh_Nvm_Init(&g_nvm_ctx, &g_nvm_cfg) != WH_ERROR_OK ||
             wt_hsm_vault_init(&g_nvm_ctx) != 0 ||
-            wt_hsm_keyvault_init(&g_nvm_ctx) != 0 ||
+            wt_hsm_keyvault_init(&wt_hsm_vault_keystore) != 0 ||
             wt_psa_service_init() != 0) {
         return -1;
     }

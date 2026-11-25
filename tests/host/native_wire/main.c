@@ -97,7 +97,7 @@ static int test_store_up(void)
     if (wt_hsm_vault_init(&g_nvm_ctx) != 0) {
         return -1;
     }
-    if (wt_hsm_keyvault_init(&g_nvm_ctx) != 0) {
+    if (wt_hsm_keyvault_init(&wt_hsm_vault_keystore) != 0) {
         return -1;
     }
     return 0;

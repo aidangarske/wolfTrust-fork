@@ -72,6 +72,7 @@ static psa_status_t wt_vault_default_rng(uint8_t* out, size_t len)
     return PSA_ERROR_NOT_SUPPORTED;
 }
 
+#if !defined(WT_ENGINE_NATIVE)
 /* Fail-closed keystore door defaults: no store backend, no door. */
 static psa_status_t wt_vault_default_nvm_get_available(
     wt_vault_nvm_avail_t* avail)
@@ -116,9 +117,13 @@ static const wt_vault_nvm_backend_t g_vault_default_nvm_backend = {
     wt_vault_default_nvm_read
 };
 
-static const wt_vault_backend_t* g_vault_backend = &g_vault_default_backend;
 static const wt_vault_nvm_backend_t* g_vault_nvm_backend =
     &g_vault_default_nvm_backend;
+#else
+static const wt_vault_keystore_t* g_vault_keystore;
+#endif
+
+static const wt_vault_backend_t* g_vault_backend = &g_vault_default_backend;
 static int32_t g_vault_keystore_client;
 static wt_vault_rng_fn g_vault_rng = wt_vault_default_rng;
 static wt_spm_transport_fn g_vault_transport = WT_SPM_TRANSPORT_DEFAULT;
@@ -148,11 +153,18 @@ void wt_vault_service_set_keystore_client(int32_t partition_id)
     g_vault_keystore_client = (partition_id > 0) ? partition_id : 0;
 }
 
+#if !defined(WT_ENGINE_NATIVE)
 void wt_vault_service_set_nvm_backend(const wt_vault_nvm_backend_t* backend)
 {
     g_vault_nvm_backend = (backend != NULL) ? backend :
                           &g_vault_default_nvm_backend;
 }
+#else
+void wt_vault_service_set_keystore(const wt_vault_keystore_t* keystore)
+{
+    g_vault_keystore = keystore;
+}
+#endif
 
 #if defined(WT_VAULT_WIPE_PROBE) && (WT_VAULT_WIPE_PROBE == 1)
 void wt_vault_wipe_probe(const uint8_t* buf, size_t len);
@@ -258,11 +270,13 @@ static psa_status_t wt_vault_service_call(const wt_svc_t* svc,
     return status;
 }
 
+#if !defined(WT_ENGINE_NATIVE)
 /* Keystore object door (WT_VAULT_OP_NVM_*): the crypto partition's NVM
  * callbacks, served only for the registered keystore client. Object data
  * crosses in copied IOVECs bounded by WT_VAULT_OBJECT_MAX. */
-static psa_status_t wt_vault_nvm_serve(const wt_svc_t* svc,
-                                       const psa_msg_t* msg, uint8_t* data)
+static psa_status_t wt_vault_keystore_serve(const wt_svc_t* svc,
+                                            const psa_msg_t* msg,
+                                            uint8_t* data)
 {
     uint16_t ids[WT_VAULT_NVM_DESTROY_MAX];
     wt_vault_nvm_req_t req;
@@ -359,13 +373,79 @@ static psa_status_t wt_vault_nvm_serve(const wt_svc_t* svc,
     return status;
 }
 
-static psa_status_t wt_vault_nvm_call(const wt_svc_t* svc,
-                                      const psa_msg_t* msg)
+#define WT_VAULT_KEYSTORE_FIRST WT_VAULT_OP_NVM_GET_AVAILABLE
+#define WT_VAULT_KEYSTORE_LAST  WT_VAULT_OP_NVM_READ
+#else
+/* Key face (WT_VAULT_OP_KEY_*): the owner is always the caller's own id, and
+ * only an IAK read reaches another owner's object. */
+static psa_status_t wt_vault_keystore_serve(const wt_svc_t* svc,
+                                            const psa_msg_t* msg,
+                                            uint8_t* data)
+{
+    wt_vault_req_t req;
+    int32_t owner = msg->client_id;
+    size_t req_len = 0U;
+    size_t data_len = 0U;
+    psa_status_t status = PSA_ERROR_INVALID_ARGUMENT;
+
+    if (g_vault_keystore_client == 0 || owner != g_vault_keystore_client) {
+        return PSA_ERROR_NOT_PERMITTED;
+    }
+    if (g_vault_keystore == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (msg->in_size[0] != sizeof(req) ||
+            wt_svc_read(svc, 0U, &req, sizeof(req), &req_len) !=
+                WT_FFM_SUCCESS || req_len != sizeof(req)) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    switch (msg->type) {
+    case WT_VAULT_OP_KEY_PUT:
+        if (msg->in_size[1] != 0U && msg->in_size[1] <= WT_VAULT_OBJECT_MAX &&
+                wt_svc_read(svc, 1U, data, WT_VAULT_OBJECT_MAX, &data_len) ==
+                    WT_FFM_SUCCESS && data_len == msg->in_size[1]) {
+            status = g_vault_keystore->put(owner, req.sub_owner, req.uid,
+                                           req.flags, data, data_len);
+        }
+        break;
+    case WT_VAULT_OP_KEY_GET:
+        data_len = msg->out_size[0];
+        if (data_len <= WT_VAULT_OBJECT_MAX) {
+            if ((req.select & WT_VAULT_KEY_SEL_IAK) != 0U) {
+                owner = WT_VAULT_IAK_OWNER;
+                req.sub_owner = WT_VAULT_IAK_SUB;
+                req.uid = WT_VAULT_IAK_UID;
+            }
+            status = g_vault_keystore->get(owner, req.sub_owner, req.uid,
+                                           req.flags, req.select, req.offset,
+                                           data, data_len);
+            if (status == PSA_SUCCESS && data_len != 0U &&
+                    wt_svc_write(svc, 0U, data, data_len) != WT_FFM_SUCCESS) {
+                status = PSA_ERROR_GENERIC_ERROR;
+            }
+        }
+        break;
+    case WT_VAULT_OP_KEY_DEL:
+        status = g_vault_keystore->del(owner, req.sub_owner, req.uid);
+        break;
+    default:
+        status = PSA_ERROR_NOT_SUPPORTED;
+        break;
+    }
+    return status;
+}
+
+#define WT_VAULT_KEYSTORE_FIRST WT_VAULT_OP_KEY_PUT
+#define WT_VAULT_KEYSTORE_LAST  WT_VAULT_OP_KEY_DEL
+#endif
+
+static psa_status_t wt_vault_keystore_call(const wt_svc_t* svc,
+                                           const psa_msg_t* msg)
 {
     uint8_t data[WT_VAULT_OBJECT_MAX];
     psa_status_t status;
 
-    status = wt_vault_nvm_serve(svc, msg, data);
+    status = wt_vault_keystore_serve(svc, msg, data);
     wt_forceZero(data, sizeof(data));
     WT_VAULT_WIPED(data, sizeof(data));
     return status;
@@ -392,9 +472,9 @@ static psa_status_t wt_vault_handle(void* ctx, const wt_svc_t* svc,
         } else {
             status = wt_vault_service_call(svc, msg);
         }
-    } else if (msg->type >= WT_VAULT_OP_NVM_GET_AVAILABLE &&
-               msg->type <= WT_VAULT_OP_NVM_READ) {
-        status = wt_vault_nvm_call(svc, msg);
+    } else if (msg->type >= WT_VAULT_KEYSTORE_FIRST &&
+               msg->type <= WT_VAULT_KEYSTORE_LAST) {
+        status = wt_vault_keystore_call(svc, msg);
     } else {
         status = PSA_ERROR_NOT_SUPPORTED;
     }

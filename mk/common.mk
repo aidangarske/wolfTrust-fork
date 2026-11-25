@@ -458,8 +458,8 @@ WOLFHSM_SECURE_SRCS := $(filter %/wh_nvm.c %/wh_nvm_flash.c %/wh_flash_unit.c \
     %/wh_lock.c %/wh_utils.c %/wh_keyid.c,$(WOLFHSM_SECURE_SRCS))
 endif
 ifeq ($(WT_NVM_STORE),native)
-WOLFHSM_SECURE_SRCS := $(filter-out %/wh_nvm_flash.c %/wh_flash_unit.c,\
-    $(WOLFHSM_SECURE_SRCS))
+WOLFHSM_SECURE_SRCS := $(filter-out %/wh_nvm_flash.c %/wh_flash_unit.c \
+    %/wh_nvm.c %/wh_lock.c,$(WOLFHSM_SECURE_SRCS))
 endif
 
 WOLFCRYPT_SECURE_SRCS := \
@@ -547,7 +547,6 @@ WT_SECURE_EXTRA_SRCS := \
     $(ROOT)/src/services/nvm_boot.c \
     $(ROOT)/src/services/boot_handoff.c \
     $(ROOT)/src/services/hsm_relay_service.c \
-    $(ROOT)/src/services/nvm_client.c \
     $(ROOT)/src/services/vault_ipc.c \
     $(ROOT)/src/services/storage_service.c \
     $(ROOT)/src/services/vault_service.c
@@ -557,18 +556,24 @@ WT_SECURE_EXTRA_SRCS += $(ROOT)/src/services/fwu_service.c \
     $(ROOT)/src/arch/common/fwu_ops.c
 endif
 ifeq ($(WT_NVM_STORE),native)
+WT_SECURE_EXTRA_SRCS := $(filter-out %/wolfhsm/wt_hsm_lock.c,\
+    $(WT_SECURE_EXTRA_SRCS))
 WT_SECURE_EXTRA_SRCS += $(ROOT)/src/services/nvm_native.c
 endif
 
 # Engine split: wt_hsm.c drives the wolfHSM server (hsm engine only); the
 # native engine dispatches wolfCrypt directly behind the same SERVICE_HSM
 # door and keeps the server-free vault/seal/lock glue over the shared store.
+ifeq ($(WT_ENGINE),hsm)
+WT_SECURE_EXTRA_SRCS += $(ROOT)/src/services/nvm_client.c
+endif
 ifeq ($(WT_ENGINE),native)
 WT_SECURE_EXTRA_SRCS := $(filter-out %/wolfhsm/wt_hsm.c,$(WT_SECURE_EXTRA_SRCS))
 WT_SECURE_EXTRA_SRCS += \
     $(ROOT)/src/services/native/crypto_native.c \
     $(ROOT)/src/services/native/native_wire.c \
-    $(ROOT)/src/services/native/keyvault.c
+    $(ROOT)/src/services/native/keyvault.c \
+    $(ROOT)/src/services/native/key_client.c
 endif
 
 WT_SECURE_PSA_PROFILE ?= compat

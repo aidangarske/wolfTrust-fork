@@ -304,7 +304,7 @@ int wolfPSA_Store_OpenSz(int type, unsigned long id1, unsigned long id2,
     }
     if (read != 0) {
         status = wt_hsm_keyvault_rec_get(g_psa_owner, g_psa_client,
-                                         WT_PSA_UID(id1), 0U, NULL, 0U, NULL);
+                                         WT_PSA_UID(id1), 0U, NULL, 0U);
         if (status == PSA_ERROR_DOES_NOT_EXIST) {
             return WOLFPSA_STORE_NOT_AVAILABLE;
         }
@@ -362,8 +362,8 @@ int wolfPSA_Store_Read(void* store, unsigned char* buffer, int len)
         return WOLFPSA_STORE_IO_ERROR;
     }
     if (wt_hsm_keyvault_rec_get(g_psa_owner, g_psa_client, g_psa_store.uid,
-                                g_psa_store.off, buffer, (size_t)len,
-                                NULL) != PSA_SUCCESS) {
+                                g_psa_store.off, buffer,
+                                (size_t)len) != PSA_SUCCESS) {
         return WOLFPSA_STORE_IO_ERROR;
     }
     g_psa_store.off += (uint32_t)len;

@@ -123,12 +123,17 @@ int wt_hsm_signal_fault(wt_guest_id_t guest_id);
  * graceful SP fault-recovery path to release a dead partition's NVM lock
  * without the guest-keyed teardown wt_hsm_signal_fault performs. Safe from
  * handler mode; a NULL coroutine or a non-holder is a no-op. */
+#if defined(WT_NVM_STORE_NATIVE)
+/* The vault calls the native store directly, so no partition holds a lock. */
+#define wt_hsm_release_locks(co) ((void)(co))
+#else
 void wt_hsm_release_locks(struct wt_co *co);
 
 /* The shared NVM serialisation mutex, exposed so the SVC gate can run gated
  * acquire/release on behalf of the confined keystore partitions. */
 struct wt_mutex;
 struct wt_mutex *wt_hsm_nvm_lock_mutex(void);
+#endif
 
 /* Rebuild every ready server (per-guest and attestation) after a
  * relay-partition fault: a request may have been torn mid-flight, leaving
@@ -262,5 +267,10 @@ psa_status_t wt_hsm_vault_reserve_table_in(struct whNvmContext_t* nvm,
  * later adds. */
 struct wt_vault_nvm_backend;
 extern const struct wt_vault_nvm_backend wt_hsm_vault_nvm_backend;
+
+/* Key face backend (native engine), installed with
+ * wt_vault_service_set_keystore: key-namespace objects only. */
+struct wt_vault_keystore;
+extern const struct wt_vault_keystore wt_hsm_vault_keystore;
 
 #endif /* WOLFTRUST_SERVICES_HSM_H */

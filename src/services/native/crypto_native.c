@@ -54,9 +54,9 @@
 WT_STATIC_ASSERT(WT_HSM_ATTEST_NOT_READY == WH_ERROR_NOTREADY,
                "attestation door not-ready code must match wolfHSM");
 
-#define WT_NATIVE_IAK_OWNER 0
-#define WT_NATIVE_IAK_SUB   0
-#define WT_NATIVE_IAK_UID   0xF0u
+#define WT_NATIVE_IAK_OWNER WT_VAULT_IAK_OWNER
+#define WT_NATIVE_IAK_SUB   WT_VAULT_IAK_SUB
+#define WT_NATIVE_IAK_UID   WT_VAULT_IAK_UID
 
 static bool g_native_attest_ready;
 
@@ -69,8 +69,10 @@ int wt_native_init(void)
         return rc;
     }
 
+#if !defined(WT_NVM_STORE_NATIVE)
     /* Initialise the NVM lock once, before wh_Nvm_Init wires it in. */
     wt_mutex_init(&g_wt_nvm_lock_mutex);
+#endif
 
     rc = wt_nvm_vault_bind();
     if (rc != WH_ERROR_OK) {
@@ -78,17 +80,12 @@ int wt_native_init(void)
     }
     /* Keys live in the crypto partition's keyvault, reached through the
      * SERVICE_HSM native wire. Boot provisions on the direct store;
-     * wt_native_bind_nvm rebinds before scheduling. */
-    if (wt_hsm_keyvault_init(&g_wt_nvm_ctx) != 0) {
+     * wt_hsm_keyvault_bind_client rebinds before scheduling. */
+    if (wt_hsm_keyvault_init(&wt_hsm_vault_keystore) != 0) {
         return -1;
     }
 
     return 0;
-}
-
-int wt_native_bind_nvm(whNvmContext* nvm)
-{
-    return wt_hsm_keyvault_init(nvm);
 }
 
 /* =========================================================================

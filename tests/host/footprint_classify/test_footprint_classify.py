@@ -85,6 +85,7 @@ WOLFTRUST_OBJECTS = {
     "build/wh_sec_wh_nvm.o": "storage",
     "build/wt_sec_nvm_native.o": "storage",
     "build/wt_sec_vault_ipc.o": "storage",
+    "build/wt_sec_key_client.o": "storage",
     "build/wt_sec_fwu_service.o": "storage",
     "build/wt_sec_keystore_ops.o": "storage",
     "build/wt_sec_fwu_ops.o": "storage",

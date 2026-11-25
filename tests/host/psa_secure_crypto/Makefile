@@ -34,7 +34,7 @@ WARN := -std=c11 -O0 -g -Wall -Wextra -Werror -pedantic \
 # The service side: wolfPSA, wolfCrypt and the keyvault over a ramsim NVM,
 # built as the crypto partition builds them.
 SRV_CFLAGS := \
-    -DWOLFSSL_USER_SETTINGS -UHAVE_CONFIG_H \
+    -DWOLFSSL_USER_SETTINGS -UHAVE_CONFIG_H -DWT_ENGINE_NATIVE=1 \
     -DWOLFHSM_CFG_NO_CRYPTO -DWOLFHSM_CFG_NO_SYS_TIME \
     -DWT_SECURE_PSA=1 -DWT_SECURE_PSA_$(PROFILE)=1 -DWT_MAX_GUESTS=2 -DWT_PSA_GEN_MAX=64U \
     -DWOLFSSL_PSA_ENGINE -DWOLFPSA_CUSTOM_STORE -DWOLFPSA_NO_TRACE -DWOLFPSA_AEAD_BORROW \
