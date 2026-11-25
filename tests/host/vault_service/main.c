@@ -321,6 +321,11 @@ int main(void)
     uint8_t buffer[64];
     uint8_t short_req[4];
     psa_invec bad_vec;
+    wt_vault_req_t key_req;
+    psa_invec key_vec[2];
+    psa_outvec key_out;
+    int32_t op;
+    int key_refused = 1;
     size_t got = 0U;
     psa_status_t status;
 
@@ -473,6 +478,24 @@ int main(void)
                          WT_VAULT_OP_GET, &bad_vec, 1U, NULL, 0U);
     check(status == PSA_ERROR_INVALID_ARGUMENT,
           "undersized request header refused");
+
+    /* The vault has no key face: every WT_VAULT_OP_KEY_* op is refused. */
+    (void)memset(&key_req, 0, sizeof(key_req));
+    key_req.uid = 0x11ULL;
+    key_vec[0].base = &key_req;
+    key_vec[0].len = sizeof(key_req);
+    key_vec[1].base = data_a;
+    key_vec[1].len = sizeof(data_a);
+    for (op = WT_VAULT_OP_KEY_GENERATE; op <= WT_VAULT_OP_KEY_DECRYPT; op++) {
+        key_out.base = buffer;
+        key_out.len = sizeof(buffer);
+        status = wt_spm_host_call(TEST_CLIENT_A, handle_a, op, key_vec, 2U,
+                                  &key_out, 1U);
+        if (status != PSA_ERROR_NOT_SUPPORTED) {
+            key_refused = 0;
+        }
+    }
+    check(key_refused, "every key-face op is refused with NOT_SUPPORTED");
 
     if (wt_spm_host_close(TEST_CLIENT_A, handle_a) != WT_FFM_SUCCESS ||
             wt_spm_host_close(TEST_CLIENT_B, handle_b) !=

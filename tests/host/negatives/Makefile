@@ -42,6 +42,7 @@ include ../vendor_c99.mk
 _WT_SRCS := \
     $(ROOT)/src/ffm_domain.c \
     $(ROOT)/src/spm_gate.c \
+    $(ROOT)/src/services/vault_ipc.c \
     $(ROOT)/src/services/vault_service.c \
     $(ROOT)/src/services/wolfhsm/wt_hsm_vault.c \
     $(ROOT)/src/services/wolfhsm/wt_hsm_seal.c \

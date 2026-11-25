@@ -228,10 +228,6 @@ typedef struct wt_vault_nvm_backend {
  * refuses every request with PSA_ERROR_NOT_SUPPORTED. */
 void wt_vault_service_set_backend(const wt_vault_backend_t* backend);
 
-/* Install the key-operation backend. NULL restores the fail-closed default
- * (every key op refused with PSA_ERROR_NOT_SUPPORTED). */
-void wt_vault_service_set_key_backend(const wt_vault_key_backend_t* backend);
-
 /* Install the vault RNG for the RANDOM face. NULL restores the fail-closed
  * default (RANDOM refused with PSA_ERROR_NOT_SUPPORTED). */
 void wt_vault_service_set_rng(wt_vault_rng_fn fn);

@@ -548,6 +548,7 @@ WT_SECURE_EXTRA_SRCS := \
     $(ROOT)/src/services/boot_handoff.c \
     $(ROOT)/src/services/hsm_relay_service.c \
     $(ROOT)/src/services/nvm_client.c \
+    $(ROOT)/src/services/vault_ipc.c \
     $(ROOT)/src/services/storage_service.c \
     $(ROOT)/src/services/vault_service.c
 

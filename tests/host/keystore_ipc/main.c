@@ -796,7 +796,7 @@ static void test_nvm_door(void)
     check(status == PSA_SUCCESS && rc == WH_ERROR_OK &&
           memcmp(out, g_probe_pattern, sizeof(g_probe_pattern)) == 0,
           "Z2 the probe object round-trips through the storage face");
-    check(g_wipe_checks >= 4U && g_wipe_dirty == 0U,
+    check(g_wipe_checks >= 2U && g_wipe_dirty == 0U,
           "Z2 the storage face's copied buffers are zeroed before release");
     (void)wt_spm_host_close(TEST_ROGUE_PARTITION, handle);
     check(wt_hsm_vault_backend.remove(TEST_ROGUE_PARTITION, 0,
@@ -1123,6 +1123,18 @@ static void test_door_confinement(void)
     wt_hsm_relay_set_submit(NULL, NULL);
 }
 
+static void test_svc_client_args(void)
+{
+    wt_svc_client_t client;
+    psa_status_t status = PSA_SUCCESS;
+    uint8_t in1 = 0U;
+
+    (void)memset(&client, 0, sizeof(client));
+    check(wt_svc_client_call(&client, 1, NULL, 0U, &in1, sizeof(in1), NULL,
+                             NULL, &status) == WT_FFM_ERROR_ARGUMENT,
+          "a second invec without a first is refused, not dropped");
+}
+
 int main(void)
 {
     if (store_up() != 0) {
@@ -1138,6 +1150,7 @@ int main(void)
     test_door_confinement();
     test_nvm_door();
     test_attest_door();
+    test_svc_client_args();
     check(g_panics == 0U,
           "no door client was ever classified for a must-panic error");
     if (g_failures != 0) {

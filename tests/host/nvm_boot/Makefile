@@ -41,6 +41,7 @@ CFLAGS += $(EXTRA_CFLAGS)
 _WT_SRCS := \
     $(ROOT)/src/rollback.c \
     $(ROOT)/src/services/nvm_boot.c \
+    $(ROOT)/src/services/vault_ipc.c \
     $(ROOT)/src/services/vault_service.c \
     $(ROOT)/src/services/wolfhsm/wt_hsm_vault.c \
     $(ROOT)/src/services/wolfhsm/wt_hsm_seal.c

@@ -25,61 +25,11 @@
 
 #include <string.h>
 
-static int wt_nvm_client_xfer(wt_nvm_client_t* client, wt_spm_call_t* call)
-{
-    if (client->transport(client->runtime, call) != WT_FFM_SUCCESS ||
-            call->ret_int == WT_FFM_ERROR_NOT_READY) {
-        return WH_ERROR_ABORTED;
-    }
-    return WH_ERROR_OK;
-}
-
-/* Release a connection the vault's fault dropped to the error state: FF-M
- * lets the client close such a handle, never call it again. */
-static void wt_nvm_client_close(wt_nvm_client_t* client)
-{
-    wt_spm_call_t call;
-
-    if (client->vault_handle > 0) {
-        (void)memset(&call, 0, sizeof(call));
-        call.op = WT_SPM_OP_CLOSE;
-        call.partition_id = client->partition_id;
-        call.msg_handle = client->vault_handle;
-        (void)wt_nvm_client_xfer(client, &call);
-    }
-    client->vault_handle = 0;
-    client->vault_restarted = 0U;
-}
-
 void wt_nvm_client_vault_restarted(wt_nvm_client_t* client)
 {
     if (client != NULL) {
-        client->vault_restarted = 1U;
+        client->restarted = 1U;
     }
-}
-
-/* Lazy SP-to-SP connection to the vault, cached across operations. */
-static int wt_nvm_client_connect(wt_nvm_client_t* client)
-{
-    wt_spm_call_t call;
-
-    if (client->vault_restarted != 0U) {
-        wt_nvm_client_close(client);
-    }
-    if (client->vault_handle > 0) {
-        return WH_ERROR_OK;
-    }
-    (void)memset(&call, 0, sizeof(call));
-    call.op = WT_SPM_OP_CONNECT;
-    call.partition_id = client->partition_id;
-    call.sid = client->vault_sid;
-    call.version = 1U;
-    if (wt_nvm_client_xfer(client, &call) != WH_ERROR_OK ||
-            call.ret_int != WT_FFM_SUCCESS || call.ret_handle <= 0) {
-        return WH_ERROR_ABORTED;
-    }
-    client->vault_handle = call.ret_handle;
-    return WH_ERROR_OK;
 }
 
 static int wt_nvm_client_status(psa_status_t status)
@@ -116,45 +66,16 @@ static int wt_nvm_client_call(wt_nvm_client_t* client, int32_t type,
                               const void* in_data, size_t in_len,
                               void* out, size_t out_cap)
 {
-    wt_spm_call_t call;
-    int rc;
+    psa_status_t status;
+    size_t out_len = out_cap;
+    int rc = WH_ERROR_ABORTED;
 
-    rc = wt_nvm_client_connect(client);
-    if (rc != WH_ERROR_OK) {
-        return rc;
-    }
-    (void)memset(&call, 0, sizeof(call));
-    call.op = WT_SPM_OP_CALL;
-    call.partition_id = client->partition_id;
-    call.msg_handle = client->vault_handle;
-    call.call_type = type;
-    call.sp_in[0].base = req;
-    call.sp_in[0].len = sizeof(*req);
-    call.sp_in_len = 1U;
-    if (in_data != NULL) {
-        call.sp_in[1].base = in_data;
-        call.sp_in[1].len = in_len;
-        call.sp_in_len = 2U;
-    }
-    if (out != NULL) {
-        call.sp_out[0].base = out;
-        call.sp_out[0].len = out_cap;
-        call.sp_out_len = 1U;
-    }
-    if (wt_nvm_client_xfer(client, &call) != WH_ERROR_OK ||
-            call.ret_int != WT_FFM_SUCCESS) {
-        return WH_ERROR_ABORTED;
-    }
-    if (call.ret_status == PSA_ERROR_COMMUNICATION_FAILURE) {
-        /* The vault faulted under this request (WT-FFM-0017): the request
-         * is not replayed, and the dropped connection is closed now. */
-        wt_nvm_client_close(client);
-        return WH_ERROR_ABORTED;
-    }
-    rc = wt_nvm_client_status(call.ret_status);
-    if (rc == WH_ERROR_OK && out != NULL &&
-            call.sp_out[0].len != out_cap) {
-        rc = WH_ERROR_ABORTED;
+    if (wt_svc_client_call(client, type, req, sizeof(*req), in_data, in_len,
+                           out, &out_len, &status) == WT_FFM_SUCCESS) {
+        rc = wt_nvm_client_status(status);
+        if (rc == WH_ERROR_OK && out != NULL && out_len != out_cap) {
+            rc = WH_ERROR_ABORTED;
+        }
     }
     return rc;
 }
@@ -170,7 +91,7 @@ static int wt_nvm_client_cb_cleanup(void* context)
     if (context == NULL) {
         return WH_ERROR_BADARGS;
     }
-    wt_nvm_client_close((wt_nvm_client_t*)context);
+    wt_svc_client_close((wt_nvm_client_t*)context);
     return WH_ERROR_OK;
 }
 
@@ -363,8 +284,7 @@ int wt_nvm_client_bind(wt_nvm_client_t* client, whNvmContext* nvm,
     client->transport = transport;
     client->runtime = runtime;
     client->partition_id = partition_id;
-    client->vault_sid = vault_sid;
-    client->vault_handle = 0;
+    client->sid = vault_sid;
 
     (void)memset(&cfg, 0, sizeof(cfg));
     cfg.cb = (whNvmCb*)&wt_nvm_client_cb;

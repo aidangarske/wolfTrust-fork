@@ -42,6 +42,7 @@ _WT_SRCS := \
     $(ROOT)/src/ffm_domain.c \
     $(ROOT)/src/spm_gate.c \
     $(ROOT)/src/services/hsm_relay_service.c \
+    $(ROOT)/src/services/vault_ipc.c \
     $(ROOT)/src/services/storage_service.c \
     $(ROOT)/src/services/vault_service.c
 
