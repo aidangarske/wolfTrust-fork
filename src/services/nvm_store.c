@@ -30,8 +30,12 @@
 
 #include "wolfhsm/wh_error.h"
 #include "wolfhsm/wh_nvm.h"
-#include "wolfhsm/wh_nvm_flash.h"
 #include "wolfhsm/wh_lock.h"
+#if defined(WT_NVM_STORE_NATIVE)
+#include "wolftrust/nvm_native.h"
+#else
+#include "wolfhsm/wh_nvm_flash.h"
+#endif
 
 #include "wolftrust/types.h"
 #include "wolftrust/sync/mutex.h"
@@ -51,9 +55,15 @@
  * The vault's NVM state (one instance, serialised by g_wt_nvm_lock_mutex).
  * ---------------------------------------------------------------------- */
 whNvmContext             g_wt_nvm_ctx;
+#if defined(WT_NVM_STORE_NATIVE)
+static wt_nvs_context_t  g_nvm_flash_ctx;
+static const whNvmCb     g_nvm_flash_cb[1] = {WT_NVS_CB};
+typedef wt_nvs_config_t  wt_nvm_backend_config_t;
+#else
 static whNvmFlashContext g_nvm_flash_ctx;
-
-static const whNvmCb   g_nvm_flash_cb[1] = {WH_NVM_FLASH_CB};
+static const whNvmCb     g_nvm_flash_cb[1] = {WH_NVM_FLASH_CB};
+typedef whNvmFlashConfig wt_nvm_backend_config_t;
+#endif
 
 /* g_wt_hsm_lock_cb (wt_hsm_lock.c) dispatches acquire/release to the
  * SPM-owned g_wt_nvm_lock_mutex (nvm_boot.c). */
@@ -62,14 +72,17 @@ extern const whLockCb g_wt_hsm_lock_cb; /* defined in wt_hsm_lock.c */
 
 int wt_nvm_store_bind(void)
 {
-    whNvmFlashConfig nvm_flash_cfg;
-    whNvmConfig      nvm_cfg;
+    wt_nvm_backend_config_t nvm_flash_cfg;
+    whNvmConfig             nvm_cfg;
 
     (void)memset(&g_nvm_flash_ctx, 0, sizeof(g_nvm_flash_ctx));
     (void)memset(&nvm_flash_cfg, 0, sizeof(nvm_flash_cfg));
     nvm_flash_cfg.cb      = &g_wt_hsm_flash_cb;
     nvm_flash_cfg.context = wt_hsm_flash_context();
     nvm_flash_cfg.config  = wt_hsm_flash_config();
+#if defined(WT_NVM_STORE_NATIVE)
+    nvm_flash_cfg.may_format = wt_nvm_reformat_allowed;
+#endif
 
     g_nvm_lock_cfg.cb      = &g_wt_hsm_lock_cb;
     g_nvm_lock_cfg.context = &g_wt_nvm_lock_mutex;

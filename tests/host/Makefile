@@ -48,7 +48,11 @@ UNIT_SUITES := domain manifest manifest_ports lifecycle monitor guest_verify rol
     vault_service storage_service ps_service keystore_ipc negatives qcbor_shim \
     fwu_service runtime_verify psa_ffm_client psa_storage_client vnet_relay \
     psa_headers nvm_boot conf_nvm_sync fwu_restore spm_start layout_config \
-    manifest_render port_flash h5_rng fabric_sau ns_entry_scrub footprint_classify spm_core
+    manifest_render port_flash h5_rng fabric_sau ns_entry_scrub footprint_classify spm_core \
+    nvm_native
+# Suites that also run over the native NVM store (NVM_STORE=native).
+NVM_NATIVE_SUITES := vault_service nvm_boot ps_service storage_service \
+    keystore_ipc negatives psa_storage_client native_wire
 # A registered port's own suites (tests/host/<soc>_*/) run without a shared edit.
 UNIT_SUITES += $(filter-out $(UNIT_SUITES),$(patsubst %/Makefile,%,$(wildcard \
     $(addsuffix _*/Makefile,$(notdir $(patsubst %/port.json,%,$(wildcard ../../port/*/port.json)))))))
@@ -91,6 +95,23 @@ test:
 		fi; \
 		grep '^PASS:' "$$suite_log" || true; \
 		echo "PASS: $(TEST_KIND)/$$suite"; \
+	done
+	@set -e -o pipefail; for suite in $(NVM_NATIVE_SUITES); do \
+		suite_log="$(BUILD_ROOT)/logs/$(TEST_KIND)-$$suite-nvm-native.log"; \
+		echo "RUN: $(TEST_KIND)/$$suite (native NVM store)"; \
+		if $(MAKE) $(SUBMAKE_FLAGS) -C $$suite clean run NVM_STORE=native \
+			CC="$(CC)" BUILD_DIR="$(BUILD_ROOT)/$$suite-nvm-native" \
+			EXTRA_CFLAGS="$(EXTRA_CFLAGS)" > "$$suite_log" 2>&1; then \
+			status=0; \
+		else \
+			status=$$?; \
+		fi; \
+		cat "$$suite_log" >> "$(LOG_FILE)"; \
+		if [ $$status -ne 0 ]; then \
+			echo "FAIL: $(TEST_KIND)/$$suite (native NVM store)"; \
+			cat "$$suite_log"; exit 1; \
+		fi; \
+		echo "PASS: $(TEST_KIND)/$$suite (native NVM store)"; \
 	done
 	@echo "PASS: $(TEST_KIND)/all"; echo "LOG: $(LOG_FILE)"
 

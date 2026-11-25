@@ -168,8 +168,8 @@ int wt_hsm_attest_public_key(uint8_t* publicKey, size_t publicKeyCapacity,
 
 /* Gated vault backing (WT-FFM-0047): bind the shared NVM context, then
  * install wt_hsm_vault_backend into SERVICE_VAULT. wt_hsm_init does both;
- * requires wh_NvmFlash capacity/compaction callbacks. Host tests may use
- * that backend over ramsim. Other NVM backends are rejected with -1. */
+ * requires the configured store's capacity/compaction callbacks. Host tests
+ * may use that backend over ramsim. Other NVM backends are rejected with -1. */
 struct whNvmContext_t;
 int wt_hsm_vault_init(struct whNvmContext_t* nvm);
 struct wt_vault_backend;
@@ -193,6 +193,8 @@ extern const struct wt_vault_backend wt_hsm_vault_backend;
 typedef struct wt_vault_sealer {
     psa_status_t (*seal)(const uint8_t* aad, size_t aad_len, uint64_t counter,
                          const uint8_t* pt, size_t pt_len, uint8_t* ct);
+    /* The vault unseals in place: pt may equal ct. On failure the caller
+     * zeroizes pt. */
     psa_status_t (*unseal)(const uint8_t* aad, size_t aad_len,
                            uint64_t counter, const uint8_t* ct, size_t ct_len,
                            uint8_t* pt);

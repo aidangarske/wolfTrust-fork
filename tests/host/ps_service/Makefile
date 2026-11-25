@@ -64,6 +64,12 @@ _WC_SRCS := \
     $(WOLFSSL)/wolfcrypt/src/wc_port.c  \
     $(WOLFSSL)/wolfcrypt/src/misc.c
 
+CFLAGS += -I$(ROOT)/tests/host/support
+ifeq ($(NVM_STORE),native)
+CFLAGS += -DWT_NVM_STORE_NATIVE=1
+_WT_SRCS += $(ROOT)/src/services/nvm_native.c
+endif
+
 _TEST_SRCS := main.c
 
 _WT_OBJS   := $(patsubst %.c,wt_%.o,$(notdir $(_WT_SRCS)))

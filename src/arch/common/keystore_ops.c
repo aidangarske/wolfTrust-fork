@@ -68,8 +68,10 @@ static int wt_keystore_flash(const wt_secure_domain_t* domain,
                                             (const uint8_t*)call->buffer);
         }
         else {
+#if !defined(WT_NVM_STORE_NATIVE)
             ret = g_wt_hsm_flash_cb.Verify(ctx, off, len,
                                            (const uint8_t*)call->buffer);
+#endif
         }
     }
     else if (sub == WT_SPM_KS_FLASH_ERASE) {

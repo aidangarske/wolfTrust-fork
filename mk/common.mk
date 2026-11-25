@@ -183,6 +183,15 @@ else
 # wolfCrypt dependency (and its WOLF_CRYPTO_CB requirement).
 HSM_DEFS_SECURE += -DWT_ENGINE_NATIVE=1 -DWOLFHSM_CFG_NO_CRYPTO
 endif
+ifneq ($(words $(WT_NVM_STORE))/$(filter native wolfhsm,$(WT_NVM_STORE)),1/$(WT_NVM_STORE))
+$(error unsupported WT_NVM_STORE='$(WT_NVM_STORE)' (want native or wolfhsm))
+endif
+ifeq ($(WT_ENGINE)/$(WT_NVM_STORE),hsm/native)
+$(error WT_NVM_STORE=native requires WT_ENGINE=native)
+endif
+ifeq ($(WT_NVM_STORE),native)
+HSM_DEFS_SECURE += -DWT_NVM_STORE_NATIVE=1
+endif
 
 ifeq ($(WT_ATTEST_COSE),1)
 # Every claim text string is a Secure-flash constant, so encode skips UTF-8.
@@ -448,6 +457,10 @@ ifeq ($(WT_ENGINE),native)
 WOLFHSM_SECURE_SRCS := $(filter %/wh_nvm.c %/wh_nvm_flash.c %/wh_flash_unit.c \
     %/wh_lock.c %/wh_utils.c %/wh_keyid.c,$(WOLFHSM_SECURE_SRCS))
 endif
+ifeq ($(WT_NVM_STORE),native)
+WOLFHSM_SECURE_SRCS := $(filter-out %/wh_nvm_flash.c %/wh_flash_unit.c,\
+    $(WOLFHSM_SECURE_SRCS))
+endif
 
 WOLFCRYPT_SECURE_SRCS := \
     $(WOLFSSL_DIR)/wolfcrypt/src/aes.c \
@@ -541,6 +554,9 @@ WT_SECURE_EXTRA_SRCS := \
 ifeq ($(WT_FWU),1)
 WT_SECURE_EXTRA_SRCS += $(ROOT)/src/services/fwu_service.c \
     $(ROOT)/src/arch/common/fwu_ops.c
+endif
+ifeq ($(WT_NVM_STORE),native)
+WT_SECURE_EXTRA_SRCS += $(ROOT)/src/services/nvm_native.c
 endif
 
 # Engine split: wt_hsm.c drives the wolfHSM server (hsm engine only); the

@@ -111,6 +111,12 @@ _CO_SRCS := \
     $(WOLFCOSE)/src/wolfcose_mac.c \
     $(WOLFCOSE)/src/wolfcose_eat_psa.c
 
+CFLAGS += -I$(ROOT)/tests/host/support
+ifeq ($(NVM_STORE),native)
+CFLAGS += -DWT_NVM_STORE_NATIVE=1
+_WT_SRCS += $(ROOT)/src/services/nvm_native.c
+endif
+
 _TEST_SRCS := main.c
 
 _WT_OBJS   := $(patsubst %.c,wt_%.o,$(notdir $(_WT_SRCS)))

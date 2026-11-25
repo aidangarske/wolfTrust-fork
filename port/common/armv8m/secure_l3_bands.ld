@@ -27,6 +27,7 @@
     _s_vault = .;
     _s_keystore = .;
     *nvm_store.o(.data .data.*)
+    *nvm_native.o(.data .data.*)
     *wt_hsm_vault.o(.data .data.*)
     *wt_hsm_seal.o(.data .data.*)
     *wt_hsm_lock.o(.data .data.*)
@@ -44,6 +45,7 @@
   .vault_bss (NOLOAD) : {
     _s_vault_bss = .;
     *nvm_store.o(.bss .bss.* COMMON)
+    *nvm_native.o(.bss .bss.* COMMON)
     *wt_hsm_vault.o(.bss .bss.* COMMON)
     *wt_hsm_seal.o(.bss .bss.* COMMON)
     *wt_hsm_lock.o(.bss .bss.* COMMON)
