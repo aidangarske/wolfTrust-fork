@@ -88,15 +88,14 @@ current reference port, not a requirement imposed on every intended port.
 
 ## Ports
 
-wolfTrust currently supports three ports; each guide covers the board, the
-first-stage loader contract, and the runners:
+- [STM32H563](docs/STM32H5-Guide.md) (NUCLEO-H563ZI, the default)
+- [STM32L562](docs/STM32L562-Guide.md) (STM32L562E-DK)
+- [MCX N947](docs/MCXN947-Guide.md) (FRDM-MCXN947)
+- [MIMXRT700](docs/MIMXRT700-Guide.md) (MIMXRT700-EVK)
 
-- every registered port, its board and guide: [Ports](docs/Ports.md)
-  (generated from `port/<soc>/port.json`)
-
-All build with `TARGET=<port>` (`stm32h563` is the default) and run the
-same scenario set under the M33MU emulator with `make test-target
-TARGET=<port>`.
+Build with `TARGET=<port>` and run the emulator scenarios with
+`make test-target TARGET=<port>`. [Ports](docs/Ports.md) has each port's
+engines, scenarios and hardware fixture.
 
 ## Quick start
 
