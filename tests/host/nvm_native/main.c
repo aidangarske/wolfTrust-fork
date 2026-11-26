@@ -50,6 +50,8 @@ static int g_allow_format;
 /* ECC model: a torn unit that reads as an uncorrectable error until erased. */
 static int g_ecc;
 static uint32_t g_ecc_off;
+/* Lie model: the program that brings it to zero lands but reports failure. */
+static int g_lie_left = -1;
 
 static void check(int cond, const char* what)
 {
@@ -101,6 +103,10 @@ static int f_program(void* c, uint32_t off, uint32_t size,
 
     if ((off % WT_NVS_UNIT) != 0u || (size % WT_NVS_UNIT) != 0u) {
         g_misaligned++;
+    }
+    if (g_lie_left > 0 && --g_lie_left == 0) {
+        (void)whFlashRamsim_Program(c, off, size, data);
+        return WH_ERROR_ABORTED;
     }
     if (cut == 1) {
         return WH_ERROR_ABORTED;
@@ -566,6 +572,20 @@ static void test_stale_copy(void)
           "a damaged newest copy never falls back to an older one");
 }
 
+/* The compaction that would wrap the epoch is refused, not taken. */
+static void test_epoch_wrap(void)
+{
+    uint8_t b = 0u;
+
+    sim_reset();
+    check(store_open() == WH_ERROR_OK && put(1u, 8u, 0xA1u) == WH_ERROR_OK,
+          "epoch wrap store seeded");
+    g_nvs.epoch = UINT32_MAX;
+    check(op_compact() != WH_ERROR_OK && store_open() == WH_ERROR_OK &&
+          wh_Nvm_Read(&g_nvm, 1u, 0u, 1u, &b) == WH_ERROR_OK && b == 0xA1u,
+          "a compaction that would wrap the epoch fails and keeps the data");
+}
+
 static int part_blank(uint32_t part)
 {
     uint32_t i;
@@ -614,6 +634,251 @@ static void test_ecc_blank(void)
     g_ecc = 0;
 }
 
+static int pair(whNvmId a, whNvmSize alen, uint8_t afill, whNvmId b,
+                whNvmSize blen, uint8_t bfill)
+{
+    whNvmMetadata ma;
+    whNvmMetadata mb;
+    uint8_t da[256];
+    uint8_t db[256];
+
+    (void)memset(&ma, 0, sizeof(ma));
+    (void)memset(&mb, 0, sizeof(mb));
+    ma.id = a;
+    mb.id = b;
+    (void)memset(da, afill, sizeof(da));
+    (void)memset(db, bfill, sizeof(db));
+    return wt_nvs_add_pair(&g_nvs, &ma, alen, da, &mb, blen, db);
+}
+
+static int op_pair(void)
+{
+    return pair(3u, 40u, 0xC3u, 1u, 70u, 0xD1u);
+}
+
+static void pair_after(model_t* m)
+{
+    model_set(m, 3u, 40u, 0xC3u);
+    model_set(m, 1u, 70u, 0xD1u);
+}
+
+/* A cut or a lying program at every step of a pair leaves both old objects
+ * or both new ones, never one of each. */
+static void test_pair(void)
+{
+    model_t before;
+    model_t after;
+    int k;
+    int rc = WH_ERROR_ABORTED;
+    int ok = 1;
+    int cuts = 0;
+    char what[96];
+
+    for (k = 1; k < 200 && rc != WH_ERROR_OK; k++) {
+        seed(&before);
+        after = before;
+        pair_after(&after);
+        g_ops_left = k;
+        g_dead = 0;
+        rc = op_pair();
+        g_ops_left = -1;
+        g_dead = 0;
+        if (store_open() != WH_ERROR_OK ||
+                (!model_matches(&before) && !model_matches(&after)) ||
+                put(9u, 17u, 0xE9u) != WH_ERROR_OK) {
+            ok = 0;
+            break;
+        }
+        cuts++;
+    }
+    (void)snprintf(what, sizeof(what),
+                   "pair: both old or both new after a cut at each of %d "
+                   "steps", cuts);
+    check(ok && rc == WH_ERROR_OK && cuts > 4, what);
+
+    rc = WH_ERROR_ABORTED;
+    ok = 1;
+    cuts = 0;
+    for (k = 1; k < 200 && rc != WH_ERROR_OK; k++) {
+        seed(&before);
+        g_lie_left = k;
+        rc = op_pair();
+        g_lie_left = -1;
+        if (rc != WH_ERROR_OK && (g_nvs.torn != 0u ||
+                !model_matches(&before) || store_open() != WH_ERROR_OK ||
+                !model_matches(&before))) {
+            ok = 0;
+            break;
+        }
+        cuts++;
+    }
+    (void)snprintf(what, sizeof(what),
+                   "pair: a failed step at each of %d is compacted away now",
+                   cuts - 1);
+    check(ok && rc == WH_ERROR_OK && cuts > 4, what);
+
+    rc = WH_ERROR_ABORTED;
+    ok = 1;
+    for (k = 1; k < 200 && rc != WH_ERROR_OK; k++) {
+        seed(&before);
+        g_lie_left = k;
+        rc = op_add_new();
+        g_lie_left = -1;
+        if (rc != WH_ERROR_OK && (store_open() != WH_ERROR_OK ||
+                !model_matches(&before))) {
+            ok = 0;
+        }
+    }
+    check(ok && rc == WH_ERROR_OK,
+          "a single-slot commit that reported failure never becomes visible");
+}
+
+static int with(whNvmId drop, whNvmId id, whNvmSize len, uint8_t fill)
+{
+    whNvmMetadata meta;
+    uint8_t buf[256];
+
+    (void)memset(&meta, 0, sizeof(meta));
+    meta.id = id;
+    (void)memset(buf, fill, sizeof(buf));
+    return wt_nvs_compact_with(&g_nvs, drop, &meta, len, buf);
+}
+
+static int op_with(void)
+{
+    return with(2u, 1u, 50u, 0xF1u);
+}
+
+static int op_with_new(void)
+{
+    return with(2u, 4u, 30u, 0xF4u);
+}
+
+static void with_sweep(const char* name, op_fn op, whNvmId id, whNvmSize len,
+                       uint8_t fill)
+{
+    model_t before;
+    model_t after;
+    int k;
+    int rc = WH_ERROR_ABORTED;
+    int ok = 1;
+    int cuts = 0;
+    char what[96];
+
+    for (k = 1; k < 200 && rc != WH_ERROR_OK; k++) {
+        seed(&before);
+        after = before;
+        model_set(&after, 2u, 0u, 0u);
+        model_set(&after, id, len, fill);
+        g_ops_left = k;
+        g_dead = 0;
+        rc = op();
+        g_ops_left = -1;
+        g_dead = 0;
+        if (store_open() != WH_ERROR_OK ||
+                (!model_matches(&before) && !model_matches(&after))) {
+            ok = 0;
+            break;
+        }
+        cuts++;
+    }
+    (void)snprintf(what, sizeof(what),
+                   "%s: old or new state after a cut at each of %d steps",
+                   name, cuts);
+    check(ok && rc == WH_ERROR_OK && cuts > 4 && model_matches(&after), what);
+}
+
+static void test_compact_with(void)
+{
+    model_t m;
+
+    with_sweep("compact_with substitute", op_with, 1u, 50u, 0xF1u);
+    with_sweep("compact_with append", op_with_new, 4u, 30u, 0xF4u);
+    seed(&m);
+    check(with(2u, 2u, 8u, 0x11u) == WH_ERROR_BADARGS &&
+          model_matches(&m), "compact_with refuses to drop its own record");
+}
+
+/* A compaction header that lands but reports failure must not win a later
+ * boot over the writes made after it. */
+static void test_header_lie(void)
+{
+    model_t before;
+    int k;
+    int ok = 1;
+    int rc = WH_ERROR_ABORTED;
+
+    for (k = 1; k < 200 && rc != WH_ERROR_OK; k++) {
+        seed(&before);
+        g_lie_left = k;
+        rc = op_compact();
+        g_lie_left = -1;
+        if (rc != WH_ERROR_OK && (put(5u, 12u, 0xE5u) != WH_ERROR_OK ||
+                store_open() != WH_ERROR_OK || !model_matches(&before) ||
+                wh_Nvm_GetMetadata(&g_nvm, 5u, NULL) != WH_ERROR_OK)) {
+            ok = 0;
+        }
+    }
+    check(ok && rc == WH_ERROR_OK,
+          "a failed compaction never outranks the writes after it");
+}
+
+static void set_magic(uint32_t part, uint32_t magic)
+{
+    uint32_t rec[4];
+
+    (void)memcpy(rec, g_mem + part * SECTOR, sizeof(rec));
+    rec[0] = magic;
+    rec[2] = ~magic;
+    (void)memcpy(g_mem + part * SECTOR, rec, sizeof(rec));
+}
+
+/* Commit word of directory slot i in partition 0. */
+static uint32_t commit_off(uint32_t i)
+{
+    return WT_NVS_UNIT + 3u * WT_NVS_UNIT * i + 2u * WT_NVS_UNIT;
+}
+
+static void test_provisional(void)
+{
+    model_t before;
+    uint32_t rec[4];
+
+    seed(&before);
+    check(op_pair() == WH_ERROR_OK && store_open() == WH_ERROR_OK,
+          "provisional store seeded");
+    (void)memset(g_mem + commit_off(4u), 0xFF, WT_NVS_UNIT);
+    check(store_open() == WH_ERROR_OK && model_matches(&before) &&
+          g_nvs.torn != 0u,
+          "a provisional slot without its partner is a torn tail");
+
+    seed(&before);
+    check(op_pair() == WH_ERROR_OK, "second provisional store seeded");
+    (void)memcpy(rec, g_mem + commit_off(4u), sizeof(rec));
+    rec[1] |= 0x80000000u;
+    rec[3] = ~rec[1];
+    (void)memcpy(g_mem + commit_off(4u), rec, sizeof(rec));
+    check(store_open() == WH_ERROR_ABORTED,
+          "two provisional slots in a row are corruption");
+
+    seed(&before);
+    check(op_pair() == WH_ERROR_OK, "ECC provisional store seeded");
+    g_ecc_off = commit_off(4u);
+    g_ecc = 1;
+    check(store_open() == WH_ERROR_OK && model_matches(&before),
+          "an ECC error on the partner's commit is a torn tail");
+    g_ecc = 0;
+
+    seed(&before);
+    set_magic(0u, 0x31564E57u);
+    check(store_open() == WH_ERROR_ABORTED,
+          "a store with the WNV1 magic is refused");
+    g_allow_format = 1;
+    check(store_open() == WH_ERROR_OK && g_nvs.used == 0u,
+          "a refused WNV1 store reformats only where allowed");
+    g_allow_format = 0;
+}
+
 int main(void)
 {
     test_basic();
@@ -622,8 +887,13 @@ int main(void)
     test_power_cut();
     test_runtime_fault();
     test_stale_copy();
+    test_epoch_wrap();
     test_torn_header_copy();
     test_ecc_blank();
+    test_pair();
+    test_provisional();
+    test_compact_with();
+    test_header_lie();
     if (g_failures != 0) {
         (void)printf("FAIL: nvm_native (%d)\n", g_failures);
         return EXIT_FAILURE;

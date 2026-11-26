@@ -262,7 +262,8 @@ static void test_capacity_gate(void)
     small_nvm_cfg.config = &small_nvm_flash_cfg;
     (void)memset(&small_nvm_ctx, 0, sizeof(small_nvm_ctx));
     if (wh_Nvm_Init(&small_nvm_ctx, &small_nvm_cfg) != WH_ERROR_OK ||
-            wt_hsm_vault_init(&small_nvm_ctx) != 0) {
+            wt_hsm_vault_init(&small_nvm_ctx) != 0 ||
+            test_vault_store_ready(&small_nvm_ctx) != 0) {
         check(0, "WT-FFM-0044 capacity harness init");
         return;
     }
@@ -353,7 +354,8 @@ int main(void)
         return 1;
     }
 
-    if (wt_hsm_vault_init(&nvm_ctx) != 0) {
+    if (wt_hsm_vault_init(&nvm_ctx) != 0 ||
+            test_vault_store_ready(&nvm_ctx) != 0) {
         (void)fprintf(stderr, "wt_hsm_vault_init failed\n");
         return 1;
     }

@@ -77,6 +77,14 @@ int wt_nvs_get_available(void* c, uint32_t* out_avail_size,
                          whNvmId* out_reclaim_objects);
 int wt_nvs_add_object(void* c, whNvmMetadata* meta, whNvmSize data_len,
                       const uint8_t* data);
+/* Both objects become visible together, or neither does. */
+int wt_nvs_add_pair(void* c, whNvmMetadata* first, whNvmSize first_len,
+                    const uint8_t* first_data, whNvmMetadata* second,
+                    whNvmSize second_len, const uint8_t* second_data);
+/* One compaction that leaves out drop and writes meta's record from RAM in
+ * place of any copy of meta->id. */
+int wt_nvs_compact_with(void* c, whNvmId drop, whNvmMetadata* meta,
+                        whNvmSize len, const uint8_t* data);
 int wt_nvs_get_metadata(void* c, whNvmId id, whNvmMetadata* meta);
 int wt_nvs_destroy_objects(void* c, whNvmId list_count,
                            const whNvmId* id_list);

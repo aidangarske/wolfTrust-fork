@@ -72,6 +72,18 @@ static whLockConfig g_nvm_lock_cfg;
 extern const whLockCb g_wt_hsm_lock_cb; /* defined in wt_hsm_lock.c */
 #endif
 
+#if defined(WT_NVM_STORE_NATIVE)
+/* Called only just before the store reformats itself, so it also flags it. */
+static int wt_nvm_store_may_format(void)
+{
+    if (wt_nvm_reformat_allowed() == 0) {
+        return 0;
+    }
+    wt_nvm_mark_reformatted();
+    return 1;
+}
+#endif
+
 int wt_nvm_store_bind(void)
 {
     wt_nvm_backend_config_t nvm_flash_cfg;
@@ -85,7 +97,7 @@ int wt_nvm_store_bind(void)
     nvm_flash_cfg.context = wt_hsm_flash_context();
     nvm_flash_cfg.config  = wt_hsm_flash_config();
 #if defined(WT_NVM_STORE_NATIVE)
-    nvm_flash_cfg.may_format = wt_nvm_reformat_allowed;
+    nvm_flash_cfg.may_format = wt_nvm_store_may_format;
 
     /* The vault calls the native store directly (vault_store.h): no lock. */
     (void)memset(&g_wt_nvm_ctx, 0, sizeof(g_wt_nvm_ctx));

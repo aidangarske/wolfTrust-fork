@@ -290,7 +290,8 @@ int main(void)
         (void)fprintf(stderr, "wh_Nvm_Init failed\n");
         return 1;
     }
-    if (wt_hsm_vault_init(&nvm_ctx) != 0) {
+    if (wt_hsm_vault_init(&nvm_ctx) != 0 ||
+            test_vault_store_ready(&nvm_ctx) != 0) {
         (void)fprintf(stderr, "wt_hsm_vault_init failed\n");
         return 1;
     }

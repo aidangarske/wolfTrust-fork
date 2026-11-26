@@ -31,6 +31,30 @@
 #include "wolfhsm/wh_nvm.h"
 
 #if defined(WT_NVM_STORE_NATIVE)
+#include "wolftrust/nvm_native.h"
+
+static inline void* wt_vstore_ctx(const whNvmContext* nvm)
+{
+    return (nvm != NULL) ? nvm->context : NULL;
+}
+
+static inline int wt_vstore_add_pair(whNvmContext* nvm, whNvmMetadata* first,
+                                     const uint8_t* first_data,
+                                     whNvmMetadata* second,
+                                     const uint8_t* second_data)
+{
+    return wt_nvs_add_pair(wt_vstore_ctx(nvm), first, first->len, first_data,
+                           second, second->len, second_data);
+}
+
+static inline int wt_vstore_compact_with(whNvmContext* nvm, whNvmId drop,
+                                         whNvmMetadata* meta,
+                                         const uint8_t* data)
+{
+    return wt_nvs_compact_with(wt_vstore_ctx(nvm), drop, meta, meta->len,
+                               data);
+}
+
 static inline const whNvmCb* wt_vstore_cb(const whNvmContext* nvm)
 {
     return (nvm != NULL) ? nvm->cb : NULL;

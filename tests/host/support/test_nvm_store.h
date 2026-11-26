@@ -42,4 +42,33 @@
 #define wh_NvmFlash_Read           wt_nvs_read
 #endif
 
+#if defined(WT_NVM_STORE_NATIVE)
+#include "wolftrust/services/hsm.h"
+
+#include <string.h>
+
+/* The native store creates the vault's counter table with the seal key, so a
+ * suite that binds the vault without the real sealer adds a stand-in key. */
+static inline int test_vault_store_ready(whNvmContext* nvm)
+{
+    whNvmMetadata meta;
+    uint8_t key[32];
+
+    (void)memset(&meta, 0, sizeof(meta));
+    (void)memset(key, 0x5A, sizeof(key));
+    meta.id = WT_HSM_SEAL_KEY_ID;
+    meta.access = WH_NVM_ACCESS_ANY;
+    meta.flags = WH_NVM_FLAGS_SENSITIVE | WH_NVM_FLAGS_NONEXPORTABLE |
+                 WH_NVM_FLAGS_NONMODIFIABLE | WH_NVM_FLAGS_NONDESTROYABLE;
+    meta.len = (whNvmSize)sizeof(key);
+    return wt_hsm_vault_seal_key_add(nvm, &meta, key);
+}
+#else
+static inline int test_vault_store_ready(whNvmContext* nvm)
+{
+    (void)nvm;
+    return 0;
+}
+#endif
+
 #endif /* WOLFTRUST_TEST_NVM_STORE_H */

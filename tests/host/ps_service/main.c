@@ -427,7 +427,13 @@ static void test_unsealed_replacement(void)
     unsigned int step;
     psa_status_t status;
 
+    /* Steps 0-3 inject stage-protocol add failures; the native store has no
+     * stage and is cut at the flash instead (vault_txn). */
+#if defined(WT_NVM_STORE_NATIVE)
+    for (step = 4U; step < 6U; step++) {
+#else
     for (step = 0U; step < 6U; step++) {
+#endif
         check(test_nvm_up(0) == 0, "initialized vault transition test");
         status = wt_hsm_vault_backend.set(TEST_PS_PARTITION, TEST_NS_GUEST0,
             0x6001ULL, WT_VAULT_FLAG_SEALED, original, sizeof(original));
@@ -490,6 +496,7 @@ static void test_unsealed_replacement(void)
     }
 }
 
+#if !defined(WT_NVM_STORE_NATIVE)
 static void test_recovery_containment(void)
 {
     static const uint8_t original[] = "committed source";
@@ -672,6 +679,7 @@ static void test_recovery_counter_binding(void)
               got == sizeof(other) && memcmp(buffer, other, sizeof(other)) == 0,
           "distinct sealed identity remains unchanged");
 }
+#endif
 
 static void test_invalid_sealed_length(void)
 {
@@ -708,6 +716,7 @@ static void test_invalid_sealed_length(void)
     }
 }
 
+#if !defined(WT_NVM_STORE_NATIVE)
 static void test_replacement_stage_cleanup(void)
 {
     static const uint8_t original[] = "staged source";
@@ -821,6 +830,7 @@ static void test_sealed_delete_recovery(void)
     check(wh_Nvm_GetMetadata(&g_nvm_ctx, id, &meta) == WH_ERROR_NOTFOUND,
           "corrupt sealed object no longer consumes its slot");
 }
+#endif
 
 static void test_full_store_remove(void)
 {
@@ -899,7 +909,9 @@ int main(void)
 {
     static const uint8_t secret_v1[] = "ps-secret-version-one";
     static const uint8_t secret_v2[] = "ps-secret-version-TWO";
+#if !defined(WT_NVM_STORE_NATIVE)
     static const uint8_t secret_v3[] = "ps-secret-version-THR";
+#endif
     static const uint8_t secret_wo[] = "ps-write-once-secret";
     uint8_t old_ct[sizeof(secret_v1) + WT_VAULT_SEAL_TAG_LEN];
     whNvmMetadata old_meta;
@@ -995,6 +1007,7 @@ int main(void)
     old_meta = meta;
     check(wh_Nvm_Read(&g_nvm_ctx, stored_id, 0U, old_meta.len, old_ct) ==
               WH_ERROR_OK, "captured v1 ciphertext for replay");
+#if !defined(WT_NVM_STORE_NATIVE)
     g_fail_add_id = stored_id;
     status = ps_set(runtime, TEST_NS_GUEST0, handle_g0, 0x5001ULL, 0U,
                     secret_v2, sizeof(secret_v2));
@@ -1026,6 +1039,11 @@ int main(void)
     check(status == PSA_SUCCESS && got == sizeof(secret_v2) &&
           memcmp(buffer, secret_v2, sizeof(secret_v2)) == 0,
           "reboot restores the authenticated prior object");
+#else
+    status = ps_set(runtime, TEST_NS_GUEST0, handle_g0, 0x5001ULL, 0U,
+                    secret_v2, sizeof(secret_v2));
+    check(status == PSA_SUCCESS, "guest0 ps_set commits v2");
+#endif
     check(wh_Nvm_AddObjectWithReclaim(&g_nvm_ctx, &old_meta, old_meta.len,
                                       old_ct) == WH_ERROR_OK,
           "replayed v1 ciphertext into the NVM object");
@@ -1085,6 +1103,7 @@ int main(void)
           memcmp(buffer, secret_wo, sizeof(secret_wo)) == 0,
           "WT-FFM-0045 WRITE_ONCE sealed object survives reboot");
 
+#if !defined(WT_NVM_STORE_NATIVE)
     check(test_fill_to_available(4U) == 0,
           "prepared exact replacement transaction capacity");
     status = ps_set(runtime, TEST_NS_GUEST0, handle_g0, 0x5001ULL, 0U,
@@ -1105,6 +1124,7 @@ int main(void)
     check(status == PSA_SUCCESS && got == sizeof(secret_v3) &&
           memcmp(buffer, secret_v3, sizeof(secret_v3)) == 0,
           "near-capacity recovery preserves the prior object");
+#endif
 
     if (wt_spm_host_close(TEST_NS_GUEST0, handle_g0) != WT_FFM_SUCCESS) {
         (void)fprintf(stderr, "psa_close after reboot failed\n");
@@ -1112,12 +1132,16 @@ int main(void)
     }
 
     test_unsealed_replacement();
+#if !defined(WT_NVM_STORE_NATIVE)
     test_recovery_containment();
     test_authenticated_recovery();
     test_recovery_counter_binding();
+#endif
     test_invalid_sealed_length();
+#if !defined(WT_NVM_STORE_NATIVE)
     test_replacement_stage_cleanup();
     test_sealed_delete_recovery();
+#endif
     test_full_store_remove();
     test_mixed_full_store_remove();
 

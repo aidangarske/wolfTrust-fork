@@ -35,7 +35,8 @@
 #include <stddef.h>
 #include <string.h>
 
-#define WT_NVS_MAGIC        0x31564E57u /* "WNV1" */
+#define WT_NVS_MAGIC        0x32564E57u /* "WNV2" */
+#define WT_NVS_PROVISIONAL  0x80000000u
 #define WT_NVS_META_UNITS   2u
 #define WT_NVS_SLOT_UNITS   (WT_NVS_META_UNITS + 1u)
 #define WT_NVS_DIR_OFF      WT_NVS_UNIT
@@ -198,7 +199,8 @@ static uint32_t wt_nvs_start(const wt_nvs_context_t* ctx, uint32_t slot)
 
 /* Rebuild the index from a partition. Committed slots must be contiguous,
  * allocated in order and agree with their metadata; anything else is
- * corruption. Only the last written slot may be torn. */
+ * corruption. A provisional slot counts only with the committed slot after
+ * it, so the torn tail is one slot, or a provisional slot and the next. */
 static int wt_nvs_scan(wt_nvs_context_t* ctx, uint32_t part)
 {
     whNvmMetadata meta;
@@ -208,6 +210,11 @@ static int wt_nvs_scan(wt_nvs_context_t* ctx, uint32_t part)
     uint32_t off;
     uint32_t key = 0u;
     uint32_t start = 0u;
+    uint32_t expect;
+    uint32_t prov;
+    uint32_t pend = 0u;
+    whNvmId pend_id = WH_NVM_ID_INVALID;
+    whNvmSize pend_len = 0u;
     whNvmId id;
     whNvmSize len;
     uint32_t rest;
@@ -223,8 +230,11 @@ static int wt_nvs_scan(wt_nvs_context_t* ctx, uint32_t part)
         if (wt_nvs_rec_read(ctx, off + WT_NVS_UNIT * WT_NVS_META_UNITS,
                             &key, &start) != WH_ERROR_OK) {
             /* The directory ends here: this slot is blank or torn, and every
-             * later one must be blank. */
+             * later one must be blank. A pending provisional slot is torn. */
             rest = slot_bytes * (WT_NVS_SLOTS - i);
+            if (pend != 0u) {
+                ctx->torn = 1u;
+            }
             if (ctx->cb->BlankCheck(ctx->flash, off, rest) != WH_ERROR_OK) {
                 ctx->torn = 1u;
                 if (ctx->cb->BlankCheck(ctx->flash, off + slot_bytes,
@@ -232,12 +242,17 @@ static int wt_nvs_scan(wt_nvs_context_t* ctx, uint32_t part)
                     rc = WH_ERROR_ABORTED;
                 }
             }
+            pend = 0u;
             break;
         }
         id = (whNvmId)(key & 0xFFFFu);
         len = (whNvmSize)(key >> 16);
-        if (id == WH_NVM_ID_INVALID || start != ctx->next_data ||
-                wt_nvs_pad(len) > data_size - ctx->next_data) {
+        prov = start & WT_NVS_PROVISIONAL;
+        start &= ~WT_NVS_PROVISIONAL;
+        expect = ctx->next_data + ((pend != 0u) ? wt_nvs_pad(pend_len) : 0u);
+        if (id == WH_NVM_ID_INVALID || start != expect ||
+                wt_nvs_pad(len) > data_size - expect ||
+                (prov != 0u && pend != 0u)) {
             rc = WH_ERROR_ABORTED;
         }
         if (rc == WH_ERROR_OK) {
@@ -246,9 +261,21 @@ static int wt_nvs_scan(wt_nvs_context_t* ctx, uint32_t part)
         if (rc == WH_ERROR_OK && (meta.id != id || meta.len != len)) {
             rc = WH_ERROR_ABORTED;
         }
-        if (rc == WH_ERROR_OK) {
+        if (rc == WH_ERROR_OK && prov != 0u) {
+            pend = 1u;
+            pend_id = id;
+            pend_len = len;
+        }
+        else if (rc == WH_ERROR_OK) {
+            if (pend != 0u) {
+                wt_nvs_append(ctx, pend_id, pend_len);
+                pend = 0u;
+            }
             wt_nvs_append(ctx, id, len);
         }
+    }
+    if (rc == WH_ERROR_OK && pend != 0u) {
+        ctx->torn = 1u;
     }
     return rc;
 }
@@ -281,6 +308,38 @@ static int wt_nvs_listed(whNvmId count, const whNvmId* list, whNvmId id)
         }
     }
     return 0;
+}
+
+/* Program one slot: metadata, data, then its commit record. */
+static int wt_nvs_put(wt_nvs_context_t* ctx, uint32_t part, uint32_t pos,
+                      uint32_t next, const whNvmMetadata* meta,
+                      const uint8_t* data, uint32_t prov)
+{
+    uint32_t buf[sizeof(whNvmMetadata) / sizeof(uint32_t)];
+    uint32_t len = (uint32_t)meta->len;
+    uint32_t full = len & ~(WT_NVS_UNIT - 1u);
+    uint32_t off = wt_nvs_slot_off(ctx, part, pos);
+    uint32_t dst = wt_nvs_data_off(ctx, part) + next;
+    int rc;
+
+    (void)memcpy(buf, meta, sizeof(*meta));
+    rc = wt_nvs_program(ctx, off, (uint32_t)sizeof(*meta),
+                        (const uint8_t*)buf);
+    if (rc == WH_ERROR_OK && full != 0u) {
+        rc = wt_nvs_program(ctx, dst, full, data);
+    }
+    if (rc == WH_ERROR_OK && full != len) {
+        (void)memset(buf, 0, WT_NVS_UNIT);
+        (void)memcpy(buf, data + full, len - full);
+        rc = wt_nvs_program(ctx, dst + full, WT_NVS_UNIT,
+                            (const uint8_t*)buf);
+    }
+    wt_forceZero(buf, sizeof(buf));
+    if (rc == WH_ERROR_OK) {
+        rc = wt_nvs_rec_write(ctx, off + WT_NVS_UNIT * WT_NVS_META_UNITS,
+                              (uint32_t)meta->id | (len << 16), next | prov);
+    }
+    return rc;
 }
 
 static int wt_nvs_copy(wt_nvs_context_t* ctx, uint32_t slot, uint32_t src,
@@ -325,8 +384,11 @@ static int wt_nvs_copy(wt_nvs_context_t* ctx, uint32_t slot, uint32_t src,
     return rc;
 }
 
-static int wt_nvs_compact(wt_nvs_context_t* ctx, whNvmId count,
-                          const whNvmId* list)
+/* Copy the live set to the other partition, leaving out the listed ids. A
+ * substitute record from RAM replaces its id's copy (or is appended). */
+static int wt_nvs_compact_ex(wt_nvs_context_t* ctx, whNvmId count,
+                             const whNvmId* list, const whNvmMetadata* sub,
+                             const uint8_t* sub_data)
 {
     uint32_t src = ctx->active;
     uint32_t dst = src ^ 1u;
@@ -334,20 +396,41 @@ static int wt_nvs_compact(wt_nvs_context_t* ctx, whNvmId count,
     uint32_t pos = 0u;
     uint32_t from = 0u;
     uint32_t next = 0u;
-    int rc = wt_nvs_erase(ctx, dst);
+    whNvmId id;
+    int rc;
 
+    /* A wrapped epoch would let the stale copy outrank this one at boot. */
+    if (ctx->epoch == UINT32_MAX) {
+        ctx->bad = 1u;
+        return WH_ERROR_ABORTED;
+    }
+    rc = wt_nvs_erase(ctx, dst);
+
+    /* Live copies always fit; only the replacement, written last, can not. */
     for (i = 0u; i < ctx->used && rc == WH_ERROR_OK; i++) {
-        if (ctx->slot[i].id != WH_NVM_ID_INVALID &&
-                wt_nvs_listed(count, list, ctx->slot[i].id) == 0) {
+        id = ctx->slot[i].id;
+        if (id != WH_NVM_ID_INVALID && wt_nvs_listed(count, list, id) == 0 &&
+                (sub == NULL || id != sub->id)) {
             rc = wt_nvs_copy(ctx, i, from, dst, pos, next);
             pos++;
             next += wt_nvs_pad(ctx->slot[i].len);
         }
         from += wt_nvs_pad(ctx->slot[i].len);
     }
+    if (rc == WH_ERROR_OK && sub != NULL) {
+        rc = (pos >= WT_NVS_SLOTS ||
+              wt_nvs_pad(sub->len) > wt_nvs_data_size(ctx) - next) ?
+             WH_ERROR_NOSPACE :
+             wt_nvs_put(ctx, dst, pos, next, sub, sub_data, 0u);
+    }
     if (rc == WH_ERROR_OK) {
         rc = wt_nvs_rec_write(ctx, wt_nvs_base(ctx, dst), WT_NVS_MAGIC,
                               ctx->epoch + 1u);
+        /* A header that reported failure may still read valid and win the
+         * next boot over writes made after it, so the copy must go. */
+        if (rc != WH_ERROR_OK && wt_nvs_erase(ctx, dst) != WH_ERROR_OK) {
+            ctx->bad = 1u;
+        }
     }
     if (rc != WH_ERROR_OK) {
         return rc;
@@ -361,7 +444,16 @@ static int wt_nvs_compact(wt_nvs_context_t* ctx, whNvmId count,
     }
     ctx->active = (uint8_t)dst;
     ctx->epoch++;
-    return wt_nvs_erase(ctx, src);
+    /* The new copy is committed; a later compaction or boot erases the old
+     * one, so a failure here does not fail the operation. */
+    (void)wt_nvs_erase(ctx, src);
+    return WH_ERROR_OK;
+}
+
+static int wt_nvs_compact(wt_nvs_context_t* ctx, whNvmId count,
+                          const whNvmId* list)
+{
+    return wt_nvs_compact_ex(ctx, count, list, NULL, NULL);
 }
 
 static int wt_nvs_find(const wt_nvs_context_t* ctx, whNvmId id)
@@ -443,7 +535,12 @@ int wt_nvs_init(void* c, const void* cf)
                 rc = wt_nvs_erase(ctx, (uint32_t)ctx->active ^ 1u);
             }
         }
-        else if (cb->BlankCheck(ctx->flash, 0u, 2u * size) == WH_ERROR_OK) {
+        /* With no readable header, a store blank but for its header units
+         * (a cut format) holds no record, so formatting it loses nothing. */
+        else if (cb->BlankCheck(ctx->flash, WT_NVS_UNIT,
+                                size - WT_NVS_UNIT) == WH_ERROR_OK &&
+                 cb->BlankCheck(ctx->flash, size + WT_NVS_UNIT,
+                                size - WT_NVS_UNIT) == WH_ERROR_OK) {
             rc = wt_nvs_format(ctx);
         }
         else {
@@ -526,60 +623,93 @@ int wt_nvs_get_available(void* c, uint32_t* out_avail_size,
     return WH_ERROR_OK;
 }
 
-int wt_nvs_add_object(void* c, whNvmMetadata* meta, whNvmSize data_len,
-                      const uint8_t* data)
+/* A failed append never stays half visible: the tail is compacted away now,
+ * so a commit whose driver failed cannot later read valid. The caller still
+ * sees the original error. */
+static int wt_nvs_append_failed(wt_nvs_context_t* ctx, int rc)
 {
-    wt_nvs_context_t* ctx = (wt_nvs_context_t*)c;
-    uint32_t buf[sizeof(whNvmMetadata) / sizeof(uint32_t)];
-    uint32_t off;
-    uint32_t dst;
-    uint32_t full = (uint32_t)data_len & ~(WT_NVS_UNIT - 1u);
-    int rc;
+    ctx->torn = 1u;
+    (void)wt_nvs_compact(ctx, 0u, NULL);
+    return rc;
+}
 
-    rc = wt_nvs_usable(ctx);
-    if (rc == WH_ERROR_OK && (meta == NULL ||
-            (data_len > 0u && data == NULL) ||
-            meta->id == WH_NVM_ID_INVALID)) {
+static int wt_nvs_add_check(const whNvmMetadata* meta, whNvmSize data_len,
+                            const uint8_t* data)
+{
+    if (meta == NULL || (data_len > 0u && data == NULL) ||
+            meta->id == WH_NVM_ID_INVALID) {
         return WH_ERROR_BADARGS;
     }
-    if (rc == WH_ERROR_OK && ctx->torn != 0u) {
-        rc = wt_nvs_compact(ctx, 0u, NULL);
+    return WH_ERROR_OK;
+}
+
+/* Appends one or two records; the first of two is provisional, so neither
+ * counts until the second commits. */
+static int wt_nvs_add_records(wt_nvs_context_t* ctx, uint32_t count,
+                              whNvmMetadata* const* meta,
+                              const whNvmSize* len,
+                              const uint8_t* const* data)
+{
+    uint32_t need = 0u;
+    uint32_t next;
+    uint32_t i;
+    int rc = wt_nvs_usable(ctx);
+
+    for (i = 0u; rc == WH_ERROR_OK && i < count; i++) {
+        rc = wt_nvs_add_check(meta[i], len[i], data[i]);
+        need += wt_nvs_pad(len[i]);
     }
-    if (rc == WH_ERROR_OK && (ctx->used >= WT_NVS_SLOTS ||
-            wt_nvs_pad(data_len) > wt_nvs_data_size(ctx) - ctx->next_data)) {
-        rc = WH_ERROR_NOSPACE;
+    if (rc == WH_ERROR_OK && count == 2u) {
+        rc = (meta[0]->id == meta[1]->id) ? WH_ERROR_BADARGS : WH_ERROR_OK;
     }
     if (rc != WH_ERROR_OK) {
         return rc;
     }
-    meta->len = data_len;
-    off = wt_nvs_slot_off(ctx, ctx->active, ctx->used);
-    dst = wt_nvs_data_off(ctx, ctx->active) + ctx->next_data;
-    (void)memcpy(buf, meta, sizeof(*meta));
-    rc = wt_nvs_program(ctx, off, (uint32_t)sizeof(*meta),
-                        (const uint8_t*)buf);
-    if (rc == WH_ERROR_OK && full != 0u) {
-        rc = wt_nvs_program(ctx, dst, full, data);
+    if (ctx->torn != 0u) {
+        rc = wt_nvs_compact(ctx, 0u, NULL);
     }
-    if (rc == WH_ERROR_OK && full != (uint32_t)data_len) {
-        (void)memset(buf, 0, WT_NVS_UNIT);
-        (void)memcpy(buf, data + full, (uint32_t)data_len - full);
-        rc = wt_nvs_program(ctx, dst + full, WT_NVS_UNIT,
-                            (const uint8_t*)buf);
+    if (rc == WH_ERROR_OK && (ctx->used + count > WT_NVS_SLOTS ||
+            need > wt_nvs_data_size(ctx) - ctx->next_data)) {
+        rc = WH_ERROR_NOSPACE;
     }
-    wt_forceZero(buf, sizeof(buf));
-    if (rc == WH_ERROR_OK) {
-        rc = wt_nvs_rec_write(ctx, off + WT_NVS_UNIT * WT_NVS_META_UNITS,
-                              (uint32_t)meta->id | ((uint32_t)data_len << 16),
-                              ctx->next_data);
+    next = ctx->next_data;
+    for (i = 0u; rc == WH_ERROR_OK && i < count; i++) {
+        meta[i]->len = len[i];
+        rc = wt_nvs_put(ctx, ctx->active, ctx->used + i, next, meta[i],
+                        data[i], (i + 1u < count) ? WT_NVS_PROVISIONAL : 0u);
+        next += wt_nvs_pad(len[i]);
+        if (rc != WH_ERROR_OK) {
+            return wt_nvs_append_failed(ctx, rc);
+        }
     }
-    if (rc == WH_ERROR_OK) {
-        wt_nvs_append(ctx, meta->id, data_len);
-    }
-    else {
-        ctx->torn = 1u;
+    for (i = 0u; rc == WH_ERROR_OK && i < count; i++) {
+        wt_nvs_append(ctx, meta[i]->id, len[i]);
     }
     return rc;
+}
+
+int wt_nvs_add_object(void* c, whNvmMetadata* meta, whNvmSize data_len,
+                      const uint8_t* data)
+{
+    return wt_nvs_add_records((wt_nvs_context_t*)c, 1u, &meta, &data_len,
+                              &data);
+}
+
+int wt_nvs_add_pair(void* c, whNvmMetadata* first, whNvmSize first_len,
+                    const uint8_t* first_data, whNvmMetadata* second,
+                    whNvmSize second_len, const uint8_t* second_data)
+{
+    whNvmMetadata* meta[2];
+    whNvmSize len[2];
+    const uint8_t* data[2];
+
+    meta[0] = first;
+    meta[1] = second;
+    len[0] = first_len;
+    len[1] = second_len;
+    data[0] = first_data;
+    data[1] = second_data;
+    return wt_nvs_add_records((wt_nvs_context_t*)c, 2u, meta, len, data);
 }
 
 int wt_nvs_get_metadata(void* c, whNvmId id, whNvmMetadata* meta)
@@ -631,6 +761,25 @@ int wt_nvs_destroy_objects(void* c, whNvmId list_count,
         return WH_ERROR_OK;
     }
     return wt_nvs_compact(ctx, list_count, id_list);
+}
+
+int wt_nvs_compact_with(void* c, whNvmId drop, whNvmMetadata* meta,
+                        whNvmSize len, const uint8_t* data)
+{
+    wt_nvs_context_t* ctx = (wt_nvs_context_t*)c;
+    int rc = wt_nvs_usable(ctx);
+
+    if (rc == WH_ERROR_OK) {
+        rc = wt_nvs_add_check(meta, len, data);
+    }
+    if (rc == WH_ERROR_OK && meta->id == drop) {
+        rc = WH_ERROR_BADARGS;
+    }
+    if (rc == WH_ERROR_OK) {
+        meta->len = len;
+        rc = wt_nvs_compact_ex(ctx, 1u, &drop, meta, data);
+    }
+    return rc;
 }
 
 int wt_nvs_read(void* c, whNvmId id, whNvmSize offset, whNvmSize data_len,

@@ -122,6 +122,11 @@ int wt_hsm_seal_init(whNvmContext* nvm)
         }
         rc = wt_vstore_read(nvm, WT_HSM_SEAL_KEY_ID, 0U, WT_HSM_SEAL_KEY_LEN,
                             g_seal_key);
+#if defined(WT_NVM_STORE_NATIVE)
+        if (rc == WH_ERROR_OK) {
+            rc = wt_hsm_vault_table_check(nvm);
+        }
+#endif
         if (rc != WH_ERROR_OK) {
             wt_hsm_seal_zeroize(g_seal_key, sizeof(g_seal_key));
             return -1;
@@ -145,7 +150,11 @@ int wt_hsm_seal_init(whNvmContext* nvm)
                      WH_NVM_FLAGS_NONMODIFIABLE | WH_NVM_FLAGS_NONDESTROYABLE;
         meta.len = WT_HSM_SEAL_KEY_LEN;
         (void)memcpy(meta.label, &magic, sizeof(magic));
+#if defined(WT_NVM_STORE_NATIVE)
+        rc = wt_hsm_vault_seal_key_add(nvm, &meta, g_seal_key);
+#else
         rc = wt_vstore_add(nvm, &meta, WT_HSM_SEAL_KEY_LEN, g_seal_key);
+#endif
         if (rc != WH_ERROR_OK) {
             wt_hsm_seal_zeroize(g_seal_key, sizeof(g_seal_key));
             return -1;

@@ -102,6 +102,22 @@ int wt_nvm_vault_bind(void)
 #else
         wt_vault_service_set_nvm_backend(&wt_hsm_vault_nvm_backend);
 #endif
+#if defined(WT_NVM_STORE_NATIVE)
+        /* A store holding the seal key without its table, or the reverse,
+         * is reformatted only while the lifecycle allows it. */
+        rc = wt_hsm_seal_init(&g_wt_nvm_ctx);
+        if (rc != 0 && wt_nvm_reformat_allowed() != 0 &&
+                wt_hsm_flash_format() == 0 &&
+                wt_nvm_store_bind() == WH_ERROR_OK &&
+                wt_hsm_vault_init(&g_wt_nvm_ctx) == 0) {
+            wt_nvm_mark_reformatted();
+            rc = wt_hsm_seal_init(&g_wt_nvm_ctx);
+        }
+        wt_hsm_vault_set_sealer((rc == 0) ? &wt_hsm_sealer : NULL);
+        if (rc != 0) {
+            return WH_ERROR_ABORTED;
+        }
+#else
         if (wt_hsm_seal_init(&g_wt_nvm_ctx) == 0) {
             wt_hsm_vault_set_sealer(&wt_hsm_sealer);
         }
@@ -111,6 +127,7 @@ int wt_nvm_vault_bind(void)
              * than run with a stale or zero key. */
             wt_hsm_vault_set_sealer(NULL);
         }
+#endif
         /* The vault serves no key ops (fail closed): keys live with the
          * crypto partition, reached through SERVICE_HSM (WT-FFM-0054). Only
          * the RANDOM face is served, from the vault's own DRBG. */
@@ -223,6 +240,14 @@ int wt_hsm_rollback_enforce(uint32_t image_version)
     g_image_floor_valid = 0;
 #endif
     loaded = wt_nvm_rollback_load(&table);
+#if defined(WT_NVM_STORE_NATIVE)
+    /* Floors the store recorded as provisioned are never recreated on a
+     * locked device: their absence means the record was lost. */
+    if (loaded == 1 && wt_nvm_reformat_allowed() == 0 &&
+            wt_hsm_vault_floors_provisioned() != 0) {
+        loaded = -1;
+    }
+#endif
     if (loaded < 0) {
         /* An unreadable floor cannot prove anything: fail closed. */
         refused_platform = 1;
@@ -301,6 +326,10 @@ int wt_hsm_rollback_enforce(uint32_t image_version)
         }
         return WT_ROLLBACK_REFUSED;
     }
+#if defined(WT_NVM_STORE_NATIVE)
+    /* A failed mark is retried on the next boot. */
+    (void)wt_hsm_vault_floors_mark();
+#endif
 
     return WT_ROLLBACK_OK;
 }

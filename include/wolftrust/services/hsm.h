@@ -213,6 +213,20 @@ void wt_hsm_vault_set_sealer(const wt_vault_sealer_t* sealer);
  * WT_HSM_SEAL_KEY_ID (generated on first boot, NONEXPORTABLE and immutable).
  * Only linked into builds that carry wolfCrypt. */
 int wt_hsm_seal_init(struct whNvmContext_t* nvm);
+
+#if defined(WT_NVM_STORE_NATIVE)
+/* Native store: the seal key and the vault's counter table exist together or
+ * not at all. seal_key_add creates both on a blank store; table_check
+ * proves the table is present. */
+int wt_hsm_vault_seal_key_add(struct whNvmContext_t* nvm,
+                              whNvmMetadata* meta, const uint8_t* key);
+int wt_hsm_vault_table_check(struct whNvmContext_t* nvm);
+/* 1 when the store records provisioned rollback floors, 0 if not, -1 on an
+ * unreadable table. */
+int wt_hsm_vault_floors_provisioned(void);
+/* Records that the rollback floors exist. */
+int wt_hsm_vault_floors_mark(void);
+#endif
 extern const wt_vault_sealer_t wt_hsm_sealer;
 
 /* Shared vault directory helpers (wt_hsm_vault.c) for confined backends:

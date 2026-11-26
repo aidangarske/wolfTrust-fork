@@ -29,11 +29,14 @@
 #include "wolftrust/services/vault_service.h"
 #include "wolftrust/services/hsm.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include "wolfhsm/wh_error.h"
 #include "wolfhsm/wh_common.h"
 #include "wolfhsm/wh_keyid.h"
+#include "wolftrust/rollback.h"
+#include "wolftrust/static_assert.h"
 #include "wolftrust/vault_store.h"
 #include "wolfhsm/wh_nvm.h"
 #if defined(WT_NVM_STORE_NATIVE)
@@ -55,7 +58,16 @@
 #define WT_HSM_VAULT_ID_COUNT 32U
 
 #define WT_HSM_VAULT_LABEL_MAGIC 0x31565457UL /* "WTV1" little-endian */
+#if defined(WT_NVM_STORE_NATIVE)
+#define WT_HSM_VAULT_TABLE_MAGIC 0x32565457UL /* "WTV2" little-endian */
+#ifndef WT_VAULT_COUNTER_RANGE
+#define WT_VAULT_COUNTER_RANGE   8U
+#endif
+WT_STATIC_ASSERT(WT_VAULT_COUNTER_RANGE >= 1U,
+                 "a pair must cover the counter it seals under");
+#else
 #define WT_HSM_VAULT_TABLE_MAGIC 0x43565457UL /* "WTVC" little-endian */
+#endif
 #define WT_HSM_VAULT_STAGE_ID    0x0123U
 #define WT_HSM_VAULT_DELETE_MARKER_BASE WT_HSM_VAULT_ID_COUNT
 
@@ -69,7 +81,10 @@
  * counter each in-window object was sealed under, so a replayed (rolled-back)
  * ciphertext fails tag authentication on the next read. reserved holds the
  * slot plus one while its prior object is staged for rollback, or the
- * delete marker base plus slot plus one while deletion is in progress. */
+ * delete marker base plus slot plus one while deletion is in progress. On the
+ * native store (WTV2) global is the highest counter issued, the table commits
+ * together with the object it covers, and reserved only records whether the
+ * rollback floors were provisioned. */
 typedef struct wt_hsm_vault_table {
     uint32_t magic;
     uint32_t reserved;
@@ -79,6 +94,12 @@ typedef struct wt_hsm_vault_table {
 
 static whNvmContext* g_vault_nvm;
 static const wt_vault_sealer_t* g_vault_sealer;
+#if defined(WT_NVM_STORE_NATIVE)
+/* Next counter to seal under; valid only while g_vault_counted is set, and
+ * re-derived from the committed table after every bind or failed write. */
+static uint64_t g_vault_next;
+static uint8_t g_vault_counted;
+#endif
 
 /* Sealed-object staging in the shared keystore trust band. */
 /* Sealed objects are unsealed in place; a path that writes the ciphertext
@@ -95,6 +116,9 @@ int wt_hsm_vault_init(whNvmContext* nvm)
         return -1;
     }
     g_vault_nvm = nvm;
+#if defined(WT_NVM_STORE_NATIVE)
+    g_vault_counted = 0U;
+#endif
     return 0;
 }
 
@@ -114,6 +138,49 @@ static void wt_hsm_vault_zeroize(uint8_t* buf, size_t len)
 }
 
 static psa_status_t wt_hsm_vault_map_err(int rc);
+#if defined(WT_NVM_STORE_NATIVE)
+#define WT_HSM_VAULT_FLOORS_SET  1U
+
+/* WH_ERROR_OK with a table of the given magic, WH_ERROR_NOTFOUND, or an
+ * error for anything else. */
+static int wt_hsm_vault_table_read(whNvmContext* nvm,
+                                   wt_hsm_vault_table_t* table,
+                                   uint32_t magic)
+{
+    whNvmMetadata meta;
+    uint32_t i;
+    int rc;
+
+    rc = wt_vstore_metadata(nvm, WT_HSM_VAULT_TABLE_ID, &meta);
+    if (rc == WH_ERROR_OK && meta.len != sizeof(*table)) {
+        rc = WH_ERROR_ABORTED;
+    }
+    if (rc == WH_ERROR_OK) {
+        rc = wt_vstore_read(nvm, WT_HSM_VAULT_TABLE_ID, 0U,
+                            (whNvmSize)sizeof(*table), (uint8_t*)table);
+    }
+    if (rc == WH_ERROR_OK && (table->magic != magic ||
+            (magic == WT_HSM_VAULT_TABLE_MAGIC &&
+             (table->reserved & ~WT_HSM_VAULT_FLOORS_SET) != 0U))) {
+        rc = WH_ERROR_ABORTED;
+    }
+    /* A slot above global would let a later seal reuse its counter. */
+    for (i = 0U; rc == WH_ERROR_OK && i < WT_HSM_VAULT_ID_COUNT; i++) {
+        if (table->slot[i] > table->global) {
+            rc = WH_ERROR_ABORTED;
+        }
+    }
+    return rc;
+}
+
+static psa_status_t wt_hsm_vault_table_load(wt_hsm_vault_table_t* table)
+{
+    /* The table is written with the seal key, so it is never absent. */
+    return (wt_hsm_vault_table_read(g_vault_nvm, table,
+                                    WT_HSM_VAULT_TABLE_MAGIC) == WH_ERROR_OK) ?
+           PSA_SUCCESS : PSA_ERROR_STORAGE_FAILURE;
+}
+#else
 static psa_status_t wt_hsm_vault_recover(wt_hsm_vault_table_t* table);
 
 static psa_status_t wt_hsm_vault_table_load(wt_hsm_vault_table_t* table)
@@ -139,6 +206,8 @@ static psa_status_t wt_hsm_vault_table_load(wt_hsm_vault_table_t* table)
     }
     return wt_hsm_vault_recover(table);
 }
+
+#endif
 
 /* Gate every pool write: a doomed add on a full data pool fails mid-write
  * with NOTBLANK and poisons later adds, so compact reclaimable space when
@@ -182,11 +251,26 @@ static psa_status_t wt_hsm_vault_reserve_in(whNvmContext* nvm,
     return PSA_SUCCESS;
 }
 
+#if defined(WT_NVM_STORE_NATIVE)
+/* Kept free on every vault write so the boot-time floor rewrite in
+ * nvm_boot.c always has its slot and bytes. */
+#define WT_HSM_VAULT_FLOOR_SIZE \
+    wt_hsm_vault_storage_size(sizeof(wt_rollback_table_t))
+
+static psa_status_t wt_hsm_vault_admit(uint32_t need_size,
+                                       uint16_t need_objects)
+{
+    return wt_hsm_vault_reserve_in(g_vault_nvm,
+                                   need_size + WT_HSM_VAULT_FLOOR_SIZE,
+                                   (uint16_t)(need_objects + 1U));
+}
+#else
 static psa_status_t wt_hsm_vault_reserve(uint32_t need_size,
                                          uint16_t need_objects)
 {
     return wt_hsm_vault_reserve_in(g_vault_nvm, need_size, need_objects);
 }
+#endif
 
 /* Object-add reservation for the native key backend: reserve the object's
  * bytes plus the counter-table headroom, and two directory entries (the add
@@ -197,9 +281,16 @@ psa_status_t wt_hsm_vault_reserve_object_in(whNvmContext* nvm, whNvmSize len)
     if (nvm == NULL) {
         return PSA_ERROR_NOT_SUPPORTED;
     }
+#if defined(WT_NVM_STORE_NATIVE)
+    /* Same headroom as a storage create: a later sealed pair still fits. */
+    return wt_hsm_vault_reserve_in(nvm, wt_hsm_vault_storage_size(len) +
+        wt_hsm_vault_storage_size(sizeof(wt_hsm_vault_table_t)) +
+        WT_HSM_VAULT_FLOOR_SIZE, 3U);
+#else
     return wt_hsm_vault_reserve_in(nvm,
         wt_hsm_vault_storage_size(len) +
             wt_hsm_vault_storage_size(sizeof(wt_hsm_vault_table_t)), 2U);
+#endif
 }
 
 psa_status_t wt_hsm_vault_reserve_object(whNvmSize len)
@@ -227,6 +318,7 @@ psa_status_t wt_hsm_vault_reserve_table_in(whNvmContext* nvm, whNvmId id,
         (rc == WH_ERROR_NOTFOUND) ? 2U : 1U);
 }
 
+#if !defined(WT_NVM_STORE_NATIVE)
 static psa_status_t wt_hsm_vault_table_store(const wt_hsm_vault_table_t* table)
 {
     whNvmMetadata meta;
@@ -247,6 +339,7 @@ static psa_status_t wt_hsm_vault_table_store(const wt_hsm_vault_table_t* table)
                        (const uint8_t*)table);
     return (rc == WH_ERROR_OK) ? PSA_SUCCESS : PSA_ERROR_STORAGE_FAILURE;
 }
+#endif
 
 void wt_hsm_vault_make_label(uint8_t* label, int32_t owner, int32_t sub,
                              uint64_t uid, uint32_t flags)
@@ -321,6 +414,7 @@ static psa_status_t wt_hsm_vault_read_sealed(whNvmId id,
     return status;
 }
 
+#if !defined(WT_NVM_STORE_NATIVE)
 static psa_status_t wt_hsm_vault_destroy_stage(void)
 {
     whNvmMetadata meta;
@@ -474,6 +568,7 @@ static psa_status_t wt_hsm_vault_recover(wt_hsm_vault_table_t* table)
     }
     return wt_hsm_vault_destroy_stage();
 }
+#endif
 
 /* Shared directory lookup for confined vault backends: find the
  * (owner, sub, uid) object in the vault id window. Returns PSA_SUCCESS
@@ -585,6 +680,7 @@ static psa_status_t wt_hsm_vault_open(wt_hsm_vault_table_t* table,
     return status;
 }
 
+#if !defined(WT_NVM_STORE_NATIVE)
 static psa_status_t wt_hsm_vault_set(int32_t owner, int32_t sub,
                                      uint64_t uid, uint32_t flags,
                                      const uint8_t* data, size_t len)
@@ -747,6 +843,7 @@ static psa_status_t wt_hsm_vault_set(int32_t owner, int32_t sub,
     }
     return wt_hsm_vault_destroy_stage();
 }
+#endif
 
 static psa_status_t wt_hsm_vault_get(int32_t owner, int32_t sub,
                                      uint64_t uid, uint32_t offset,
@@ -841,6 +938,7 @@ static psa_status_t wt_hsm_vault_get_info(int32_t owner, int32_t sub,
     return PSA_SUCCESS;
 }
 
+#if !defined(WT_NVM_STORE_NATIVE)
 static psa_status_t wt_hsm_vault_remove(int32_t owner, int32_t sub,
                                         uint64_t uid)
 {
@@ -896,6 +994,282 @@ static psa_status_t wt_hsm_vault_remove(int32_t owner, int32_t sub,
     }
     return PSA_SUCCESS;
 }
+#endif
+
+#if defined(WT_NVM_STORE_NATIVE)
+static void wt_hsm_vault_table_meta(whNvmMetadata* meta)
+{
+    (void)memset(meta, 0, sizeof(*meta));
+    meta->id = WT_HSM_VAULT_TABLE_ID;
+    meta->access = WH_NVM_ACCESS_ANY;
+    meta->len = (whNvmSize)sizeof(wt_hsm_vault_table_t);
+}
+
+/* Commit a table: alone, paired with obj (both visible or neither), or in the
+ * compaction that drops drop. issued never goes down. */
+static psa_status_t wt_hsm_vault_commit(whNvmMetadata* obj,
+                                        const uint8_t* data,
+                                        wt_hsm_vault_table_t* table,
+                                        whNvmId drop)
+{
+    whNvmMetadata meta;
+    uint64_t issued = 0U;
+    int rc;
+
+    rc = wt_vstore_read(g_vault_nvm, WT_HSM_VAULT_TABLE_ID,
+                        (whNvmSize)offsetof(wt_hsm_vault_table_t, global),
+                        (whNvmSize)sizeof(issued), (uint8_t*)&issued);
+    if (rc == WH_ERROR_OK && table->global < issued) {
+        return PSA_ERROR_STORAGE_FAILURE;
+    }
+    if (rc == WH_ERROR_NOTFOUND) {
+        rc = WH_ERROR_OK;
+    }
+    if (rc == WH_ERROR_OK && obj != NULL) {
+        rc = wt_vstore_policy(g_vault_nvm, obj->id,
+                              WH_NVM_FLAGS_NONMODIFIABLE);
+        rc = (rc == WH_ERROR_NOTFOUND) ? WH_ERROR_OK : rc;
+    }
+    if (rc == WH_ERROR_OK && drop != WH_NVM_ID_INVALID) {
+        rc = wt_vstore_policy(g_vault_nvm, drop, WH_NVM_FLAGS_NONMODIFIABLE |
+                                                 WH_NVM_FLAGS_NONDESTROYABLE);
+    }
+    if (rc != WH_ERROR_OK) {
+        return wt_hsm_vault_map_err(rc);
+    }
+    wt_hsm_vault_table_meta(&meta);
+    if (drop != WH_NVM_ID_INVALID) {
+        rc = wt_vstore_compact_with(g_vault_nvm, drop, &meta,
+                                    (const uint8_t*)table);
+    }
+    else if (obj != NULL) {
+        rc = wt_vstore_add_pair(g_vault_nvm, obj, data, &meta,
+                                (const uint8_t*)table);
+    }
+    else {
+        rc = wt_vstore_add(g_vault_nvm, &meta, meta.len,
+                           (const uint8_t*)table);
+    }
+    return wt_hsm_vault_map_err(rc);
+}
+
+static psa_status_t wt_hsm_vault_set(int32_t owner, int32_t sub,
+                                     uint64_t uid, uint32_t flags,
+                                     const uint8_t* data, size_t len)
+{
+    whNvmMetadata meta;
+    wt_hsm_vault_table_t table;
+    whNvmId id = WH_NVM_ID_INVALID;
+    whNvmId free_id = WH_NVM_ID_INVALID;
+    uint32_t slot;
+    uint32_t need_size;
+    uint16_t need_objects = 1U;
+    uint64_t counter;
+    int sealed = (flags & WT_VAULT_FLAG_SEALED) != 0U;
+    int created = 0;
+    int reserve = 0;
+    psa_status_t status;
+
+    if (g_vault_nvm == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    if (len > WT_VAULT_OBJECT_MAX ||
+            (flags & ~(uint32_t)WT_HSM_VAULT_FLAG_MASK) != 0U) {
+        return PSA_ERROR_INVALID_ARGUMENT;
+    }
+    if (sealed != 0 && g_vault_sealer == NULL) {
+        return PSA_ERROR_NOT_SUPPORTED;
+    }
+    status = wt_hsm_vault_open(&table, owner, sub, uid, &id, &meta, &free_id);
+    if (status == PSA_SUCCESS) {
+        /* A storage SET must never overwrite a key object (WT-FFM-0046),
+         * and honours WRITE_ONCE before any backend write. */
+        if ((wt_hsm_vault_flags_of(meta.label) &
+                (WT_VAULT_FLAG_KEY | WT_VAULT_FLAG_WRITE_ONCE)) != 0U) {
+            return PSA_ERROR_NOT_PERMITTED;
+        }
+    }
+    else if (status == PSA_ERROR_DOES_NOT_EXIST &&
+             free_id != WH_NVM_ID_INVALID) {
+        id = free_id;
+        created = 1;
+    }
+    else {
+        return (status == PSA_ERROR_DOES_NOT_EXIST) ?
+               PSA_ERROR_INSUFFICIENT_STORAGE : status;
+    }
+    slot = id - WT_HSM_VAULT_ID_BASE;
+    (void)memset(&meta, 0, sizeof(meta));
+    meta.id = id;
+    meta.access = WH_NVM_ACCESS_ANY;
+    meta.flags = WH_NVM_FLAGS_SENSITIVE;
+    if ((flags & WT_VAULT_FLAG_WRITE_ONCE) != 0U) {
+        meta.flags |= WH_NVM_FLAGS_NONMODIFIABLE |
+                      WH_NVM_FLAGS_NONDESTROYABLE;
+    }
+    meta.len = (whNvmSize)(len + ((sealed != 0) ? WT_VAULT_SEAL_TAG_LEN : 0U));
+    wt_hsm_vault_make_label(meta.label, owner, sub, uid, flags);
+
+    need_size = wt_hsm_vault_storage_size(meta.len);
+    /* A new object leaves a table's worth of room, so on a full store an
+     * object stays overwritable with a value of up to its stored size. */
+    if (sealed != 0 || table.slot[slot] != 0U || created != 0) {
+        need_size += wt_hsm_vault_storage_size(sizeof(table));
+        need_objects = 2U;
+    }
+    if (sealed != 0) {
+        if (table.global > UINT64_MAX - 2U * WT_VAULT_COUNTER_RANGE) {
+            return PSA_ERROR_INSUFFICIENT_STORAGE;
+        }
+        /* The first seal after a bind or a failure reserves a fresh range
+         * from the committed table: counters up to global may be used. */
+        reserve = (g_vault_counted == 0U || g_vault_next > table.global);
+        if (reserve != 0) {
+            need_size += wt_hsm_vault_storage_size(sizeof(table));
+            need_objects++;
+        }
+    }
+    status = wt_hsm_vault_admit(need_size, need_objects);
+    if (status != PSA_SUCCESS) {
+        return status;
+    }
+    if (reserve != 0) {
+        /* Never restart below a counter this bind already handed out. */
+        if (g_vault_counted != 0U && g_vault_next > table.global + 1U) {
+            table.global = g_vault_next - 1U;
+        }
+        g_vault_counted = 0U;
+        counter = table.global + 1U;
+        table.global += WT_VAULT_COUNTER_RANGE;
+        status = wt_hsm_vault_commit(NULL, NULL, &table, WH_NVM_ID_INVALID);
+        if (status != PSA_SUCCESS) {
+            return status;
+        }
+        g_vault_next = counter;
+        g_vault_counted = 1U;
+    }
+    if (sealed == 0) {
+        if (table.slot[slot] == 0U) {
+            return wt_hsm_vault_map_err(
+                wt_vstore_add_checked(g_vault_nvm, &meta, meta.len, data));
+        }
+        table.slot[slot] = 0U;
+        return wt_hsm_vault_commit(&meta, data, &table, WH_NVM_ID_INVALID);
+    }
+    counter = g_vault_next++;
+    status = g_vault_sealer->seal(meta.label, WH_NVM_LABEL_LEN, counter,
+                                  data, len, g_vault_ct);
+    if (status == PSA_SUCCESS) {
+        table.slot[slot] = counter;
+        if (table.global < counter + WT_VAULT_COUNTER_RANGE) {
+            table.global = counter + WT_VAULT_COUNTER_RANGE;
+        }
+        status = wt_hsm_vault_commit(&meta, g_vault_ct, &table,
+                                     WH_NVM_ID_INVALID);
+    }
+    wt_hsm_vault_zeroize(g_vault_ct, sizeof(g_vault_ct));
+    if (status != PSA_SUCCESS) {
+        g_vault_counted = 0U;
+    }
+    return status;
+}
+
+static psa_status_t wt_hsm_vault_remove(int32_t owner, int32_t sub,
+                                        uint64_t uid)
+{
+    whNvmMetadata meta;
+    wt_hsm_vault_table_t table;
+    whNvmId id = WH_NVM_ID_INVALID;
+    uint32_t slot;
+    psa_status_t status;
+
+    status = wt_hsm_vault_open(&table, owner, sub, uid, &id, &meta, NULL);
+    if (status != PSA_SUCCESS) {
+        return status;
+    }
+    if ((wt_hsm_vault_flags_of(meta.label) &
+            (WT_VAULT_FLAG_KEY | WT_VAULT_FLAG_WRITE_ONCE)) != 0U) {
+        return PSA_ERROR_NOT_PERMITTED;
+    }
+    slot = id - WT_HSM_VAULT_ID_BASE;
+    if (table.slot[slot] == 0U &&
+            (wt_hsm_vault_flags_of(meta.label) & WT_VAULT_FLAG_SEALED) == 0U) {
+        return wt_hsm_vault_map_err(
+            wt_vstore_destroy_checked(g_vault_nvm, 1U, &id));
+    }
+    /* One compaction drops the object and clears its counter, so it needs no
+     * space beyond the live set and a full store can still delete. */
+    table.slot[slot] = 0U;
+    return wt_hsm_vault_commit(NULL, NULL, &table, id);
+}
+
+
+int wt_hsm_vault_seal_key_add(whNvmContext* nvm, whNvmMetadata* meta,
+                              const uint8_t* key)
+{
+    wt_hsm_vault_table_t table;
+    whNvmMetadata table_meta;
+    whNvmId objects = 0U;
+    whNvmId reclaim = 0U;
+    int rc;
+
+    if (nvm == NULL || meta == NULL) {
+        return WH_ERROR_BADARGS;
+    }
+    /* The key is only ever created on a store with no live record (a torn
+     * first-boot pair counts as none); a populated store missing it is not
+     * given a new one. */
+    rc = wt_vstore_available(nvm, NULL, &objects, NULL, &reclaim);
+    if (rc == WH_ERROR_OK &&
+            (uint32_t)objects + (uint32_t)reclaim != WT_NVS_SLOTS) {
+        rc = WH_ERROR_ABORTED;
+    }
+    if (rc == WH_ERROR_OK) {
+        (void)memset(&table, 0, sizeof(table));
+        table.magic = WT_HSM_VAULT_TABLE_MAGIC;
+        wt_hsm_vault_table_meta(&table_meta);
+        rc = wt_vstore_add_pair(nvm, meta, key, &table_meta,
+                                (const uint8_t*)&table);
+    }
+    return rc;
+}
+
+int wt_hsm_vault_table_check(whNvmContext* nvm)
+{
+    wt_hsm_vault_table_t table;
+
+    return wt_hsm_vault_table_read(nvm, &table, WT_HSM_VAULT_TABLE_MAGIC);
+}
+
+int wt_hsm_vault_floors_provisioned(void)
+{
+    wt_hsm_vault_table_t table;
+
+    if (wt_hsm_vault_table_load(&table) != PSA_SUCCESS) {
+        return -1;
+    }
+    return ((table.reserved & WT_HSM_VAULT_FLOORS_SET) != 0U) ? 1 : 0;
+}
+
+int wt_hsm_vault_floors_mark(void)
+{
+    wt_hsm_vault_table_t table;
+
+    if (wt_vstore_metadata(g_vault_nvm, WT_HSM_ROLLBACK_TABLE_ID, NULL) !=
+            WH_ERROR_OK) {
+        return 0;
+    }
+    if (wt_hsm_vault_table_load(&table) != PSA_SUCCESS) {
+        return -1;
+    }
+    if ((table.reserved & WT_HSM_VAULT_FLOORS_SET) != 0U) {
+        return 0;
+    }
+    table.reserved |= WT_HSM_VAULT_FLOORS_SET;
+    return (wt_hsm_vault_commit(NULL, NULL, &table, WH_NVM_ID_INVALID) ==
+            PSA_SUCCESS) ? 0 : -1;
+}
+#endif
 
 const wt_vault_backend_t wt_hsm_vault_backend = {
     wt_hsm_vault_set,

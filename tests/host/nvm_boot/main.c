@@ -31,6 +31,7 @@
 
 #include "wolfhsm/wh_error.h"
 #include "wolfhsm/wh_nvm.h"
+#include "wolftrust/nvm_store.h"
 #include "test_nvm_store.h"
 #include "wolfhsm/wh_flash_ramsim.h"
 
@@ -74,7 +75,16 @@ const void* wt_hsm_flash_config(void)
 
 int wt_nvm_store_bind(void)
 {
-    return WH_ERROR_OK;
+    return wh_Nvm_Init(&g_wt_nvm_ctx, &g_nvm_cfg);
+}
+
+int wt_hsm_flash_format(void)
+{
+    /* The next flash init then starts from the erased part. */
+    g_ramsim_cfg.initData = NULL;
+    (void)memset(g_flash_memory, g_ramsim_cfg.erasedByte,
+                 sizeof(g_flash_memory));
+    return 0;
 }
 
 void wt_nvm_store_pin(void)
@@ -163,7 +173,15 @@ static int test_nvm_up(void)
     g_nvm_cfg.context = &g_nvm_flash_ctx;
     g_nvm_cfg.config = &g_nvm_flash_cfg;
     (void)memset(&g_wt_nvm_ctx, 0, sizeof(g_wt_nvm_ctx));
-    return (wh_Nvm_Init(&g_wt_nvm_ctx, &g_nvm_cfg) == WH_ERROR_OK) ? 0 : -1;
+    return (wh_Nvm_Init(&g_wt_nvm_ctx, &g_nvm_cfg) == WH_ERROR_OK &&
+            wt_hsm_vault_init(&g_wt_nvm_ctx) == 0) ? 0 : -1;
+}
+
+/* A store as boot sees it: bound with its seal key (and table). */
+static int test_store_up(void)
+{
+    return (test_nvm_up() == 0 &&
+            test_vault_store_ready(&g_wt_nvm_ctx) == WH_ERROR_OK) ? 0 : -1;
 }
 
 static int test_add(whNvmId id, uint8_t fill)
@@ -285,7 +303,7 @@ static void test_floor_store_on_full_directory(void)
 {
     int ret;
 
-    check(test_nvm_up() == 0, "boot store initialized");
+    check(test_store_up() == 0, "boot store initialized");
     wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_SECURED);
 
     g_quarantined = 0U;
@@ -325,7 +343,7 @@ static void test_floor_create_keeps_supersede_room(void)
     int created;
     int advanced;
 
-    check(test_nvm_up() == 0 && test_fill_data() == 0,
+    check(test_store_up() == 0 && test_fill_data() == 0,
           "boot store holds room for one floor table but not two");
     wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_SECURED);
     g_quarantined = 0U;
@@ -344,7 +362,7 @@ static void test_version_zero_boot_writes_table(void)
 {
     int ret;
 
-    check(test_nvm_up() == 0, "boot store initialized");
+    check(test_store_up() == 0, "boot store initialized");
     wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_SECURED);
     g_quarantined = 0U;
     ret = wt_hsm_rollback_enforce(0U);
@@ -358,6 +376,96 @@ static void test_version_zero_boot_writes_table(void)
           "WT-FFM-0050 the first floor advance lands on a full vault");
 }
 
+#if defined(WT_NVM_STORE_NATIVE)
+/* A flash init erases the simulator; keep the current contents instead. */
+static void test_keep_flash(void)
+{
+    static uint8_t snapshot[RAMSIM_SIZE];
+
+    (void)memcpy(snapshot, g_flash_memory, sizeof(snapshot));
+    g_ramsim_cfg.initData = snapshot;
+}
+
+static int test_bind(void)
+{
+    test_keep_flash();
+    return wt_nvm_vault_bind();
+}
+
+static void test_native_seal_pair(void)
+{
+    whNvmId table = WT_HSM_VAULT_TABLE_ID;
+
+    check(test_nvm_up() == 0 && test_bind() == WH_ERROR_OK &&
+          wh_Nvm_GetMetadata(&g_wt_nvm_ctx, table, NULL) == WH_ERROR_OK,
+          "a blank native store binds with the seal key and its table");
+    check(wh_Nvm_DestroyObjects(&g_wt_nvm_ctx, 1U, &table) == WH_ERROR_OK,
+          "counter table removed under the seal key");
+    wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_SECURED);
+    check(test_bind() != WH_ERROR_OK && wt_hsm_vault_was_reformatted() == 0,
+          "SECURED: a seal key without its table fails the bind");
+    wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_ASSEMBLY_AND_TEST);
+    check(test_bind() == WH_ERROR_OK && wt_hsm_vault_was_reformatted() != 0 &&
+          wh_Nvm_GetMetadata(&g_wt_nvm_ctx, table, NULL) == WH_ERROR_OK,
+          "ASSEMBLY_AND_TEST: the store is reformatted and flagged");
+}
+
+/* A populated store whose header carries the WNV1 magic. */
+static int test_wnv1_store(void)
+{
+    uint32_t rec[4];
+
+    if (test_nvm_up() != 0 || test_bind() != WH_ERROR_OK) {
+        return -1;
+    }
+    (void)memcpy(rec, g_flash_memory, sizeof(rec));
+    rec[0] = 0x31564E57U;
+    rec[2] = ~rec[0];
+    (void)memcpy(g_flash_memory, rec, sizeof(rec));
+    return 0;
+}
+
+static uint32_t test_header_magic(void)
+{
+    uint32_t magic;
+
+    (void)memcpy(&magic, g_flash_memory, sizeof(magic));
+    return magic;
+}
+
+static void test_native_wnv1_refused(void)
+{
+    wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_SECURED);
+    check(test_wnv1_store() == 0 && test_bind() != WH_ERROR_OK &&
+          test_header_magic() == 0x31564E57U,
+          "SECURED: a populated WNV1 store fails the bind and is kept");
+}
+
+static void test_native_floors_kept(void)
+{
+    whNvmId floors = WT_HSM_ROLLBACK_TABLE_ID;
+
+    check(test_nvm_up() == 0 && test_bind() == WH_ERROR_OK &&
+          wt_hsm_vault_floors_provisioned() == 0,
+          "a blank store has not provisioned floors yet");
+    wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_SECURED);
+    g_quarantined = 0U;
+    check(wt_hsm_rollback_enforce(1U) == WT_ROLLBACK_OK && test_floor_is(1U) &&
+          wt_hsm_vault_floors_provisioned() == 1,
+          "the first boot writes the floors and records them");
+    check(wh_Nvm_DestroyObjects(&g_wt_nvm_ctx, 1U, &floors) == WH_ERROR_OK,
+          "floor table lost");
+    check(wt_hsm_rollback_enforce(1U) == WT_ROLLBACK_REFUSED &&
+          g_quarantined != 0U &&
+          wh_Nvm_GetMetadata(&g_wt_nvm_ctx, floors, NULL) == WH_ERROR_NOTFOUND,
+          "SECURED: recorded floors that went missing are not recreated");
+    wt_hsm_set_boot_lifecycle(PSA_LIFECYCLE_ASSEMBLY_AND_TEST);
+    g_quarantined = 0U;
+    check(wt_hsm_rollback_enforce(1U) == WT_ROLLBACK_OK && test_floor_is(1U),
+          "ASSEMBLY_AND_TEST: missing floors are recreated");
+}
+#endif
+
 int main(void)
 {
     (void)memset(&g_sched, 0, sizeof(g_sched));
@@ -366,6 +474,11 @@ int main(void)
     test_floor_store_on_full_directory();
     test_floor_create_keeps_supersede_room();
     test_version_zero_boot_writes_table();
+#if defined(WT_NVM_STORE_NATIVE)
+    test_native_seal_pair();
+    test_native_wnv1_refused();
+    test_native_floors_kept();
+#endif
 
     if (g_failures != 0) {
         return 1;

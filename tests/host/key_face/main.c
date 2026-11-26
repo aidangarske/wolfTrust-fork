@@ -217,7 +217,8 @@ static int store_up(void)
     g_nvm_cfg.config = &g_nvm_flash_cfg;
     (void)memset(&g_store, 0, sizeof(g_store));
     if (wh_Nvm_Init(&g_store, &g_nvm_cfg) != WH_ERROR_OK ||
-            wt_hsm_vault_init(&g_store) != 0) {
+            wt_hsm_vault_init(&g_store) != 0 ||
+            test_vault_store_ready(&g_store) != 0) {
         return -1;
     }
     wt_vault_service_set_backend(&wt_hsm_vault_backend);
