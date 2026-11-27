@@ -70,9 +70,10 @@ static uint32_t wt_nvs_data_off(const wt_nvs_context_t* ctx, uint32_t part)
     return wt_nvs_base(ctx, part) + WT_NVS_DATA_OFF;
 }
 
+/* The last unit holds the header's backup copy. */
 static uint32_t wt_nvs_data_size(const wt_nvs_context_t* ctx)
 {
-    return ctx->part_size - WT_NVS_DATA_OFF;
+    return ctx->part_size - WT_NVS_DATA_OFF - WT_NVS_UNIT;
 }
 
 static int wt_nvs_program(const wt_nvs_context_t* ctx, uint32_t off,
@@ -137,22 +138,71 @@ static int wt_nvs_rec_write(const wt_nvs_context_t* ctx, uint32_t off,
     return wt_nvs_program(ctx, off, WT_NVS_UNIT, (const uint8_t*)rec);
 }
 
-/* 0 with the epoch, WH_ERROR_NOTFOUND for a blank header, else an error. */
-static int wt_nvs_header(const wt_nvs_context_t* ctx, uint32_t part,
-                         uint32_t* epoch)
+static int wt_nvs_head_read(const wt_nvs_context_t* ctx, uint32_t off,
+                            uint32_t* magic, uint32_t* epoch)
 {
-    uint32_t magic = 0u;
-    uint32_t off = wt_nvs_base(ctx, part);
     int rc = ctx->cb->BlankCheck(ctx->flash, off, WT_NVS_UNIT);
 
     if (rc == WH_ERROR_OK) {
         return WH_ERROR_NOTFOUND;
     }
     if (rc == WH_ERROR_NOTBLANK) {
-        rc = wt_nvs_rec_read(ctx, off, &magic, epoch);
+        rc = wt_nvs_rec_read(ctx, off, magic, epoch);
+    }
+    return rc;
+}
+
+/* 0 with the epoch, WH_ERROR_NOTFOUND if blank, WH_ERROR_ACCESS for a
+ * committed copy whose header and backup both fail, else WH_ERROR_ABORTED.
+ * The backup stands in only for a damaged header, never for an erased one. */
+static int wt_nvs_header(const wt_nvs_context_t* ctx, uint32_t part,
+                         uint32_t* epoch, uint8_t* whole)
+{
+    uint32_t magic = 0u;
+    uint32_t off = wt_nvs_base(ctx, part);
+    uint32_t b_magic = 0u;
+    uint32_t b_epoch = 0u;
+    int rc = wt_nvs_head_read(ctx, off, &magic, epoch);
+    int backup;
+
+    *whole = 0u;
+    if (rc == WH_ERROR_OK &&
+            wt_nvs_head_read(ctx, off + ctx->part_size - WT_NVS_UNIT,
+                             &b_magic, &b_epoch) == WH_ERROR_OK &&
+            b_magic == magic && b_epoch == *epoch) {
+        *whole = 1u;
+    }
+    if (rc != WH_ERROR_OK) {
+        backup = wt_nvs_head_read(ctx, off + ctx->part_size - WT_NVS_UNIT,
+                                  &magic, epoch);
+        if (rc == WH_ERROR_NOTFOUND) {
+            rc = (backup == WH_ERROR_NOTFOUND) ? WH_ERROR_NOTFOUND
+                                               : WH_ERROR_ABORTED;
+        }
+        else if (backup == WH_ERROR_OK) {
+            rc = WH_ERROR_OK;
+        }
+        else {
+            rc = (backup == WH_ERROR_NOTFOUND) ? WH_ERROR_ABORTED
+                                               : WH_ERROR_ACCESS;
+        }
     }
     if (rc == WH_ERROR_OK && magic != WT_NVS_MAGIC) {
         rc = WH_ERROR_ABORTED;
+    }
+    return rc;
+}
+
+/* The header, then its backup in the partition's last unit. */
+static int wt_nvs_head_write(const wt_nvs_context_t* ctx, uint32_t part,
+                             uint32_t epoch)
+{
+    uint32_t off = wt_nvs_base(ctx, part);
+    int rc = wt_nvs_rec_write(ctx, off, WT_NVS_MAGIC, epoch);
+
+    if (rc == WH_ERROR_OK) {
+        rc = wt_nvs_rec_write(ctx, off + ctx->part_size - WT_NVS_UNIT,
+                              WT_NVS_MAGIC, epoch);
     }
     return rc;
 }
@@ -288,7 +338,7 @@ static int wt_nvs_format(wt_nvs_context_t* ctx)
         rc = wt_nvs_erase(ctx, 1u);
     }
     if (rc == WH_ERROR_OK) {
-        rc = wt_nvs_rec_write(ctx, wt_nvs_base(ctx, 0u), WT_NVS_MAGIC, 0u);
+        rc = wt_nvs_head_write(ctx, 0u, 0u);
     }
     if (rc == WH_ERROR_OK) {
         ctx->active = 0u;
@@ -424,8 +474,7 @@ static int wt_nvs_compact_ex(wt_nvs_context_t* ctx, whNvmId count,
              wt_nvs_put(ctx, dst, pos, next, sub, sub_data, 0u);
     }
     if (rc == WH_ERROR_OK) {
-        rc = wt_nvs_rec_write(ctx, wt_nvs_base(ctx, dst), WT_NVS_MAGIC,
-                              ctx->epoch + 1u);
+        rc = wt_nvs_head_write(ctx, dst, ctx->epoch + 1u);
         /* A header that reported failure may still read valid and win the
          * next boot over writes made after it, so the copy must go. */
         if (rc != WH_ERROR_OK && wt_nvs_erase(ctx, dst) != WH_ERROR_OK) {
@@ -444,9 +493,11 @@ static int wt_nvs_compact_ex(wt_nvs_context_t* ctx, whNvmId count,
     }
     ctx->active = (uint8_t)dst;
     ctx->epoch++;
-    /* The new copy is committed; a later compaction or boot erases the old
-     * one, so a failure here does not fail the operation. */
-    (void)wt_nvs_erase(ctx, src);
+    /* The new copy is committed. An old copy that will not erase stops the
+     * store until the next boot, which erases it again or fails closed. */
+    if (wt_nvs_erase(ctx, src) != WH_ERROR_OK) {
+        ctx->bad = 1u;
+    }
     return WH_ERROR_OK;
 }
 
@@ -486,6 +537,7 @@ int wt_nvs_init(void* c, const void* cf)
     const whFlashCb* cb;
     uint32_t epoch[2] = {0u, 0u};
     uint32_t size;
+    uint8_t whole[2] = {0u, 0u};
     int hdr[2];
     int rc = WH_ERROR_OK;
 
@@ -509,7 +561,7 @@ int wt_nvs_init(void* c, const void* cf)
     ctx->flash = cfg->context;
     size = cb->PartitionSize(ctx->flash);
     ctx->part_size = size;
-    if ((size % WT_NVS_UNIT) != 0u || size <= WT_NVS_DATA_OFF ||
+    if ((size % WT_NVS_UNIT) != 0u || size <= WT_NVS_DATA_OFF + WT_NVS_UNIT ||
             size > 0x7FFFFFFFu) {
         rc = WH_ERROR_BADARGS;
     }
@@ -517,9 +569,12 @@ int wt_nvs_init(void* c, const void* cf)
         if (cb->WriteUnlock != NULL) {
             (void)cb->WriteUnlock(ctx->flash, 0u, 2u * size);
         }
-        hdr[0] = wt_nvs_header(ctx, 0u, &epoch[0]);
-        hdr[1] = wt_nvs_header(ctx, 1u, &epoch[1]);
-        if (hdr[0] == WH_ERROR_OK || hdr[1] == WH_ERROR_OK) {
+        hdr[0] = wt_nvs_header(ctx, 0u, &epoch[0], &whole[0]);
+        hdr[1] = wt_nvs_header(ctx, 1u, &epoch[1], &whole[1]);
+        if (hdr[0] == WH_ERROR_ACCESS || hdr[1] == WH_ERROR_ACCESS) {
+            rc = WH_ERROR_ABORTED;
+        }
+        else if (hdr[0] == WH_ERROR_OK || hdr[1] == WH_ERROR_OK) {
             ctx->active = (hdr[0] != WH_ERROR_OK ||
                            (hdr[1] == WH_ERROR_OK && epoch[1] > epoch[0]))
                           ? 1u : 0u;
@@ -533,6 +588,14 @@ int wt_nvs_init(void* c, const void* cf)
              * was cut and could later read valid with a higher epoch. */
             if (rc == WH_ERROR_OK) {
                 rc = wt_nvs_erase(ctx, (uint32_t)ctx->active ^ 1u);
+            }
+            /* A copy left with one good header unit is rewritten whole, so
+             * one more damaged unit cannot make the store unreadable. */
+            if (rc == WH_ERROR_OK && whole[ctx->active] == 0u) {
+                rc = wt_nvs_compact(ctx, 0u, NULL);
+            }
+            if (rc == WH_ERROR_OK && ctx->bad != 0u) {
+                rc = WH_ERROR_ABORTED;
             }
         }
         /* With no readable header, a store blank but for its header units

@@ -52,6 +52,7 @@ static int g_ecc;
 static uint32_t g_ecc_off;
 /* Lie model: the program that brings it to zero lands but reports failure. */
 static int g_lie_left = -1;
+static int g_erase_fail;
 
 static void check(int cond, const char* what)
 {
@@ -123,6 +124,9 @@ static int f_erase(void* c, uint32_t off, uint32_t size)
 {
     int cut = cut_now();
 
+    if (g_erase_fail != 0) {
+        return WH_ERROR_ABORTED;
+    }
     if (cut == 1) {
         return WH_ERROR_ABORTED;
     }
@@ -543,8 +547,10 @@ static void test_runtime_fault(void)
           WH_ERROR_NOTFOUND, "the next write compacts past the torn slot");
 }
 
+static int part_blank(uint32_t part);
+
 /* A cut after compaction commits but before it erases the older copy leaves
- * two valid copies; boot must erase the older one, not keep it as a fallback. */
+ * two valid copies; boot must erase the older one, not keep it as fallback. */
 static void test_stale_copy(void)
 {
     static uint8_t saved[SECTOR];
@@ -568,8 +574,85 @@ static void test_stale_copy(void)
     }
     check(blank, "boot erases the older copy");
     g_mem[SECTOR] ^= 0x01u;
+    check(store_open() == WH_ERROR_OK &&
+          wh_Nvm_Read(&g_nvm, 1u, 0u, 1u, saved) == WH_ERROR_OK &&
+          saved[0] == 0xB1u, "a damaged header opens from its backup");
+    check(g_nvs.active == 0u && part_blank(1u) && store_open() == WH_ERROR_OK &&
+          g_nvs.active == 0u,
+          "a copy opened from its backup is rewritten with both headers");
+    g_mem[0] ^= 0x01u;
+    g_mem[SECTOR - WT_NVS_UNIT] ^= 0x01u;
     check(store_open() == WH_ERROR_ABORTED,
           "a damaged newest copy never falls back to an older one");
+}
+
+/* The old copy survived its erase and the newer header was then damaged:
+ * the backup still names the newer copy, so the old one never comes back. */
+static void test_stale_copy_damaged_header(void)
+{
+    static uint8_t saved[SECTOR];
+    static uint8_t both[FLASH_SZ];
+    uint8_t b = 0u;
+
+    sim_reset();
+    check(store_open() == WH_ERROR_OK && put(1u, 8u, 0xA1u) == WH_ERROR_OK,
+          "surviving copy store seeded");
+    (void)memcpy(saved, g_mem, SECTOR);
+    check(put(1u, 8u, 0xB1u) == WH_ERROR_OK && op_compact() == WH_ERROR_OK,
+          "replacement compacted to the second copy");
+    (void)memcpy(g_mem, saved, SECTOR);
+    (void)memcpy(both, g_mem, FLASH_SZ);
+    g_mem[SECTOR + 4u] ^= 0x01u;
+    check(store_open() == WH_ERROR_OK &&
+          wh_Nvm_Read(&g_nvm, 1u, 0u, 1u, &b) == WH_ERROR_OK && b == 0xB1u &&
+          part_blank(1u),
+          "a surviving older copy loses to a newer one with a damaged header");
+    (void)memcpy(g_mem, both, FLASH_SZ);
+    g_mem[SECTOR + 4u] ^= 0x01u;
+    g_mem[2u * SECTOR - WT_NVS_UNIT] ^= 0x01u;
+    check(store_open() == WH_ERROR_ABORTED,
+          "a newer copy whose header and backup both fail is refused");
+}
+
+/* A cut before the backup header lands leaves one good header unit; boot
+ * rewrites the copy whole, so a later damaged header still opens. */
+static void test_backup_header_cut(void)
+{
+    uint8_t b = 0u;
+
+    sim_reset();
+    check(store_open() == WH_ERROR_OK && put(1u, 8u, 0xA1u) == WH_ERROR_OK &&
+          op_compact() == WH_ERROR_OK && g_nvs.active == 1u,
+          "backup cut store seeded on the second copy");
+    (void)memset(g_mem + 2u * SECTOR - WT_NVS_UNIT, 0xFF, WT_NVS_UNIT);
+    check(store_open() == WH_ERROR_OK && g_nvs.active == 0u &&
+          part_blank(1u), "a copy missing its backup is rewritten at boot");
+    g_mem[0] ^= 0x01u;
+    check(store_open() == WH_ERROR_OK &&
+          wh_Nvm_Read(&g_nvm, 1u, 0u, 1u, &b) == WH_ERROR_OK && b == 0xA1u,
+          "after the rewrite one damaged header still opens");
+}
+
+/* An old copy that fails its erase after a compaction stops the store; the
+ * next boot erases it, or refuses the store while it still will not erase. */
+static void test_source_erase_fail(void)
+{
+    uint8_t b = 0u;
+
+    sim_reset();
+    check(store_open() == WH_ERROR_OK && put(1u, 8u, 0xA1u) == WH_ERROR_OK &&
+          put(1u, 8u, 0xB1u) == WH_ERROR_OK, "erase fail store seeded");
+    g_erase_fail = 1;
+    check(op_compact() == WH_ERROR_OK && !part_blank(0u),
+          "the compaction commits though the old copy stays");
+    check(put(2u, 8u, 0xC1u) != WH_ERROR_OK,
+          "a store whose old copy did not erase takes no more writes");
+    check(store_open() != WH_ERROR_OK,
+          "boot refuses the store while the old copy will not erase");
+    g_erase_fail = 0;
+    check(store_open() == WH_ERROR_OK && part_blank(0u) &&
+          wh_Nvm_Read(&g_nvm, 1u, 0u, 1u, &b) == WH_ERROR_OK && b == 0xB1u,
+          "the next boot erases the old copy and opens the newer one");
 }
 
 /* The compaction that would wrap the epoch is refused, not taken. */
@@ -608,7 +691,7 @@ static void test_torn_header_copy(void)
     check(store_open() == WH_ERROR_OK && put(1u, 8u, 0xA1u) == WH_ERROR_OK &&
           op_compact() == WH_ERROR_OK && part_blank(0u),
           "torn header store seeded on the second copy");
-    (void)memcpy(g_mem, g_mem + SECTOR, SECTOR);
+    (void)memcpy(g_mem, g_mem + SECTOR, SECTOR - WT_NVS_UNIT);
     word = 2u;
     (void)memcpy(g_mem + 4u, &word, sizeof(word));
     check(store_open() == WH_ERROR_OK,
@@ -887,6 +970,9 @@ int main(void)
     test_power_cut();
     test_runtime_fault();
     test_stale_copy();
+    test_stale_copy_damaged_header();
+    test_backup_header_cut();
+    test_source_erase_fail();
     test_epoch_wrap();
     test_torn_header_copy();
     test_ecc_blank();
