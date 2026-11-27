@@ -30,8 +30,9 @@
  * never a caller-supplied field (WT-FFM-0044). Non-secure clients are
  * refused by the manifest (nonsecure_clients = false). */
 
-/* psa_call request types. REMOVE applies to storage objects; the current
- * vault backend does not support key deletion. */
+/* psa_call request types. REMOVE applies to storage objects. KEY_GENERATE
+ * through KEY_DECRYPT are retired: the vault refuses them with
+ * PSA_ERROR_NOT_SUPPORTED. Key objects use the NVM door or KEY_PUT/GET/DEL. */
 #define WT_VAULT_OP_SET               1
 #define WT_VAULT_OP_GET               2
 #define WT_VAULT_OP_GET_INFO          3
@@ -126,19 +127,19 @@ typedef struct wt_vault_nvm_avail {
 #define WT_VAULT_FLAG_SEALED 0x10000U
 
 /* Label marker for key objects (WT-FFM-0046). Never accepted from a storage
- * SET (outside the storage flag mask), only written by the key backend, so a
+ * SET (outside the storage flag mask), only written by KEY_PUT, so a
  * storage client cannot forge a key object; storage SET/GET refuse objects
  * carrying it. Key material is additionally stored NONEXPORTABLE at the NVM
  * layer — no *Checked read path can ever return private bytes. */
 #define WT_VAULT_FLAG_KEY 0x20000U
 
-/* Key types (wt_vault_req_t.reserved on generate/import). */
+/* Key types (WT_VAULT_KEY_LABEL type byte). */
 #define WT_VAULT_KEY_P256   1U
 #define WT_VAULT_KEY_AES256 2U
 
-/* Usage policy bits (wt_vault_req_t.flags on generate/import), enforced by
- * the vault at every key operation. There is deliberately no private-export
- * usage and no private-export wire op. */
+/* Usage policy bits (WT_VAULT_KEY_LABEL usage mask), checked on every
+ * KEY_GET and by the key backend at every key operation. There is
+ * deliberately no private-export usage and no private-export wire op. */
 #define WT_VAULT_KEY_USAGE_SIGN    0x1U
 #define WT_VAULT_KEY_USAGE_VERIFY  0x2U
 #define WT_VAULT_KEY_USAGE_ENCRYPT 0x4U
@@ -180,6 +181,9 @@ typedef struct wt_vault_req {
     uint32_t select;     /* KEY_GET: WT_VAULT_KEY_SEL_* */
 } wt_vault_req_t;
 
+/* Largest key-face object: its request header shares the copied transfer. */
+#define WT_VAULT_KEY_OBJECT_MAX (WT_VAULT_OBJECT_MAX - sizeof(wt_vault_req_t))
+
 /* outvec[0] of GET_INFO. */
 typedef struct wt_vault_info {
     uint32_t capacity;
@@ -201,10 +205,10 @@ typedef struct wt_vault_backend {
     psa_status_t (*remove)(int32_t owner, int32_t sub, uint64_t uid);
 } wt_vault_backend_t;
 
-/* Key-operation vtable (WT-FFM-0046): every operation executes inside the
- * confined vault partition against material in its keystore trust band. There
- * is deliberately no private-export entry point. sign/verify operate on a
- * caller-supplied digest; encrypt frames its output [nonce][ct][tag] and
+/* Key-operation vtable (WT-FFM-0046), run by the crypto partition over key
+ * objects it keeps in the vault's store; the vault never serves it.
+ * There is deliberately no private-export entry point. sign/verify operate on
+ * a caller-supplied digest; encrypt frames its output [nonce][ct][tag] and
  * decrypt consumes the same framing. */
 typedef struct wt_vault_key_backend {
     psa_status_t (*generate)(int32_t owner, int32_t sub, uint64_t uid,

@@ -479,6 +479,9 @@ static void test_namespace(void)
           "K6 a key at the same triple leaves the storage object intact");
 }
 
+static uint8_t g_big[WT_VAULT_KEY_OBJECT_MAX + 1U];
+static uint8_t g_big_out[WT_VAULT_KEY_OBJECT_MAX];
+
 static void test_record_reads(void)
 {
     uint8_t rec[40];
@@ -504,6 +507,19 @@ static void test_record_reads(void)
               g_client->get(TEST_HSM_PARTITION, -4, 0x90ULL, TEST_SIGN_P256,
                             0U, 0U, NULL, 0U) == PSA_ERROR_NOT_PERMITTED,
           "K7 an existence check still checks the type");
+    fill(g_big, sizeof(g_big), 0x91U);
+    check(g_client->put(TEST_HSM_PARTITION, -4, 0x91ULL, TEST_RECORD, g_big,
+                        WT_VAULT_KEY_OBJECT_MAX) == PSA_SUCCESS &&
+              g_client->get(TEST_HSM_PARTITION, -4, 0x91ULL, TEST_RECORD,
+                            WT_VAULT_KEY_SEL_WHOLE, 0U, g_big_out,
+                            WT_VAULT_KEY_OBJECT_MAX) == PSA_SUCCESS &&
+              memcmp(g_big_out, g_big, WT_VAULT_KEY_OBJECT_MAX) == 0,
+          "K7 a record of the key-face maximum round-trips");
+    check(g_client->put(TEST_HSM_PARTITION, -4, 0x92ULL, TEST_RECORD, g_big,
+                        WT_VAULT_KEY_OBJECT_MAX + 1U) != PSA_SUCCESS &&
+              g_client->get(TEST_HSM_PARTITION, -4, 0x92ULL, TEST_RECORD, 0U,
+                            0U, NULL, 0U) == PSA_ERROR_DOES_NOT_EXIST,
+          "K7 one byte past the key-face maximum is refused");
 }
 
 static int add_raw(whNvmId id, whNvmFlags flags, int32_t sub, uint64_t uid,

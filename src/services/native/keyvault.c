@@ -548,7 +548,7 @@ psa_status_t wt_hsm_keyvault_destroy(int32_t owner, int32_t sub, uint64_t uid)
 psa_status_t wt_hsm_keyvault_rec_put(int32_t owner, int32_t sub, uint64_t uid,
                                      const uint8_t* data, size_t len)
 {
-    if (data == NULL || len == 0U || len > WT_VAULT_OBJECT_MAX) {
+    if (data == NULL || len == 0U || len > WT_VAULT_KEY_OBJECT_MAX) {
         return PSA_ERROR_INVALID_ARGUMENT;
     }
     return wt_hsm_kv_store(owner, sub, uid, WT_VAULT_KEY_PSA_RECORD, 0U,
