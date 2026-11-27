@@ -1439,7 +1439,7 @@ def hw_block_checks(ctx, block):
                 word("the object survived the reset and refused set/remove (stage 2)", "g0sym.g_write_once_stage@boot2", eq="00000002")]
     if block == "mcxn_secure_side":
         return [word("ROM flash API reached from the SVC gate, last status 0", "sym.g_wt_rom_flash_last_status", eq="00000000"),
-                word("wolfHSM flash backend last error 0", "sym.g_wt_flash_last_error", eq="00000000"),
+                word("wolfHSM flash backend last error 0", "sym.g_wt_flash_last_error", eq="00000000", absent_ok=True),
                 word("the ELS served every RND_REQ", "sym.g_wt_els_errors", eq="00000000"),
                 word("the vault's first state phrase is programmed", "nvm.phrase", ne="ffffffff"),
                 word("an erased phrase reads as 0xFF through the bus", "nvm.blank", eq="ffffffff"),

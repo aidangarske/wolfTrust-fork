@@ -91,9 +91,11 @@ static const wt_hsm_flash_config_t g_remeasure_probe_cfg = {
 
 /* Direct-path forensics, read over the debug port: the last primitive
  * failure and the first refusal. */
+#if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
 volatile int32_t g_wt_flash_last_error __attribute__((used));
 volatile uint32_t g_wt_flash_first_err __attribute__((used));
 volatile uint32_t g_wt_flash_first_err_off __attribute__((used));
+#endif
 
 static const wt_hsm_flash_config_t *wt_hsm_flash_cfg_of(const void *context)
 {
@@ -115,19 +117,29 @@ static const wt_hsm_flash_config_t *wt_hsm_flash_cfg_of(const void *context)
 
 static int wt_hsm_flash_refuse(int rc, uint32_t stage, uint32_t offset)
 {
+#if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
     if (g_wt_flash_first_err == 0u) {
         g_wt_flash_first_err = (stage << 24) | ((uint32_t)(-rc) & 0x00FFFFFFu);
         g_wt_flash_first_err_off = offset;
     }
+#else
+    (void)stage;
+    (void)offset;
+#endif
     return rc;
 }
 
 static int wt_hsm_flash_result(int rc, uint32_t stage, uint32_t offset)
 {
+#if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
     if (rc != WH_ERROR_OK) {
         g_wt_flash_last_error = (int32_t)rc;
         (void)wt_hsm_flash_refuse(rc, stage, offset);
     }
+#else
+    (void)stage;
+    (void)offset;
+#endif
     return rc;
 }
 
@@ -165,11 +177,13 @@ static int wt_hsm_flash_gate(void *context, int sub_op, uint32_t offset,
     call.buffer = data;
     rc = wt_spm_sp_call(&call);
     if (rc != WT_FFM_SUCCESS) {
+#if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
         g_wt_flash_gate_aborts++;
         if (g_wt_flash_gate_abort_info == 0u) {
             g_wt_flash_gate_abort_info = ((uint32_t)sub_op << 24) |
                                          ((uint32_t)rc & 0x00FFFFFFu);
         }
+#endif
         return WH_ERROR_ABORTED;
     }
     return call.ret_int;

@@ -88,7 +88,9 @@
 #define WT_FLASH_IDLE_SPINS    0x00200000u
 
 /* The raw FLASH_SECSR error bits of the first failed program or erase. */
+#if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
 volatile uint32_t g_wt_flash_first_err_sr __attribute__((used));
+#endif
 static volatile uint32_t g_flash_ecc_active;
 static volatile uint32_t g_flash_ecc_detected;
 static volatile uint32_t g_flash_ecc_bank;
@@ -246,9 +248,11 @@ static void wt_flash_clear_errors(void)
 static int wt_flash_check_errors(void)
 {
     if ((WT_FLASH_SECSR & WT_FLASH_SR_ALL_ERR) != 0u) {
+#if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
         if (g_wt_flash_first_err_sr == 0u) {
             g_wt_flash_first_err_sr = WT_FLASH_SECSR;
         }
+#endif
         wt_flash_clear_errors();
         return WH_ERROR_ABORTED;
     }

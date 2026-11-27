@@ -33,6 +33,7 @@ CFLAGS := -std=c99 -O0 -g -Wall -Wextra -Werror -pedantic \
     -Wno-unused-function -Wno-unused-parameter \
     -DWOLFHSM_CFG_NO_CRYPTO -DWOLFHSM_CFG_NO_SYS_TIME \
     -DWOLFHSM_CFG_FLASH_UNIT_SIZE=16 \
+    -DWT_FFM_FORENSICS=1 \
     -DWT_CONFORMANCE=1 -DWT_REMEASURE_PROBE=1 \
     -DWT_PORT_MODEL_$(PORT_UPPER) -DWT_PORT_MODEL_NAME=\"$(TARGET)\" \
     $(WT_LAYOUT_CFLAGS) -I. -Imodels -I$(WOLFHSM) \

@@ -39,8 +39,10 @@ typedef struct wt_hsm_flash_context {
 /* The vault's own flash bookkeeping (hsm_flash_ctx.c, in the vault's data
  * band). The driver's privileged state stays in hsm_flash.c, in SPM RAM. */
 extern wt_hsm_flash_context_t g_hsm_flash_ctx;
+#if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
 extern volatile uint32_t g_wt_flash_gate_aborts;
 extern volatile uint32_t g_wt_flash_gate_abort_info;
+#endif
 
 #if defined(WT_CONFORMANCE) && (WT_CONFORMANCE == 1)
 /* Privileged survive-reset NVM sync for the conformance DRIVER partition:

@@ -23,5 +23,7 @@
 wt_hsm_flash_context_t g_hsm_flash_ctx;
 
 /* Gate-path forensics (SWD-readable), counted in the vault's own thread. */
+#if defined(WT_FFM_FORENSICS) && (WT_FFM_FORENSICS == 1)
 volatile uint32_t g_wt_flash_gate_aborts __attribute__((used));
 volatile uint32_t g_wt_flash_gate_abort_info __attribute__((used));
+#endif

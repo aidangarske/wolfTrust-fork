@@ -29,7 +29,7 @@ include $(ROOT)/tests/host/layout.mk
 # controller sequences the shared port_flash suite does not see.
 MODELS := $(ROOT)/tests/host/port_flash/models
 CFLAGS := -std=c99 -O0 -g -Wall -Wextra -Werror -pedantic \
-    -Wno-unused-parameter -DWT_REMEASURE_PROBE=1 \
+    -Wno-unused-parameter -DWT_REMEASURE_PROBE=1 -DWT_FFM_FORENSICS=1 \
     -DWOLFHSM_CFG_NO_CRYPTO -DWOLFHSM_CFG_NO_SYS_TIME \
     $(WT_LAYOUT_CFLAGS) -I$(ROOT)/tests/host/port_flash -I$(MODELS) \
     -I$(WOLFHSM) -include $(MODELS)/stm32l562_mock.h $(EXTRA_CFLAGS)
