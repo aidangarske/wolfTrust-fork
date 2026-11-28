@@ -41,7 +41,7 @@ allowed that band on top.
 
 ## Measured sizes
 
-Measured 2026-11-25, with wolfCrypt built as portable C (the default). The `full` profile turns on all four add-ons
+Measured 2026-11-27, with wolfCrypt built as portable C (the default). The `full` profile turns on all four add-ons
 (`WT_MAX_GUESTS=2 WT_FWU=1 WT_MANIFEST_RUNTIME_CHECK=1 WT_SHA256_FAST=1`).
 The native default serves PSA Crypto from the Secure image (`WT_SECURE_PSA=1`)
 on every port but the STM32L562, whose default and the `WT_SECURE_PSA=0` rows
@@ -49,16 +49,16 @@ run wolfPSA in the guest. The wolfHSM engine always runs it in the guest.
 
 | Port | Engine | Default flash | Default RAM | `full` flash | `full` RAM |
 | --- | --- | ---: | ---: | ---: | ---: |
-| STM32H563 | native | 101,361 | 41,244 | 112,940 | 52,232 |
-| STM32H563 | native, `WT_SECURE_PSA=0` | 61,916 | 37,660 | 73,492 | 46,600 |
-| STM32H563 | hsm | 89,820 | 72,280 | 101,684 | 91,760 |
-| MIMXRT700 | native | 101,585 | 45,640 | 113,284 | 56,624 |
-| MIMXRT700 | native, `WT_SECURE_PSA=0` | 62,168 | 42,056 | 73,800 | 50,992 |
-| MIMXRT700 | hsm | 90,044 | 76,672 | 102,028 | 96,152 |
-| MCX N947 | native | 100,137 | 41,440 | 111,780 | 52,424 |
-| MCX N947 | native, `WT_SECURE_PSA=0` | 60,688 | 37,856 | 72,296 | 46,792 |
-| MCX N947 | hsm | 88,596 | 72,472 | 100,492 | 91,952 |
-| STM32L562 | native | 61,436 | 37,644 | 73,012 | 46,584 |
+| STM32H563 | native | 96,317 | 37,880 | 107,864 | 48,872 |
+| STM32H563 | native, `WT_SECURE_PSA=0` | 57,032 | 34,296 | 68,544 | 43,240 |
+| STM32H563 | hsm | 88,124 | 72,264 | 99,924 | 91,744 |
+| MIMXRT700 | native | 96,701 | 42,280 | 108,336 | 53,264 |
+| MIMXRT700 | native, `WT_SECURE_PSA=0` | 57,412 | 38,696 | 68,980 | 47,632 |
+| MIMXRT700 | hsm | 88,508 | 76,660 | 100,428 | 96,144 |
+| MCX N947 | native | 95,253 | 38,080 | 106,832 | 49,064 |
+| MCX N947 | native, `WT_SECURE_PSA=0` | 55,964 | 34,496 | 67,476 | 43,432 |
+| MCX N947 | hsm | 87,028 | 72,460 | 98,860 | 91,944 |
+| STM32L562 | native | 56,552 | 34,280 | 68,064 | 43,216 |
 
 The MIMXRT700 RAM includes its 4 KiB RAM code band (the NSC gateway and the
 NOR program code). The STM32L562 builds the native engine only.
@@ -76,9 +76,9 @@ option is off in the default.
 | `WT_MANIFEST_RUNTIME_CHECK=1` | The boot-time manifest and port-binding validator, with the descriptive manifest it reads | +5,516 / +16 | Adds the validator run at boot |
 | `WT_SHA256_FAST=1` | The unrolled SHA-256 transform | +416 / 0 | Faster guest verification at boot, attestation and the PSA hash service |
 | `WT_WOLFCRYPT_SP_ASM=1 WT_WOLFCRYPT_ARMASM=1` | wolfCrypt's Cortex-M assembly for ECC, AES and SHA-256, and the 9 KiB crypto stack its P-256 verify needs | +8,936 / +4,096 | Faster ECC, AES and SHA-256 |
-| `WT_ENGINE=hsm` | The wolfHSM server as the crypto engine, with its 6 KiB crypto stack and 24 KiB data band | +27,904 / +34,620 | Adds the wolfHSM request layer to each crypto call |
-| `WT_FFM_FORENSICS=1` | The SPM forensic words a debugger reads after a fault | +512 / +104 | None |
-| `full` profile | The first four together | +11,576 / +8,940 | As above |
+| `WT_ENGINE=hsm` | The wolfHSM server as the crypto engine, with its 6 KiB crypto stack and 24 KiB data band, and the wolfHSM store with its 5 KiB vault stack and 4 KiB vault band | +31,092 / +37,968 | Adds the wolfHSM request layer to each crypto call |
+| `WT_FFM_FORENSICS=1` | The SPM and store flash forensic words a debugger reads after a fault | +768 / +120 | None |
+| `full` profile | The first four together | +11,512 / +8,944 | As above |
 
 With the wolfHSM engine, `WT_MAX_GUESTS=2` costs +2,440 bytes of flash and
 +15,152 bytes of RAM, because each guest gets its own server stack.
@@ -97,7 +97,8 @@ data band its sections outgrow fails the link. Each size is a macro in
 `port/common/armv8m/l3_layout.h` a port or build can override.
 
 Stack high-water marks on the STM32H563, read from M33MU RAM dumps filled
-with `0xA5` (2026-11-25 for SPM main and crypto, 2026-11-24 for the rest). The native column is the `nativewire` scenario,
+with `0xA5` (2026-11-25 for SPM main and crypto, 2026-11-27 for the native
+storage stacks, 2026-11-24 for the rest). The native column is the `nativewire` scenario,
 which runs the positive lifecycle and every native wire key op from the
 guest; the wolfHSM column is `positive` on the default profile and `bothpsa`
 on `full`.
@@ -106,9 +107,9 @@ on `full`.
 | --- | ---: | ---: | ---: | ---: |
 | SPM main | 3,072 | 2,264 | 1,056 | 1,244 |
 | Crypto | 6,144 | 4,728 | 4,820 | 4,820 |
-| Protected Storage | 3,072 | 1,880 | 1,880 | 1,880 |
-| Internal Trusted Storage | 3,072 | 1,880 | 1,880 | 1,880 |
-| Vault | 5,120 | 3,644 | 3,640 | 3,628 |
+| Protected Storage | 3,072 | 1,968 | 1,880 | 1,880 |
+| Internal Trusted Storage | 3,072 | 1,968 | 1,880 | 1,880 |
+| Vault | 4,096 native, 5,120 wolfHSM | 2,784 | 3,640 | 3,628 |
 | Attestation | 5,120 | 3,680 | 3,696 | 3,776 |
 | Firmware Update | 4,096 | not built | not built | 1,872 |
 
@@ -172,19 +173,19 @@ Leave these at their defaults, which already favor speed:
 so the comparison covers both images: the Secure image and the application that
 calls it. `tools/measure_interface_footprint.sh` builds each port, engine and
 API with `WT_INTERFACE_PROFILE=default` and checks that every pair is present;
-the cross-compile workflow publishes its CSV. Measured 2026-11-25.
+the cross-compile workflow publishes its CSV. Measured 2026-11-27.
 
 Flash is Secure plus application, in bytes; RAM is reserved Secure RAM.
 
 | Port | Engine | PSA flash | TPM 2.0 flash | PKCS#11 flash | PSA RAM | TPM 2.0 RAM | PKCS#11 RAM |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| STM32H563 | native | 136,985 | 124,380 (-9.2%) | 107,124 (-21.8%) | 41,244 | 75,744 | 91,104 |
-| STM32H563 | hsm | 168,092 | 164,080 (-2.4%) | 143,976 (-14.3%) | 72,280 | 112,412 | 127,772 |
-| MIMXRT700 | native | 137,177 | 124,536 (-9.2%) | 107,316 (-21.8%) | 45,640 | 80,140 | 95,500 |
-| MIMXRT700 | hsm | 168,316 | 164,240 (-2.4%) | 144,168 (-14.3%) | 76,672 | 116,804 | 132,164 |
-| MCX N947 | native | 135,729 | 123,120 (-9.3%) | 105,852 (-22.0%) | 41,440 | 75,940 | 91,300 |
-| MCX N947 | hsm | 166,868 | 162,824 (-2.4%) | 142,704 (-14.5%) | 72,472 | 112,604 | 127,964 |
-| STM32L562 | native | 126,788 | 123,900 (-2.3%) | 106,624 (-15.9%) | 37,644 | 75,728 | 91,088 |
+| STM32H563 | native | 131,973 | 119,496 (-9.5%) | 102,208 (-22.6%) | 37,880 | 72,380 | 87,740 |
+| STM32H563 | hsm | 166,396 | 162,384 (-2.4%) | 142,280 (-14.5%) | 72,264 | 112,396 | 127,756 |
+| MIMXRT700 | native | 132,293 | 119,780 (-9.5%) | 102,560 (-22.5%) | 42,280 | 76,780 | 92,140 |
+| MIMXRT700 | hsm | 166,780 | 162,704 (-2.4%) | 142,632 (-14.5%) | 76,660 | 116,792 | 132,152 |
+| MCX N947 | native | 130,845 | 118,364 (-9.5%) | 101,128 (-22.7%) | 38,080 | 72,580 | 87,940 |
+| MCX N947 | hsm | 165,300 | 161,256 (-2.4%) | 141,168 (-14.6%) | 72,460 | 112,592 | 127,952 |
+| STM32L562 | native | 121,904 | 118,984 (-2.4%) | 101,740 (-16.5%) | 34,280 | 72,364 | 87,724 |
 
 The application shrinks because it no longer links a PSA Crypto client: the
 PKCS#11 proxy is under 8 KB. The Secure image grows by the provider (fwTPM or

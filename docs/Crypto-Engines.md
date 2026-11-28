@@ -193,15 +193,15 @@ includes too:
 
 | Profile | Algorithms | STM32H563 Secure flash / RAM |
 | --- | --- | ---: |
-| `compat` (default) | The reference guest's set: P-256 ECDSA (deterministic) and ECDH, AES-GCM, CCM, CTR, CBC and ECB, SHA-256, HMAC, HKDF, PBKDF2, TLS 1.2 PRF | 101,361 / 41,244 |
-| `standard` | `compat` without PBKDF2, TLS 1.2 PRF, CBC, ECB and deterministic ECDSA (ECDSA uses a random nonce) | 94,583 / 41,244 |
-| `lean` | `standard` without CCM and AES decryption | 92,919 / 41,244 |
-| `symmetric` | `lean` without ECC in the PSA surface; ECC key imports and generation return `PSA_ERROR_NOT_SUPPORTED` | 88,183 / 41,244 |
+| `compat` (default) | The reference guest's set: P-256 ECDSA (deterministic) and ECDH, AES-GCM, CCM, CTR, CBC and ECB, SHA-256, HMAC, HKDF, PBKDF2, TLS 1.2 PRF | 96,317 / 37,880 |
+| `standard` | `compat` without PBKDF2, TLS 1.2 PRF, CBC, ECB and deterministic ECDSA (ECDSA uses a random nonce) | 89,571 / 37,880 |
+| `lean` | `standard` without CCM and AES decryption | 87,875 / 37,880 |
+| `symmetric` | `lean` without ECC in the PSA surface; ECC key imports and generation return `PSA_ERROR_NOT_SUPPORTED` | 83,139 / 37,880 |
 
 RAM is the Secure RAM the image reserves. It is the same for every profile:
 the crypto partition's stack grows from 5 to 6 KiB for wolfPSA's ECDSA, and its
 data band from 1.5 KiB to `WT_PSA_POOL_BYTES` plus 2 KiB. The opt-out,
-`WT_SECURE_PSA=0`, is 61,916 / 37,660 bytes. The PSA
+`WT_SECURE_PSA=0`, is 57,032 / 34,296 bytes. The PSA
 guest drops from 65,384 to 34,600 bytes of flash; it keeps wolfCrypt only for
 the attestation token verifier. In `standard`, wolfCrypt, wolfPSA, the
 service and the key glue are 55,021 bytes of that flash.
@@ -239,16 +239,21 @@ guest.
 Both engines keep every persistent object in one flash-backed object store
 behind wolfHSM's `whNvmCb` interface: the vault, Internal Trusted Storage,
 Protected Storage, the firmware-update staging metadata, the anti-rollback
-version floors, and the native engine's vault key objects. Callers use the
-`wh_Nvm_*` API in either engine, and `wh_nvm.c` enforces the access policy
-(`NONMODIFIABLE`, `NONDESTROYABLE`, `NONEXPORTABLE`, `TRUSTED`) in both.
+version floors, and the native engine's vault key objects. The access policy
+(`NONMODIFIABLE`, `NONDESTROYABLE`, `NONEXPORTABLE`, `TRUSTED`) is enforced
+in both: by wolfHSM's `wh_nvm.c` over the wolfHSM store, and by
+`include/wolftrust/vault_store.h` over the native store, which links no
+`wh_nvm.c` layer.
 
 `WT_NVM_STORE` selects the store under that API:
 
 - `native` (the native engine's default) links `src/services/nvm_native.c`, a
   compact store written for wolfTrust. It does not implement `wh_Nvm_List`,
   which only wolfHSM's server calls; a listing request returns
-  `WH_ERROR_ABORTED`.
+  `WH_ERROR_ABORTED`. The vault serves the keystore partitions' key objects
+  through its key operations (`WT_VAULT_OP_KEY_PUT`, `KEY_GET`, `KEY_DEL`;
+  client `src/services/native/key_client.c`). The keystore partitions never
+  open the store themselves, so it needs no cross-partition lock.
 - `wolfhsm` links wolfHSM's `wh_nvm_flash.c` and `wh_flash_unit.c`. The hsm
   engine always uses it, and a native build can select it with
   `WT_NVM_STORE=wolfhsm`.
@@ -269,8 +274,9 @@ the running engine fails closed rather than adopting a new one.
 
 ### Native store format
 
-Each of the two NVM partitions holds a header, a directory of 32 slots, and a
-data area. Every record is a whole 16-byte unit that the flash programs once.
+Each of the two NVM partitions holds a header, a directory of 32 slots, a
+data area, and a backup copy of the header in its last unit. Every record is a
+whole 16-byte unit that the flash programs once.
 
 - A slot is its metadata (two units), the object's data in the data area, and
   a commit unit programmed last. Only a slot whose commit is intact counts.
@@ -281,25 +287,37 @@ data area. Every record is a whole 16-byte unit that the flash programs once.
 - Destroying objects, or reclaiming space, copies the live objects into the
   other partition and programs that partition's header (with the next epoch)
   last, then erases the old one. On boot the valid header with the higher
-  epoch wins.
+  epoch wins. A header unit that no longer reads valid is taken from its
+  backup, so damage to one unit cannot hand the boot to an older copy that
+  survived its erase. Boot rewrites a copy left with one good header unit
+  into the other partition, and an old copy that fails its erase stops the
+  store until a boot erases it.
+- A sealed vault object and its counter table entry commit together: both
+  slots are written provisional and one commit unit makes them current, so a
+  cut never leaves a sealed object without its replay counter.
 - A power cut leaves either the state before the operation or the state after
   it. A slot torn by the cut is dropped by the next write, which first
   compacts.
 - A directory whose committed slots are out of order, overlap, or disagree
-  with their metadata is refused; the store never falls back to the older
-  partition.
+  with their metadata is refused, as is a partition whose header and backup
+  both fail; the store never falls back to the older partition.
 
 The host suite `tests/host/nvm_native` cuts power at every program and erase
 step of an add, a replace, a destroy and a compaction, and checks that the
-store recovers to the old or the new state. The vault, PS, ITS, keystore and
-rollback suites run over both stores.
+store recovers to the old or the new state. `tests/host/vault_txn` cuts the
+paired seal-key and counter-table commit the same way, and
+`tests/host/key_face` covers the vault key operations and their policy
+refusals. The vault, PS, ITS, keystore and rollback suites run over both
+stores.
 
 | Source | Role |
 | --- | --- |
-| `wh_nvm.c` | Object-store API and the access-policy checks, in both stores |
 | `src/services/nvm_native.c` | The native store (`WT_NVM_STORE=native`) |
+| `include/wolftrust/vault_store.h` | Access-policy checks and the paired commit over the native store |
+| `src/services/native/key_client.c` | Keystore partitions' key objects through the vault key operations |
+| `wh_nvm.c` | Object-store API and the access-policy checks over the wolfHSM store |
 | `wh_nvm_flash.c`, `wh_flash_unit.c` | The wolfHSM store (`WT_NVM_STORE=wolfhsm`) |
-| `wh_lock.c` | Serialization lock so the store is safe across the confined keystore partitions |
+| `wh_lock.c` | Serialization lock across the confined keystore partitions, wolfHSM store only |
 | `wh_utils.c` | Endian, constant-time compare, and force-zero helpers |
 | `wh_keyid.c` | Key-id namespace translation between client and server key identifiers |
 
@@ -380,7 +398,7 @@ The Secure image and both guest images must use the same engine. See
 
 ## Measured Secure-image cost
 
-These Secure-image measurements were taken on 2026-11-25 with Arm GNU 15.2.1
+These Secure-image measurements were taken on 2026-11-27 with Arm GNU 15.2.1
 in `ghcr.io/wolfssl/wolfboot-ci-m33mu:v1.25`, LTO on, and the repository
 defaults other than the engine, the profile and the output directory:
 
@@ -402,23 +420,25 @@ wolfBoot and Non-secure guest images are not included.
 
 | Engine and profile | `text` | `data` | `bss` | Flash | Secure RAM |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Native, default (`WT_SECURE_PSA=1`, `compat`) | 101,301 bytes | 60 bytes | 14,492 bytes | 101,361 bytes | 41,244 bytes |
-| Native, `WT_SECURE_PSA=1` `standard` | 94,527 bytes | 56 bytes | 14,492 bytes | 94,583 bytes | 41,244 bytes |
-| Native, `WT_SECURE_PSA=0` | 61,868 bytes | 48 bytes | 12,100 bytes | 61,916 bytes | 37,660 bytes |
-| wolfHSM, default | 89,764 bytes | 56 bytes | 34,452 bytes | 89,820 bytes | 72,280 bytes |
-| wolfHSM over native `WT_SECURE_PSA=0` | 27,896 bytes | 8 bytes | 22,352 bytes | 27,904 bytes | 34,620 bytes |
-| Native, `full` | 112,880 bytes | 60 bytes | 21,380 bytes | 112,940 bytes | 52,232 bytes |
-| Native, `full`, `WT_SECURE_PSA=0` | 73,444 bytes | 48 bytes | 16,940 bytes | 73,492 bytes | 46,600 bytes |
-| wolfHSM, `full` | 101,628 bytes | 56 bytes | 56,140 bytes | 101,684 bytes | 91,760 bytes |
+| Native, default (`WT_SECURE_PSA=1`, `compat`) | 96,265 bytes | 52 bytes | 11,968 bytes | 96,317 bytes | 37,880 bytes |
+| Native, `WT_SECURE_PSA=1` `standard` | 89,523 bytes | 48 bytes | 11,968 bytes | 89,571 bytes | 37,880 bytes |
+| Native, `WT_SECURE_PSA=0` | 56,992 bytes | 40 bytes | 9,608 bytes | 57,032 bytes | 34,296 bytes |
+| wolfHSM, default | 88,072 bytes | 52 bytes | 33,420 bytes | 88,124 bytes | 72,264 bytes |
+| wolfHSM over native `WT_SECURE_PSA=0` | 31,080 bytes | 12 bytes | 23,812 bytes | 31,092 bytes | 37,968 bytes |
+| Native, `full` | 107,812 bytes | 52 bytes | 18,860 bytes | 107,864 bytes | 48,872 bytes |
+| Native, `full`, `WT_SECURE_PSA=0` | 68,504 bytes | 40 bytes | 14,452 bytes | 68,544 bytes | 43,240 bytes |
+| wolfHSM, `full` | 99,872 bytes | 52 bytes | 55,108 bytes | 99,924 bytes | 91,744 bytes |
 
 ### Stack contribution
 
 The wolfHSM engine adds one server tasklet stack slot per guest. The default
 image has one guest and one 10,496-byte slot (10,240-byte stack plus a
-256-byte underflow guard). The rest of the 34,620-byte Secure RAM difference
+256-byte underflow guard). The rest of the 37,968-byte Secure RAM difference
 is the crypto partition's larger stack (6 KiB instead of 5 KiB; the wolfHSM
 server peaked at 4,856 bytes on it in the 2026-11-25 M33MU runs) and its larger
-data band (24 KiB instead of 1.5 KiB), which holds the server, protocol and per-guest state. With
+data band (24 KiB instead of 1.5 KiB), which holds the server, protocol and per-guest state,
+plus the wolfHSM store's larger vault stack (5 KiB instead of 4 KiB) and vault
+band (4 KiB instead of 1.75 KiB). With
 `WT_MAX_GUESTS=2` (the `full` profile):
 
 ```text

@@ -18,9 +18,9 @@ Costs are over the default image, built with Arm GNU 15.2.1 in
 `make size-report`: flash is `text + data`, and RAM is the Secure RAM the image
 reserves, partition stacks and bands included ([Footprint](Footprint.md#how-sizes-are-measured)).
 The default native image serves PSA Crypto from the Secure image and is
-101,361 bytes of flash and 41,244 bytes of RAM on the STM32H563, with wolfCrypt
+96,317 bytes of flash and 37,880 bytes of RAM on the STM32H563, with wolfCrypt
 built as portable C. The other rows are measured over the `WT_SECURE_PSA=0`
-image, 61,916 and 37,660 bytes on the STM32H563, and 61,436 and 37,644 bytes
+image, 57,032 and 34,296 bytes on the STM32H563, and 56,552 and 34,280 bytes
 on the STM32L562, whose default it is.
 [Footprint](Footprint.md) logs the sizes of every port and engine.
 
@@ -30,9 +30,9 @@ on the STM32L562, whose default it is.
 | [`WT_FWU=1`](#wt_fwu-psa-firmware-update) | The PSA Firmware Update service and its 4 KiB stack | +3,232 / +4,316 | +3,200 / +4,316 | `make WT_FWU=1 secure-image` |
 | [`WT_MANIFEST_RUNTIME_CHECK=1`](#wt_manifest_runtime_check-boot-time-manifest-check) | The boot-time manifest and port-binding validator, with the descriptive manifest it reads | +5,516 / +16 | +5,488 / +16 | `make WT_MANIFEST_RUNTIME_CHECK=1 secure-image` |
 | [`WT_SHA256_FAST=1`](#wt_sha256_fast-unrolled-sha-256) | The unrolled SHA-256 transform, faster hashing for boot and guest measurement | +416 / 0 | +416 / 0 | `make WT_SHA256_FAST=1 secure-image` |
-| [`WT_ENGINE=hsm`](#wt_enginehsm-the-wolfhsm-engine) | The wolfHSM server as the crypto engine | +27,904 / +34,620 | not supported | `make WT_ENGINE=hsm secure-image` |
-| [`WT_SECURE_PSA=0`](Crypto-Engines.md#psa-crypto-in-the-secure-image-wt_secure_psa1) | Removes PSA Crypto from the Secure image and runs wolfPSA in the guest again; saves 39,445 / 3,584 against the `compat` default (`standard` is +32,667 / +3,584 over it) | -39,445 / -3,584 | the default; `1` adds +39,449 / +3,584 | `make WT_SECURE_PSA=0 secure-image` |
-| `full` profile | `WT_MAX_GUESTS=2 WT_MANIFEST_RUNTIME_CHECK=1 WT_FWU=1 WT_SHA256_FAST=1` together | +11,576 / +8,940 | +11,576 / +8,940 | `make WT_MAX_GUESTS=2 WT_MANIFEST_RUNTIME_CHECK=1 WT_FWU=1 WT_SHA256_FAST=1 secure-image` |
+| [`WT_ENGINE=hsm`](#wt_enginehsm-the-wolfhsm-engine) | The wolfHSM server as the crypto engine | +31,092 / +37,968 | not supported | `make WT_ENGINE=hsm secure-image` |
+| [`WT_SECURE_PSA=0`](Crypto-Engines.md#psa-crypto-in-the-secure-image-wt_secure_psa1) | Removes PSA Crypto from the Secure image and runs wolfPSA in the guest again; saves 39,285 / 3,584 against the `compat` default (`standard` is +32,539 / +3,584 over it) | -39,285 / -3,584 | the default; `1` adds +39,449 / +3,584 | `make WT_SECURE_PSA=0 secure-image` |
+| `full` profile | `WT_MAX_GUESTS=2 WT_MANIFEST_RUNTIME_CHECK=1 WT_FWU=1 WT_SHA256_FAST=1` together | +11,512 / +8,944 | +11,512 / +8,936 | `make WT_MAX_GUESTS=2 WT_MANIFEST_RUNTIME_CHECK=1 WT_FWU=1 WT_SHA256_FAST=1 secure-image` |
 
 The RAM figures include every stack and band an option adds, the 4 KiB FWU
 stack for `WT_FWU=1` among them. The engine is a separate axis:
@@ -138,9 +138,9 @@ build `full` only, because their checks assert both guests.
 - Default `native`, which runs wolfCrypt directly behind `SERVICE_HSM`.
   `hsm` links the wolfHSM server instead, with server-keystore semantics and
   an external-HSM offload path. The FF-M surface does not change.
-- Cost: STM32H563 +27,904 bytes flash and +34,620 bytes RAM over the native
+- Cost: STM32H563 +31,092 bytes flash and +37,968 bytes RAM over the native
   `WT_SECURE_PSA=0` image, including the wolfHSM server's 6 KiB crypto partition stack and
-  24 KiB data band. Part of it is AES block decryption, which the wolfHSM server
+  24 KiB data band, and the wolfHSM store with its larger vault stack and band. Part of it is AES block decryption, which the wolfHSM server
   serves to clients and the native engine leaves out. The STM32L562 builds the native engine only; its 256 KiB of SRAM
   does not hold the wolfHSM bands.
 - Enable: `make WT_ENGINE=hsm secure-image` (guests must use the same
@@ -160,7 +160,7 @@ build `full` only, because their checks assert both guests.
 | `WT_ENGINE` | Secure crypto engine: `native` (default) dispatches wolfCrypt directly behind the SERVICE_HSM door with explicitly vault-backed keys stored as `SENSITIVE` and `NONEXPORTABLE` NVM objects; `hsm` links the wolfHSM server as a key-management add-on (server-keystore semantics and an external-HSM offload path). Legacy `WT_ENGINE_HSM=0/1` maps onto the selector. | Both engines share the identical FF-M surface (5 veneers, SIDs, manifest, and L3 bands) and run every applicable CI scenario. Guest builds must use the same engine as the Secure image. See [Crypto Engines](Crypto-Engines.md). |
 | `WT_SP_RESTART` | Restart a faulted Secure Partition under its manifest restart policy; default `1`. `0` saves 708 bytes of flash and 4 of RAM. | With `0` the recovery code is built out and any partition fault fails the platform closed through `wt_platform_all_guests_faulted()`. |
 | `WT_GUEST_RESTART` | Restart a faulted Non-secure guest under its restart policy; default `1`. `0` saves 64 bytes of flash and 4 of RAM. | With `0` a faulted guest is quarantined as `FAULTED` and never relaunched. |
-| `WT_FFM_FORENSICS` | Build the SPM forensic words a debugger reads after a fault (gate rejections, keystore failures, the full first-fault record); default `0`. `1` adds 512 bytes of flash on the STM32H563 (544 on the STM32L562) and 104 of RAM. | Diagnostics only. The fault count, first CFSR and SPM fault latch the scenarios read are always built. |
+| `WT_FFM_FORENSICS` | Build the forensic words a debugger reads after a fault (gate rejections, keystore failures, the full first-fault record, and the store's flash error and gate-abort words); default `0`. `1` adds 768 bytes of flash and 120 of RAM on the STM32H563 and the STM32L562. | Diagnostics only. The fault count, first CFSR and SPM fault latch the scenarios read are always built. |
 | `WT_FFM_SP_DOORBELL`, `WT_FFM_SP_RHANDLE`, `WT_FFM_SP_SKIP` | Build the Secure Partition calls no shipped service makes: `psa_notify` and `psa_clear`, `psa_set_rhandle`, and `psa_skip`; each defaults to `1`. `0` builds the call out of the SP API and the SPM gate, which refuses it; all three save 96 bytes of flash. | `0` or `1`. A partition that calls a trimmed function fails to link. `WT_CONFORMANCE=1` needs all three, because the Arm suite calls them. |
 
 ## Core target configuration
@@ -182,7 +182,7 @@ build `full` only, because their checks assert both guests.
 | --- | --- | --- |
 | `WT_GUEST_FLASH_WRP` | When `1`, verify the port's hardware write protection of each guest window before launch; a port with no guest flash fence then refuses every guest. Default `0`. | Set to `1` for hardened images, after provisioning the port's fence as its guide describes. |
 | `WT_ENGINE_HSM` | Legacy engine selector; unset by default. `0` maps to `WT_ENGINE=native` and `1` maps to `WT_ENGINE=hsm` when the public selector is not supplied. The build also derives this internal value from `WT_ENGINE`. | Prefer `WT_ENGINE` for new builds and do not supply conflicting selectors. The guest and Secure image must select the same engine. |
-| `WT_NVM_STORE` | NVM object store under the `wh_Nvm_*` API: `native` (the native engine's default) or `wolfhsm`. The hsm engine always uses `wolfhsm`. `native` is 1,600 B smaller in flash and lets the vault data band shrink from 4 KiB to 1.75 KiB (`WT_SP_VAULT_DATA_SIZE` defaults to `0x700`) and the vault stack from 5 KiB to 4 KiB (`WT_SP_VAULT_STACK_SIZE` defaults to `0x1000`, for a 2,728 B high-water mark), measured on the STM32H563 default image. See [Crypto Engines](Crypto-Engines.md#nvm-object-store). | The two stores use different on-flash formats. Changing it on a provisioned device reformats the store, and only in a provisioning lifecycle; a SECURED device fails closed. `native` requires `WT_ENGINE=native`. |
+| `WT_NVM_STORE` | NVM object store behind wolfHSM's `whNvmCb` interface: `native` (the native engine's default) or `wolfhsm`. The hsm engine always uses `wolfhsm`. On the STM32H563 default image `native` is 2,064 bytes smaller in flash and 3,348 smaller in RAM: the vault data band shrinks from 4 KiB to 1.75 KiB (`WT_SP_VAULT_DATA_SIZE` defaults to `0x700`) and the vault stack from 5 KiB to 4 KiB (`WT_SP_VAULT_STACK_SIZE` defaults to `0x1000`, for a 2,784 B high-water mark). See [Crypto Engines](Crypto-Engines.md#nvm-object-store). | The two stores use different on-flash formats. Changing it on a provisioned device reformats the store, and only in a provisioning lifecycle; a SECURED device fails closed. `native` requires `WT_ENGINE=native`. |
 | `WT_ATTEST_COSE` | Build the COSE attestation token service; default `1`. CI compile-checks `0`, and builds each port with its `port.json` `attest_cose` value. | `1` requires the wolfCOSE submodule and the configured attestation key backend. |
 | `WT_SECURE_PSA` | When `1`, serve PSA Crypto from the Secure image: wolfPSA runs in the crypto partition and the guest links the PSA client instead of wolfPSA. Default `1` with the native engine and `0` with wolfHSM; a port may default it to `0` in its `mk/target-<soc>.mk`. See [Crypto Engines](Crypto-Engines.md#psa-crypto-in-the-secure-image-wt_secure_psa1). | `1` requires `WT_ENGINE=native`; build every guest with the Secure image's value. |
 | `WT_SECURE_PSA_PROFILE` | Algorithm set of a `WT_SECURE_PSA=1` image: `compat` (default), `standard`, `lean` or `symmetric`. | Any other value stops the build. |

@@ -13,7 +13,7 @@
   "build": {
     "engines": ["native", "hsm"],
     "attest_cose": 0,
-    "noncrypto_max": 42500,
+    "noncrypto_max": 38000,
     "spm_max": 11100,
     "variants": ["conformance", "tpm", "pkcs11"],
     "vectors": "10040400"
